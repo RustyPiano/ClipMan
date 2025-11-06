@@ -1,7 +1,9 @@
 <script lang="ts">
 import { clipboardStore } from '$lib/stores/clipboard.svelte';
+import { router } from '$lib/stores/router.svelte';
 import SearchBar from '$lib/components/SearchBar.svelte';
 import ClipboardItem from '$lib/components/ClipboardItem.svelte';
+import SettingsPage from './settings/+page.svelte';
 
 // Reactive state showing pinned vs all
 let showPinned = $state(false);
@@ -14,50 +16,54 @@ const displayItems = $derived(
 );
 </script>
 
-<div class="app">
-  <header class="app-header">
-    <h1 class="app-title">ClipMan</h1>
-    <div class="header-actions">
-      <button
-        class="tab-btn"
-        class:active={!showPinned}
-        onclick={() => (showPinned = false)}
-      >
-        历史记录
-      </button>
-      <button
-        class="tab-btn"
-        class:active={showPinned}
-        onclick={() => (showPinned = true)}
-      >
-        置顶 ({clipboardStore.pinnedItems.length})
-      </button>
-      <a href="/settings" class="settings-link" title="设置">⚙️</a>
-    </div>
-  </header>
-
-  <SearchBar />
-
-  <main class="clip-list">
-    {#if clipboardStore.isLoading}
-      <div class="loading">加载中...</div>
-    {:else if displayItems.length === 0}
-      <div class="empty">
-        {#if showPinned}
-          <p>暂无置顶项目</p>
-          <p class="empty-hint">点击 📍 置顶常用内容</p>
-        {:else}
-          <p>暂无剪切板历史</p>
-          <p class="empty-hint">复制内容后会自动出现在这里</p>
-        {/if}
+{#if router.currentRoute === 'settings'}
+  <SettingsPage />
+{:else}
+  <div class="app">
+    <header class="app-header">
+      <h1 class="app-title">ClipMan</h1>
+      <div class="header-actions">
+        <button
+          class="tab-btn"
+          class:active={!showPinned}
+          onclick={() => (showPinned = false)}
+        >
+          历史记录
+        </button>
+        <button
+          class="tab-btn"
+          class:active={showPinned}
+          onclick={() => (showPinned = true)}
+        >
+          置顶 ({clipboardStore.pinnedItems.length})
+        </button>
+        <button class="settings-link" title="设置" onclick={() => router.goToSettings()}>⚙️</button>
       </div>
-    {:else}
-      {#each displayItems as item (item.id)}
-        <ClipboardItem {item} />
-      {/each}
-    {/if}
-  </main>
-</div>
+    </header>
+
+    <SearchBar />
+
+    <main class="clip-list">
+      {#if clipboardStore.isLoading}
+        <div class="loading">加载中...</div>
+      {:else if displayItems.length === 0}
+        <div class="empty">
+          {#if showPinned}
+            <p>暂无置顶项目</p>
+            <p class="empty-hint">点击 📍 置顶常用内容</p>
+          {:else}
+            <p>暂无剪切板历史</p>
+            <p class="empty-hint">复制内容后会自动出现在这里</p>
+          {/if}
+        </div>
+      {:else}
+        {#each displayItems as item (item.id)}
+          <ClipboardItem {item} />
+        {/each}
+      {/if}
+    </main>
+  </div>
+{/if}
 
 <style>
   .app {
@@ -115,7 +121,6 @@ const displayItems = $derived(
     border-radius: 0.375rem;
     background-color: #ffffff;
     font-size: 1.2rem;
-    text-decoration: none;
     cursor: pointer;
     transition: all 0.15s ease;
     margin-left: auto;

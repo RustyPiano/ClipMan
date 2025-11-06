@@ -393,6 +393,20 @@ fn main() {
 
             log::info!("System tray initialized");
 
+            // Setup window close handler to hide instead of quit
+            if let Some(window) = app.get_webview_window("main") {
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Prevent window from closing, hide it instead
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                        log::debug!("Window hidden instead of closed");
+                    }
+                });
+                log::info!("Window close handler registered");
+            }
+
             // Start clipboard monitoring
             let app_handle = app.handle().clone();
             let state: State<AppState> = app_handle.state();

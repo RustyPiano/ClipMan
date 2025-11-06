@@ -1,6 +1,7 @@
 <script lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
+import { router } from '$lib/stores/router.svelte';
 
 interface Settings {
     globalShortcut: string;
@@ -61,7 +62,10 @@ const shortcutPresets = [
 
 <div class="settings-page">
     <header>
-        <h1>⚙️ 设置</h1>
+        <div class="header-top">
+            <button class="back-btn" onclick={() => router.goHome()}>← 返回</button>
+            <h1>⚙️ 设置</h1>
+        </div>
         <p class="subtitle">配置 ClipMan 的行为和快捷键</p>
     </header>
 
@@ -166,6 +170,28 @@ header {
     margin-bottom: 2rem;
     border-bottom: 2px solid #e0e0e0;
     padding-bottom: 1rem;
+}
+
+.header-top {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.back-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.back-btn:hover {
+    background: #f0f0f0;
+    border-color: #999;
 }
 
 h1 {

@@ -23,14 +23,23 @@ impl ClipboardMonitor {
 
         // Start monitoring thread
         thread::spawn(move || {
-            let mut clipboard = Clipboard::new().unwrap();
+            log::info!("Clipboard monitoring thread started");
+
+            let mut clipboard = match Clipboard::new() {
+                Ok(cb) => cb,
+                Err(e) => {
+                    log::error!("Failed to create clipboard instance: {}", e);
+                    return;
+                }
+            };
+
             let mut last_text = String::new();
             let mut last_image: Option<Vec<u8>> = None;
 
             loop {
                 // Check for text changes
                 if let Ok(text) = clipboard.get_text() {
-                    if text != last_text {
+                    if text != last_text && !text.is_empty() {
                         log::info!("Text clipboard changed: {} chars", text.len());
                         last_text = text.clone();
 
