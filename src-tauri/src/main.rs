@@ -33,7 +33,7 @@ fn set_activation_policy() {
 }
 
 // 辅助函数：安全获取 Mutex，即使它是 poisoned 状态
-fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<T> {
+fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| {
         log::warn!("⚠️ Recovered from poisoned lock");
         poisoned.into_inner()
