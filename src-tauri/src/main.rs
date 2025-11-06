@@ -570,12 +570,13 @@ fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), String> 
             clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
             log::info!("✅ Copied text to clipboard: {} chars (marked as self-copy)", text.len());
 
-            // Clear the marker after 2 seconds
+            // Clear the marker after 2 seconds using std::thread (not tokio)
             let last_copied_by_us = state.last_copied_by_us.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
                 let mut last_copied = safe_lock(&last_copied_by_us);
                 *last_copied = None;
+                log::debug!("🧹 Cleared self-copy marker");
             });
         }
         ContentType::Image => {

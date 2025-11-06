@@ -10,7 +10,6 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "ClipMan - Clipboard Manager",
@@ -22,9 +21,7 @@
         "transparent": false,
         "visible": false,
         "skipTaskbar": true,
-        "alwaysOnTop": false,
-        "hiddenTitle": true,
-        "titleBarStyle": "Overlay"
+        "alwaysOnTop": false
       }
     ],
     "security": {
@@ -58,7 +55,8 @@
       "frameworks": [],
       "providerShortName": null,
       "signingIdentity": null,
-      "minimumSystemVersion": "10.13"
+      "minimumSystemVersion": "10.13",
+      "files": {}
     }
   },
   "plugins": {
