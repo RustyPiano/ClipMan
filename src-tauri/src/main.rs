@@ -128,11 +128,11 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
         menu_builder = menu_builder.separator();
     }
 
-    // 获取最近项（最多显示 10 个，排除置顶的）
-    let recent_items = storage.get_recent(15).unwrap_or_default();
+    // 获取最近项（最多显示 20 个，排除置顶的）
+    let recent_items = storage.get_recent(30).unwrap_or_default();
     let recent_unpinned: Vec<_> = recent_items.iter()
         .filter(|item| !item.is_pinned)
-        .take(10)
+        .take(20)
         .collect();
 
     if !recent_unpinned.is_empty() {
@@ -294,6 +294,59 @@ async fn clear_all_history(
     update_tray_menu(&app);
 
     Ok(())
+}
+
+#[tauri::command]
+async fn copy_to_system_clipboard(
+    state: State<'_, AppState>,
+    clip_id: String,
+) -> Result<(), String> {
+    use arboard::Clipboard;
+
+    let storage = safe_lock(&state.storage);
+
+    // 从数据库获取完整内容
+    let items = storage.get_recent(100).map_err(|e| e.to_string())?;
+    let item = items.iter()
+        .find(|i| i.id == clip_id)
+        .ok_or_else(|| "Clip not found".to_string())?;
+
+    // 复制到系统剪切板
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+
+    match item.content_type {
+        ContentType::Text => {
+            let text = String::from_utf8_lossy(&item.content).to_string();
+
+            // Mark this text as "copied by us" so monitor doesn't re-capture it
+            let last_copy = state.last_copied_by_us.clone();
+            let mut last_copy_guard = last_copy.lock().unwrap();
+            *last_copy_guard = Some(text.clone());
+            drop(last_copy_guard);
+
+            clipboard.set_text(&text).map_err(|e| e.to_string())?;
+
+            // Schedule clearing the marker after 2 seconds
+            let last_copy_clone = last_copy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let mut guard = last_copy_clone.lock().unwrap();
+                *guard = None;
+            });
+
+            log::info!("✅ Copied text to clipboard from window (length: {})", text.len());
+            Ok(())
+        }
+        ContentType::Image => {
+            // TODO: 实现图片复制（需要 ImageData → arboard 转换）
+            log::warn!("Image copy from window not yet implemented");
+            Err("图片复制功能尚未实现".to_string())
+        }
+        ContentType::File => {
+            log::warn!("File copy not supported");
+            Err("文件复制不支持".to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -535,7 +588,8 @@ fn main() {
             get_settings,
             update_settings,
             check_clipboard_permission,
-            clear_all_history
+            clear_all_history,
+            copy_to_system_clipboard
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

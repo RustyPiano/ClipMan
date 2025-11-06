@@ -156,14 +156,12 @@ class ClipboardStore {
 
   async copyToClipboard(item: ClipItem) {
     try {
-      if (item.contentType === 'text') {
-        const bytes = this.decodeContent(item.content);
-        const text = new TextDecoder().decode(bytes);
-        const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
-        await writeText(text);
-      }
+      // 使用后端命令来复制，这样可以防止重复捕获
+      await invoke('copy_to_system_clipboard', { clipId: item.id });
+      console.log('✅ Successfully copied to clipboard');
     } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
+      console.error('❌ Failed to copy to clipboard:', error);
+      throw error;
     }
   }
 }

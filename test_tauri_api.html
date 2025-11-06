@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Tauri API</title>
+    <script type="module">
+        import { invoke } from 'https://esm.sh/@tauri-apps/api@2/core';
+
+        window.testGetHistory = async function() {
+            try {
+                console.log('🔄 Calling get_clipboard_history...');
+                const result = await invoke('get_clipboard_history', { limit: 10 });
+                console.log('✅ Result:', result);
+                console.log('📊 Items count:', result.length);
+
+                if (result.length > 0) {
+                    const first = result[0];
+                    console.log('📋 First item:', {
+                        id: first.id,
+                        contentType: first.contentType,
+                        contentLength: first.content.length,
+                        contentPreview: first.content.substring(0, 50),
+                        timestamp: first.timestamp,
+                        isPinned: first.isPinned
+                    });
+
+                    // Test decoding
+                    try {
+                        const bytes = atob(first.content);
+                        const decoder = new TextDecoder();
+                        const uint8 = new Uint8Array(bytes.length);
+                        for (let i = 0; i < bytes.length; i++) {
+                            uint8[i] = bytes.charCodeAt(i);
+                        }
+                        const text = decoder.decode(uint8);
+                        console.log('✅ Decoded text:', text);
+                    } catch (e) {
+                        console.error('❌ Decode failed:', e);
+                    }
+                }
+
+                document.getElementById('result').textContent = JSON.stringify(result, null, 2);
+            } catch (error) {
+                console.error('❌ Error:', error);
+                document.getElementById('result').textContent = 'Error: ' + error;
+            }
+        };
+    </script>
+</head>
+<body>
+    <h1>Tauri API Test</h1>
+    <button onclick="testGetHistory()">Test get_clipboard_history</button>
+    <pre id="result">Click the button to test</pre>
+</body>
+</html>
