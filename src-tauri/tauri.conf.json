@@ -55,10 +55,7 @@
       "frameworks": [],
       "providerShortName": null,
       "signingIdentity": null,
-      "minimumSystemVersion": "10.13",
-      "info": {
-        "LSUIElement": true
-      }
+      "minimumSystemVersion": "10.13"
     }
   },
   "plugins": {
