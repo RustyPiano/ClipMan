@@ -25,7 +25,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost"
+      "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost",
+      "capabilities": ["default"]
     }
   },
   "bundle": {

@@ -58,17 +58,17 @@ const displayItems = $derived(
             <p class="empty-hint">复制内容后会自动出现在这里</p>
             <p class="debug-info" style="margin-top: 1rem; font-size: 0.75rem; color: #999;">
               总共 {clipboardStore.items.length} 项 |
-              文本: {clipboardStore.items.filter(i => i.contentType === 'Text').length} |
-              图片: {clipboardStore.items.filter(i => i.contentType === 'Image').length} |
-              其他: {clipboardStore.items.filter(i => i.contentType !== 'Text' && i.contentType !== 'Image').length}
+              文本: {clipboardStore.items.filter(i => i.contentType === 'text').length} |
+              图片: {clipboardStore.items.filter(i => i.contentType === 'image').length} |
+              其他: {clipboardStore.items.filter(i => i.contentType !== 'text' && i.contentType !== 'image').length}
             </p>
           {/if}
         </div>
       {:else}
         <div class="debug-info" style="padding: 0.5rem 1rem; font-size: 0.75rem; color: #666; border-bottom: 1px solid #e5e7eb;">
           显示 {displayItems.length} 项 |
-          文本: {displayItems.filter(i => i.contentType === 'Text').length} |
-          图片: {displayItems.filter(i => i.contentType === 'Image').length}
+          文本: {displayItems.filter(i => i.contentType === 'text').length} |
+          图片: {displayItems.filter(i => i.contentType === 'image').length}
         </div>
         {#each displayItems as item (item.id)}
           <ClipboardItem {item} />

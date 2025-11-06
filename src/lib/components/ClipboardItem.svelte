@@ -17,9 +17,25 @@ const formattedTime = $derived(() => {
   return date.toLocaleDateString('zh-CN');
 });
 
+// Helper function to decode content (handles both array and base64 string)
+function decodeContent(content: number[] | string): Uint8Array {
+  if (Array.isArray(content)) {
+    // Content is already a byte array
+    return new Uint8Array(content);
+  } else {
+    // Content is base64 string, decode it
+    const binaryString = atob(content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
+}
+
 // Get preview text
 const previewText = $derived(() => {
-  if (item.contentType !== 'Text') return '';
+  if (item.contentType !== 'text') return '';
 
   // Check if content is empty
   if (!item.content || item.content.length === 0) {
@@ -28,12 +44,37 @@ const previewText = $derived(() => {
   }
 
   try {
-    const text = new TextDecoder().decode(item.content);
+    // Decode to bytes
+    const bytes = decodeContent(item.content);
+    const text = new TextDecoder().decode(bytes);
     console.log('Decoded text:', text.slice(0, 50));
     return text.slice(0, 200);
   } catch (e) {
-    console.error('Failed to decode content:', e);
+    console.error('Failed to decode content:', e, 'Content:', Array.isArray(item.content) ? `Array(${item.content.length})` : item.content.slice(0, 50));
     return '[解码失败]';
+  }
+});
+
+// Convert content to base64 for image display
+const imageBase64 = $derived(() => {
+  if (item.contentType !== 'image') return '';
+
+  try {
+    if (Array.isArray(item.content)) {
+      // Convert byte array to base64
+      const bytes = new Uint8Array(item.content);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    } else {
+      // Already base64 string
+      return item.content;
+    }
+  } catch (e) {
+    console.error('Failed to convert image to base64:', e);
+    return '';
   }
 });
 
@@ -59,14 +100,12 @@ async function handleDelete() {
   aria-label="复制到剪切板"
 >
   <div class="clip-content">
-    {#if item.contentType === 'Text'}
+    {#if item.contentType === 'text'}
       <p class="preview-text">{previewText()}</p>
-    {:else if item.contentType === 'Image'}
+    {:else if item.contentType === 'image'}
       <div class="image-preview">
         <img
-          src={`data:image/png;base64,${btoa(
-            String.fromCharCode(...item.content)
-          )}`}
+          src={`data:image/png;base64,${imageBase64()}`}
           alt="预览"
         />
       </div>

@@ -3,8 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 
 export interface ClipItem {
   id: string;
-  content: Uint8Array;
-  contentType: 'Text' | 'Image' | 'File';
+  content: number[] | string; // Array of bytes or base64 string from Rust backend
+  contentType: 'text' | 'image' | 'file';
   timestamp: number;
   isPinned: boolean;
   pinOrder: number | null;
@@ -23,6 +23,22 @@ class ClipboardStore {
       .sort((a, b) => (a.pinOrder || 0) - (b.pinOrder || 0))
   );
 
+  // Helper: decode content (handles both array and base64 string)
+  private decodeContent(content: number[] | string): Uint8Array {
+    if (Array.isArray(content)) {
+      // Content is already a byte array
+      return new Uint8Array(content);
+    } else {
+      // Content is base64 string, decode it
+      const binaryString = atob(content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    }
+  }
+
   // Derived state: filtered items based on search
   filteredItems = $derived.by(() => {
     if (!this.searchQuery) {
@@ -30,9 +46,15 @@ class ClipboardStore {
     }
 
     return this.items.filter((item) => {
-      if (item.contentType === 'Text') {
-        const text = new TextDecoder().decode(item.content);
-        return text.toLowerCase().includes(this.searchQuery.toLowerCase());
+      if (item.contentType === 'text') {
+        try {
+          const bytes = this.decodeContent(item.content);
+          const text = new TextDecoder().decode(bytes);
+          return text.toLowerCase().includes(this.searchQuery.toLowerCase());
+        } catch (e) {
+          console.error('Failed to decode content for search:', e);
+          return false;
+        }
       }
       return false;
     });
@@ -66,6 +88,20 @@ class ClipboardStore {
         limit: 100,
       });
       console.log(`✅ Loaded ${history.length} clipboard items`);
+
+      // Debug: log first item details
+      if (history.length > 0) {
+        const first = history[0];
+        console.log('📋 First item details:', {
+          id: first.id,
+          contentType: first.contentType,
+          contentIsString: typeof first.content === 'string',
+          contentLength: first.content?.length,
+          contentPreview: typeof first.content === 'string' ? first.content.substring(0, 50) : 'NOT STRING',
+          timestamp: first.timestamp
+        });
+      }
+
       this.items = history;
     } catch (error) {
       console.error('❌ Failed to load clipboard history:', error);
@@ -120,8 +156,9 @@ class ClipboardStore {
 
   async copyToClipboard(item: ClipItem) {
     try {
-      if (item.contentType === 'Text') {
-        const text = new TextDecoder().decode(item.content);
+      if (item.contentType === 'text') {
+        const bytes = this.decodeContent(item.content);
+        const text = new TextDecoder().decode(bytes);
         const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
         await writeText(text);
       }
