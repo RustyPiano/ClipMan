@@ -1,6 +1,5 @@
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::rand::{SecureRandom, SystemRandom};
-use data_encoding::BASE64;
 
 const NONCE_LEN: usize = 12;
 

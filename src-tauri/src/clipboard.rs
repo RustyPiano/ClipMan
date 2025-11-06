@@ -132,8 +132,7 @@ impl ClipboardMonitor {
     }
 
     fn create_thumbnail(image_bytes: &[u8]) -> Vec<u8> {
-        use image::imageops::FilterType;
-        use image::ImageFormat;
+        use image::{GenericImageView, imageops::FilterType, ImageFormat};
 
         // Try to decode the image
         let img = match image::load_from_memory(image_bytes) {

@@ -10,9 +10,10 @@ use storage::{ClipStorage, ClipItem, ContentType};
 use crypto::Crypto;
 use tauri::{
     AppHandle, Manager, State,
-    menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
+    menu::{MenuBuilder, MenuItemBuilder},
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use std::sync::{Arc, Mutex};
 use std::fs;
 use std::path::PathBuf;
@@ -102,7 +103,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
     }
 
     // 获取最近项（最多显示 10 个，排除置顶的）
-    let recent_items = storage.get_recent(Some(15)).unwrap_or_default();
+    let recent_items = storage.get_recent(15).unwrap_or_default();
     let recent_unpinned: Vec<_> = recent_items.iter()
         .filter(|item| !item.is_pinned)
         .take(10)
@@ -316,7 +317,7 @@ fn main() {
                         log::debug!("Tray left-clicked - menu will show automatically");
                     }
                 })
-                .id("main") // 设置 ID 以便后续更新菜单
+                .id("main")
                 .build(app)?;
 
             log::info!("System tray initialized");
@@ -333,8 +334,6 @@ fn main() {
             log::info!("Clipboard monitoring started");
 
             // Register global shortcuts
-            use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
-
             let app_handle_hotkey = app.handle().clone();
             app.global_shortcut().on_shortcut("CommandOrControl+Shift+V", move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
@@ -374,7 +373,7 @@ fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), String> 
     let storage = state.storage.lock().map_err(|e| e.to_string())?;
 
     // 从数据库获取完整内容
-    let items = storage.get_recent(Some(100)).map_err(|e| e.to_string())?;
+    let items = storage.get_recent(100).map_err(|e| e.to_string())?;
     let item = items.iter()
         .find(|i| i.id == clip_id)
         .ok_or_else(|| "Clip not found".to_string())?;
