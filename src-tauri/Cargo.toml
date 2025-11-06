@@ -1,0 +1,59 @@
+[package]
+name = "clipman"
+version = "1.0.0"
+description = "Modern clipboard manager for Windows"
+authors = ["ClipMan Team"]
+license = "MIT"
+repository = "https://github.com/yourusername/clipman"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+# Tauri Core
+tauri = { version = "2.9", features = ["tray-icon", "devtools"] }
+tauri-plugin-shell = "2.3"
+tauri-plugin-dialog = "2.4"
+tauri-plugin-fs = "2.4"
+tauri-plugin-clipboard-manager = "2.3"
+tauri-plugin-global-shortcut = "2.2"
+
+# Clipboard & System
+arboard = "3.4"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange"
+] }
+
+# Storage & Serialization
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+
+# Async Runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# Crypto
+ring = "0.17"
+data-encoding = "2.6"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = true
