@@ -98,22 +98,89 @@ impl ClipboardMonitor {
         } else {
             // Emit event to frontend
             app_handle.emit("clipboard-changed", &item_for_emit).ok();
+
+            // Update tray menu to show new item
+            crate::update_tray_menu(app_handle);
+            log::debug!("Tray menu updated after clipboard change");
         }
     }
 
     fn image_to_bytes(image: &ImageData) -> Vec<u8> {
-        // Convert RGBA image to PNG bytes
-        // This is a simplified version - in production use image crate
-        image.bytes.to_vec()
+        // Convert RGBA ImageData to PNG bytes using image crate
+        use image::{ImageBuffer, RgbaImage};
+
+        let img: RgbaImage = match ImageBuffer::from_raw(
+            image.width as u32,
+            image.height as u32,
+            image.bytes.to_vec()
+        ) {
+            Some(img) => img,
+            None => {
+                log::error!("Failed to create image buffer");
+                return image.bytes.to_vec(); // Fallback to raw bytes
+            }
+        };
+
+        // Encode as PNG
+        let mut png_bytes = Vec::new();
+        if let Err(e) = img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png) {
+            log::error!("Failed to encode PNG: {}", e);
+            return image.bytes.to_vec(); // Fallback to raw bytes
+        }
+
+        png_bytes
     }
 
     fn create_thumbnail(image_bytes: &[u8]) -> Vec<u8> {
-        // Create 128x128 thumbnail
-        // This is a placeholder - in production use image crate for proper resizing
-        if image_bytes.len() > 10000 {
-            image_bytes[..10000].to_vec()
+        use image::imageops::FilterType;
+        use image::ImageFormat;
+
+        // Try to decode the image
+        let img = match image::load_from_memory(image_bytes) {
+            Ok(img) => img,
+            Err(e) => {
+                log::warn!("Failed to decode image for thumbnail: {}. Using first 10KB as fallback", e);
+                // Fallback: return truncated raw bytes
+                return if image_bytes.len() > 10000 {
+                    image_bytes[..10000].to_vec()
+                } else {
+                    image_bytes.to_vec()
+                };
+            }
+        };
+
+        // Calculate thumbnail dimensions (max 256x256, preserve aspect ratio)
+        let (width, height) = img.dimensions();
+        let max_size = 256u32;
+        let (thumb_width, thumb_height) = if width > height {
+            let ratio = max_size as f32 / width as f32;
+            (max_size, (height as f32 * ratio) as u32)
         } else {
-            image_bytes.to_vec()
+            let ratio = max_size as f32 / height as f32;
+            ((width as f32 * ratio) as u32, max_size)
+        };
+
+        // Resize image
+        let thumbnail = img.resize(thumb_width, thumb_height, FilterType::Lanczos3);
+
+        // Encode as PNG
+        let mut png_bytes = Vec::new();
+        if let Err(e) = thumbnail.write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            ImageFormat::Png
+        ) {
+            log::error!("Failed to encode thumbnail: {}", e);
+            // Fallback to truncated original
+            return if image_bytes.len() > 10000 {
+                image_bytes[..10000].to_vec()
+            } else {
+                image_bytes.to_vec()
+            };
         }
+
+        log::info!("Created thumbnail: {}x{} -> {}x{}, {} bytes",
+                  width, height, thumb_width, thumb_height, png_bytes.len());
+
+        png_bytes
     }
 }

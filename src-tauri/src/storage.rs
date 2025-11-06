@@ -1,5 +1,7 @@
 use rusqlite::{Connection, params, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use crate::crypto::Crypto;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,10 +43,11 @@ pub struct ClipItem {
 
 pub struct ClipStorage {
     conn: Connection,
+    crypto: Option<Arc<Crypto>>,
 }
 
 impl ClipStorage {
-    pub fn new(db_path: &str) -> Result<Self> {
+    pub fn new(db_path: &str, crypto: Option<Arc<Crypto>>) -> Result<Self> {
         let conn = Connection::open(db_path)?;
 
         // Create main table
@@ -98,16 +101,27 @@ impl ClipStorage {
             [],
         )?;
 
-        Ok(Self { conn })
+        Ok(Self { conn, crypto })
     }
 
     pub fn insert(&self, item: &ClipItem) -> Result<()> {
+        // Encrypt content if crypto is available
+        let content_to_store = if let Some(crypto) = &self.crypto {
+            crypto.encrypt(&item.content)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e
+                ))))?
+        } else {
+            item.content.clone()
+        };
+
         self.conn.execute(
             "INSERT INTO clips (id, content, content_type, timestamp, is_pinned, pin_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 item.id,
-                item.content,
+                content_to_store,
                 item.content_type.to_string(),
                 item.timestamp,
                 item.is_pinned as i32,
@@ -130,6 +144,20 @@ impl ClipStorage {
         Ok(())
     }
 
+    // Helper method to decrypt content
+    fn decrypt_content(&self, encrypted: Vec<u8>) -> Result<Vec<u8>> {
+        if let Some(crypto) = &self.crypto {
+            crypto.decrypt(&encrypted)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                ))
+        } else {
+            Ok(encrypted)
+        }
+    }
+
     pub fn get_recent(&self, limit: usize) -> Result<Vec<ClipItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, content, content_type, timestamp, is_pinned, pin_order
@@ -139,9 +167,12 @@ impl ClipStorage {
         )?;
 
         let items = stmt.query_map([limit], |row| {
+            let encrypted_content: Vec<u8> = row.get(1)?;
+            let content = self.decrypt_content(encrypted_content)?;
+
             Ok(ClipItem {
                 id: row.get(0)?,
-                content: row.get(1)?,
+                content,
                 content_type: ContentType::from_string(&row.get::<_, String>(2)?),
                 timestamp: row.get(3)?,
                 is_pinned: row.get::<_, i32>(4)? != 0,
@@ -163,9 +194,12 @@ impl ClipStorage {
         )?;
 
         let items = stmt.query_map([query], |row| {
+            let encrypted_content: Vec<u8> = row.get(1)?;
+            let content = self.decrypt_content(encrypted_content)?;
+
             Ok(ClipItem {
                 id: row.get(0)?,
-                content: row.get(1)?,
+                content,
                 content_type: ContentType::from_string(&row.get::<_, String>(2)?),
                 timestamp: row.get(3)?,
                 is_pinned: row.get::<_, i32>(4)? != 0,
@@ -212,9 +246,12 @@ impl ClipStorage {
         )?;
 
         let items = stmt.query_map([], |row| {
+            let encrypted_content: Vec<u8> = row.get(1)?;
+            let content = self.decrypt_content(encrypted_content)?;
+
             Ok(ClipItem {
                 id: row.get(0)?,
-                content: row.get(1)?,
+                content,
                 content_type: ContentType::from_string(&row.get::<_, String>(2)?),
                 timestamp: row.get(3)?,
                 is_pinned: row.get::<_, i32>(4)? != 0,
