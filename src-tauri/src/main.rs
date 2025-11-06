@@ -4,10 +4,12 @@
 mod clipboard;
 mod storage;
 mod crypto;
+mod settings;
 
 use clipboard::ClipboardMonitor;
 use storage::{ClipStorage, ClipItem, ContentType};
 use crypto::Crypto;
+use settings::{Settings, SettingsManager};
 use tauri::{
     AppHandle, Manager, State,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -21,7 +23,9 @@ use std::path::PathBuf;
 struct AppState {
     storage: Mutex<ClipStorage>,
     monitor: Mutex<Option<ClipboardMonitor>>,
+    #[allow(dead_code)] // crypto is used indirectly via storage
     crypto: Arc<Crypto>,
+    settings: Arc<SettingsManager>,
 }
 
 // 密钥管理：生成或加载加密密钥
@@ -228,6 +232,63 @@ async fn get_pinned_clips(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn get_settings(
+    state: State<'_, AppState>,
+) -> Result<Settings, String> {
+    Ok(state.settings.get())
+}
+
+#[tauri::command]
+async fn update_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<(), String> {
+    log::info!("Updating settings: {:?}", settings);
+
+    // 检查热键是否改变
+    let old_shortcut = state.settings.get().global_shortcut;
+    let new_shortcut = settings.global_shortcut.clone();
+    let shortcut_changed = old_shortcut != new_shortcut;
+
+    // 更新设置
+    state.settings.set_global_shortcut(settings.global_shortcut.clone());
+    state.settings.set_max_history_items(settings.max_history_items);
+    state.settings.set_auto_cleanup(settings.auto_cleanup);
+
+    // 保存设置
+    state.settings.save(&app)?;
+
+    // 如果热键改变，重新注册
+    if shortcut_changed {
+        log::info!("Hotkey changed from '{}' to '{}', re-registering...", old_shortcut, new_shortcut);
+
+        // 注销旧热键
+        if let Err(e) = app.global_shortcut().unregister(&old_shortcut) {
+            log::warn!("Failed to unregister old shortcut '{}': {}", old_shortcut, e);
+        }
+
+        // 注册新热键
+        let app_clone = app.clone();
+        app.global_shortcut()
+            .on_shortcut(&new_shortcut, move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    log::info!("Global shortcut triggered: {}", new_shortcut);
+                    if let Some(window) = app_clone.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            })
+            .map_err(|e| format!("Failed to register new shortcut '{}': {}", new_shortcut, e))?;
+
+        log::info!("Hotkey successfully updated to '{}'", new_shortcut);
+    }
+
+    Ok(())
+}
+
 fn main() {
     env_logger::init();
     log::info!("ClipMan starting...");
@@ -238,6 +299,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             // Initialize storage
             let app_data_dir = app.path().app_data_dir()
@@ -260,10 +322,18 @@ fn main() {
                 Some(crypto.clone())
             ).expect("Failed to initialize database");
 
+            // Initialize settings
+            let settings_manager = Arc::new(SettingsManager::new());
+            if let Err(e) = settings_manager.load(&app.handle()) {
+                log::warn!("Failed to load settings, using defaults: {}", e);
+            }
+            log::info!("Settings initialized");
+
             let app_state = AppState {
                 storage: Mutex::new(storage),
                 monitor: Mutex::new(None),
                 crypto: crypto.clone(),
+                settings: settings_manager.clone(),
             };
 
             app.manage(app_state);
@@ -307,7 +377,7 @@ fn main() {
                         }
                     }
                 })
-                .on_tray_icon_event(|tray, event| {
+                .on_tray_icon_event(|_tray, event| {
                     // 左键点击时手动显示菜单（Tauri 2.0 中菜单会自动显示，这里仅记录日志）
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -333,11 +403,15 @@ fn main() {
 
             log::info!("Clipboard monitoring started");
 
-            // Register global shortcuts
+            // Register global shortcuts from settings
+            let state: State<AppState> = app_handle.state();
+            let current_shortcut = state.settings.get().global_shortcut;
+
             let app_handle_hotkey = app.handle().clone();
-            app.global_shortcut().on_shortcut("CommandOrControl+Shift+V", move |_app, _shortcut, event| {
+            let shortcut_display = current_shortcut.clone();
+            app.global_shortcut().on_shortcut(&current_shortcut, move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
-                    log::info!("Global shortcut triggered: Ctrl+Shift+V");
+                    log::info!("Global shortcut triggered: {}", shortcut_display);
 
                     // Show main window
                     if let Some(window) = app_handle_hotkey.get_webview_window("main") {
@@ -346,11 +420,11 @@ fn main() {
                     }
                 }
             }).map_err(|e| {
-                log::error!("Failed to register global shortcut: {}", e);
+                log::error!("Failed to register global shortcut '{}': {}", current_shortcut, e);
                 e
             })?;
 
-            log::info!("Global shortcuts registered: Ctrl+Shift+V");
+            log::info!("Global shortcuts registered: {}", current_shortcut);
 
             Ok(())
         })
@@ -359,7 +433,9 @@ fn main() {
             search_clips,
             toggle_pin,
             delete_clip,
-            get_pinned_clips
+            get_pinned_clips,
+            get_settings,
+            update_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

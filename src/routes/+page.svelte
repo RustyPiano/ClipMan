@@ -32,6 +32,7 @@ const displayItems = $derived(
       >
         置顶 ({clipboardStore.pinnedItems.length})
       </button>
+      <a href="/settings" class="settings-link" title="设置">⚙️</a>
     </div>
   </header>
 
@@ -103,6 +104,26 @@ const displayItems = $derived(
     background-color: #3b82f6;
     color: #ffffff;
     border-color: #3b82f6;
+  }
+
+  .settings-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.375rem;
+    background-color: #ffffff;
+    font-size: 1.2rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    margin-left: auto;
+  }
+
+  .settings-link:hover {
+    background-color: #f3f4f6;
+    border-color: #d1d5db;
   }
 
   .clip-list {
