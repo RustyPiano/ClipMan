@@ -113,8 +113,9 @@ class ClipboardStore {
   async search(query: string) {
     this.searchQuery = query;
 
-    // Local filtering via derived state when query is empty
+    // When query is empty, reload full history
     if (!query) {
+      await this.loadHistory();
       return;
     }
 
@@ -127,6 +128,17 @@ class ClipboardStore {
       console.error('Search failed:', error);
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  async clearNonPinned() {
+    try {
+      await invoke('clear_non_pinned_history');
+      await this.loadHistory();
+      console.log('✅ Cleared all non-pinned items');
+    } catch (error) {
+      console.error('❌ Failed to clear non-pinned items:', error);
+      throw error;
     }
   }
 

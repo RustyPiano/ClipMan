@@ -273,6 +273,12 @@ impl ClipStorage {
         Ok(())
     }
 
+    pub fn clear_non_pinned(&self) -> Result<()> {
+        log::info!("🗑️ Clearing non-pinned clipboard history");
+        self.conn.execute("DELETE FROM clips WHERE is_pinned = 0", [])?;
+        Ok(())
+    }
+
     pub fn get_pinned(&self) -> Result<Vec<ClipItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, content, content_type, timestamp, is_pinned, pin_order

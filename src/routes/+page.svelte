@@ -39,7 +39,18 @@ const displayItems = $derived(
         >
           置顶 ({clipboardStore.pinnedItems.length})
         </button>
-        <button class="settings-link" title="设置" onclick={() => router.goToSettings()}>⚙️</button>
+        <button
+          class="action-icon-btn"
+          title="清除非置顶"
+          onclick={async () => {
+            if (confirm('确定要清除所有非置顶的历史记录吗？')) {
+              await clipboardStore.clearNonPinned();
+            }
+          }}
+        >
+          🗑️
+        </button>
+        <button class="action-icon-btn" title="设置" onclick={() => router.goToSettings()}>⚙️</button>
       </div>
     </header>
 
@@ -125,7 +136,7 @@ const displayItems = $derived(
     border-color: #3b82f6;
   }
 
-  .settings-link {
+  .action-icon-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -136,12 +147,15 @@ const displayItems = $derived(
     font-size: 1.2rem;
     cursor: pointer;
     transition: all 0.15s ease;
-    margin-left: auto;
   }
 
-  .settings-link:hover {
+  .action-icon-btn:hover {
     background-color: #f3f4f6;
     border-color: #d1d5db;
+  }
+
+  .action-icon-btn:last-child {
+    margin-left: auto;
   }
 
   .clip-list {

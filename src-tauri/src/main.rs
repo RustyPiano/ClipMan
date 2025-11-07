@@ -154,6 +154,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
     // 底部分隔线和操作按钮
     menu_builder = menu_builder
         .separator()
+        .item(&MenuItemBuilder::with_id("clear_non_pinned", "🗑️ 清除非置顶").build(app)?)
         .item(&MenuItemBuilder::with_id("settings", "⚙️ 设置").build(app)?)
         .item(&MenuItemBuilder::with_id("quit", "退出").build(app)?);
 
@@ -288,6 +289,22 @@ async fn clear_all_history(
     log::info!("Clearing all clipboard history (user requested)");
     let storage = safe_lock(&state.storage);
     storage.clear_all().map_err(|e| e.to_string())?;
+
+    // 更新托盘菜单
+    drop(storage);
+    update_tray_menu(&app);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_non_pinned_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    log::info!("Clearing non-pinned clipboard history (user requested)");
+    let storage = safe_lock(&state.storage);
+    storage.clear_non_pinned().map_err(|e| e.to_string())?;
 
     // 更新托盘菜单
     drop(storage);
@@ -491,6 +508,15 @@ fn main() {
                             log::info!("Quit menu clicked");
                             app.exit(0);
                         }
+                        "clear_non_pinned" => {
+                            log::info!("Clear non-pinned menu clicked");
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = clear_non_pinned_history(app_clone.clone(), app_clone.state()).await {
+                                    log::error!("Failed to clear non-pinned history: {}", e);
+                                }
+                            });
+                        }
                         "settings" => {
                             log::info!("Settings menu clicked");
                             // TODO: 打开设置窗口
@@ -589,6 +615,7 @@ fn main() {
             update_settings,
             check_clipboard_permission,
             clear_all_history,
+            clear_non_pinned_history,
             copy_to_system_clipboard
         ])
         .run(tauri::generate_context!())
