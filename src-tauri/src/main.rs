@@ -16,6 +16,7 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 use std::sync::{Arc, Mutex};
 use std::fs;
 use std::path::PathBuf;
@@ -392,7 +393,7 @@ async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, String> 
                             "current_version": current_version,
                             "latest_version": available_version,
                             "body": update_info.body,
-                            "date": update_info.date
+                            "date": update_info.date.map(|d| d.to_string())
                         }))
                     } else {
                         log::info!("No updates available. Current version: {}", current_version);
