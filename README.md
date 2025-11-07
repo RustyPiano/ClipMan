@@ -137,15 +137,17 @@ ClipMan/
 
 - [x] **剪切板监控** - 文本/图像自动捕获
 - [x] **历史记录存储** - SQLite 加密存储
-- [x] **全文搜索** - FTS5 高性能搜索
+- [x] **全文搜索** - 内存过滤实现,大小写不敏感
 - [x] **置顶功能** - 拖拽排序、独立显示
-- [x] **系统托盘集成** - 动态菜单（置顶项 + 最近项）
+- [x] **清除功能** - 清除非置顶历史记录
+- [x] **系统托盘集成** - 动态菜单（置顶项 + 最近 20 项）
 - [x] **全局热键** - 可自定义快捷键
 - [x] **图像缩略图** - 256x256 Lanczos3 缩放
 - [x] **端到端加密** - AES-256-GCM
 - [x] **设置页面** - 热键配置、历史上限
 - [x] **macOS 优化** - 菜单栏模式、权限检查
 - [x] **Svelte 5 UI** - 响应式、现代化界面
+- [x] **窗口同步** - 菜单栏操作后自动更新窗口
 - [x] **错误恢复** - Poisoned lock 恢复、解密错误跳过
 - [x] **Unicode 安全** - 字符边界安全截断
 
@@ -198,20 +200,30 @@ impl ClipboardMonitor {
 }
 ```
 
-### 2. 全文搜索 (SQLite FTS5)
+### 2. 搜索功能
 
-使用 SQLite FTS5 虚拟表实现高性能中文搜索：
+使用内存过滤实现简单高效的搜索：
 
-```sql
--- 创建 FTS5 虚拟表
-CREATE VIRTUAL TABLE clips_fts
-USING fts5(id, content_text, content='clips', content_rowid=rowid);
+```rust
+// src-tauri/src/storage.rs
+pub fn search(&self, query: &str) -> Result<Vec<ClipItem>> {
+    // 获取所有文本类型记录
+    let mut stmt = self.conn.prepare(
+        "SELECT id, content, content_type, timestamp, is_pinned, pin_order
+         FROM clips WHERE content_type = 'text'
+         ORDER BY timestamp DESC LIMIT 100"
+    )?;
 
--- 自动同步触发器
-CREATE TRIGGER clips_ai AFTER INSERT ON clips BEGIN
-    INSERT INTO clips_fts(rowid, id, content_text)
-    VALUES (new.rowid, new.id, new.content);
-END;
+    // 在内存中进行大小写不敏感的文本匹配
+    let query_lower = query.to_lowercase();
+    items.filter_map(|item| {
+        if let Ok(text) = String::from_utf8(item.content.clone()) {
+            if text.to_lowercase().contains(&query_lower) {
+                Some(Ok(item))
+            } else { None }
+        } else { None }
+    }).collect()
+}
 ```
 
 ### 3. Svelte 5 Runes 状态管理

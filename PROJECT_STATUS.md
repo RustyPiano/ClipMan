@@ -154,8 +154,10 @@ ClipMan 是一个跨平台剪切板管理器，使用 Rust + Tauri 2.0 + Svelte 
 - ✅ 数据序列化格式修复 (2025-11-06)
 - ✅ 内容类型匹配修复 (2025-11-06)
 - ✅ 窗口点击复制功能 (2025-11-06)
+- ✅ 搜索功能修复 (2025-11-07)
+- ✅ 窗口自动同步 (2025-11-07)
 
-**文件**: `+page.svelte`, `clipboard.svelte.ts`, `capabilities/default.json`, `main.rs::copy_to_system_clipboard()`
+**文件**: `+page.svelte`, `clipboard.svelte.ts`, `capabilities/default.json`, `main.rs::copy_to_system_clipboard()`, `storage.rs::search()`
 
 ---
 
