@@ -60,9 +60,9 @@
     },
     "updater": {
       "active": true,
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQ0NGMkNGMDI5NEZDQkEKUldTNi9KUUN6L0xNazAxVHdBR3VjVHlrK0hidlRtTUM3bWJuVHRrcC9sVnB0TC8rZzV6eFdLU1YK",
       "endpoints": [
-        "https://api.github.com/repos/{{owner}}/{{repo}}/releases/latest"
+        "https://api.github.com/repos/Kiaana/ClipMan/releases/latest"
       ],
       "dialog": false
     }
