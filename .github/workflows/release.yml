@@ -50,10 +50,16 @@ jobs:
       - name: install frontend dependencies
         run: bun install
 
+      - name: setup signing key
+        run: |
+          echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > /tmp/tauri_signing_key
+          chmod 600 /tmp/tauri_signing_key
+        shell: bash
+
       - uses: tauri-apps/tauri-action@dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: /tmp/tauri_signing_key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }} # Use the tag name that triggered the workflow
