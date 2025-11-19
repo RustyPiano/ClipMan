@@ -52,14 +52,14 @@ jobs:
 
       - name: setup signing key
         run: |
-          printf "%s" "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\r' > signing.key
-          chmod 600 signing.key
+          printf "%s" "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\r' > "${{ github.workspace }}/signing.key"
+          chmod 600 "${{ github.workspace }}/signing.key"
         shell: bash
 
       - uses: tauri-apps/tauri-action@dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: signing.key
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.workspace }}/signing.key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }} # Use the tag name that triggered the workflow
