@@ -52,7 +52,7 @@ jobs:
 
       - name: setup signing key
         run: |
-          echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > /tmp/tauri_signing_key
+          printf "%s" "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\r' > /tmp/tauri_signing_key
           chmod 600 /tmp/tauri_signing_key
         shell: bash
 
