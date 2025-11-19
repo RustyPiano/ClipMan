@@ -76,7 +76,7 @@ class ClipboardStore {
 
     // Listen for history cleared event from menu bar
     const unlistenHistoryCleared = await listen('history-cleared', async () => {
-      console.log('📢 History cleared from menu bar, reloading...');
+      console.log('[INFO] History cleared from menu bar, reloading...');
       await this.loadHistory();
     });
 
@@ -95,16 +95,16 @@ class ClipboardStore {
   async loadHistory() {
     this.isLoading = true;
     try {
-      console.log('🔄 Loading clipboard history...');
+      console.log('[INFO] Loading clipboard history...');
       const history = await invoke<ClipItem[]>('get_clipboard_history', {
         limit: 100,
       });
-      console.log(`✅ Loaded ${history.length} clipboard items`);
+      console.log(`[SUCCESS] Loaded ${history.length} clipboard items`);
 
       // Debug: log first item details
       if (history.length > 0) {
         const first = history[0];
-        console.log('📋 First item details:', {
+        console.log('[DEBUG] First item details:', {
           id: first.id,
           contentType: first.contentType,
           contentIsString: typeof first.content === 'string',
@@ -116,7 +116,7 @@ class ClipboardStore {
 
       this.items = history;
     } catch (error) {
-      console.error('❌ Failed to load clipboard history:', error);
+      console.error('[ERROR] Failed to load clipboard history:', error);
     } finally {
       this.isLoading = false;
     }
@@ -147,9 +147,9 @@ class ClipboardStore {
     try {
       await invoke('clear_non_pinned_history');
       await this.loadHistory();
-      console.log('✅ Cleared all non-pinned items');
+      console.log('[SUCCESS] Cleared all non-pinned items');
     } catch (error) {
-      console.error('❌ Failed to clear non-pinned items:', error);
+      console.error('[ERROR] Failed to clear non-pinned items:', error);
       throw error;
     }
   }
@@ -182,9 +182,9 @@ class ClipboardStore {
     try {
       // 使用后端命令来复制，这样可以防止重复捕获
       await invoke('copy_to_system_clipboard', { clipId: item.id });
-      console.log('✅ Successfully copied to clipboard');
+      console.log('[SUCCESS] Successfully copied to clipboard');
     } catch (error) {
-      console.error('❌ Failed to copy to clipboard:', error);
+      console.error('[ERROR] Failed to copy to clipboard:', error);
       throw error;
     }
   }

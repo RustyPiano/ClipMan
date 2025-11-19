@@ -2,6 +2,20 @@
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
 import { router } from '$lib/stores/router.svelte';
+import Button from '$lib/components/ui/Button.svelte';
+import Input from '$lib/components/ui/Input.svelte';
+import Card from '$lib/components/ui/Card.svelte';
+import { 
+    ChevronLeft, 
+    Keyboard, 
+    History, 
+    Info, 
+    Loader2, 
+    RefreshCw, 
+    Download, 
+    Save, 
+    RotateCcw 
+} from 'lucide-svelte';
 
 interface Settings {
     globalShortcut: string;
@@ -43,7 +57,8 @@ async function loadSettings() {
         settings = await invoke<Settings>('get_settings');
     } catch (err) {
         console.error('Failed to load settings:', err);
-        message = '加载设置失败: ' + err;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        message = '加载设置失败: ' + errorMsg;
     } finally {
         loading = false;
     }
@@ -58,7 +73,8 @@ async function saveSettings() {
         setTimeout(() => message = '', 3000);
     } catch (err) {
         console.error('Failed to save settings:', err);
-        message = '保存失败: ' + err;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        message = '保存失败: ' + errorMsg;
     } finally {
         saving = false;
     }
@@ -87,8 +103,9 @@ async function checkForUpdates() {
         }
     } catch (err) {
         console.error('Failed to check for updates:', err);
-        updateMessage = '检查更新失败: ' + err;
-        if (err.toString().includes('Not Found') || err.toString().includes('404')) {
+        const errStr = String(err);
+        updateMessage = '检查更新失败: ' + errStr;
+        if (errStr.includes('Not Found') || errStr.includes('404')) {
             updateMessage = '检查更新失败: 未找到更新信息 (可能是尚未发布新版本)';
         }
     } finally {
@@ -107,517 +124,201 @@ async function installUpdate() {
         updateMessage = '更新安装成功！应用将重启。';
     } catch (err) {
         console.error('Failed to install update:', err);
-        updateMessage = '安装更新失败: ' + err;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        updateMessage = '安装更新失败: ' + errorMsg;
         installingUpdate = false;
     }
 }
 </script>
 
-<div class="settings-page">
-    <header>
-        <div class="header-top">
-            <button class="back-btn" onclick={() => router.goHome()}>← 返回</button>
-            <h1>⚙️ 设置</h1>
-        </div>
-        <p class="subtitle">配置 ClipMan 的行为和快捷键</p>
-    </header>
+<div class="min-h-screen bg-background text-foreground p-6 overflow-y-auto">
+    <div class="max-w-2xl mx-auto space-y-6">
+        <header class="flex items-center gap-4 pb-4 border-b border-border">
+            <Button variant="ghost" size="sm" onclick={() => router.goHome()}>
+                <ChevronLeft class="h-4 w-4 mr-1" /> 返回
+            </Button>
+            <div>
+                <h1 class="text-2xl font-bold">设置</h1>
+                <p class="text-sm text-muted-foreground">配置 ClipMan 的行为和快捷键</p>
+            </div>
+        </header>
 
-    {#if loading}
-        <div class="loading">加载中...</div>
-    {:else}
-        <form onsubmit={(e) => { e.preventDefault(); saveSettings(); }}>
-            <!-- 全局热键设置 -->
-            <section class="setting-section">
-                <h2>🔥 全局热键</h2>
-                <p class="description">
-                    设置打开 ClipMan 窗口的快捷键。<br>
-                    <small>Mac 上 Ctrl 会自动替换为 Cmd</small>
-                </p>
-
-                <div class="form-group">
-                    <label for="shortcut-input">自定义快捷键：</label>
-                    <input
-                        id="shortcut-input"
-                        type="text"
-                        bind:value={settings.globalShortcut}
-                        placeholder="例如: CommandOrControl+Shift+V"
-                    />
-                </div>
-
-                <div class="form-group">
-                    <span class="form-label">快速选择：</span>
-                    <div class="preset-buttons">
-                        {#each shortcutPresets as preset}
-                            <button
-                                type="button"
-                                class="preset-btn"
-                                class:active={settings.globalShortcut === preset.value}
-                                onclick={() => settings.globalShortcut = preset.value}
-                            >
-                                {preset.label}
-                            </button>
-                        {/each}
+        {#if loading}
+            <div class="flex justify-center py-12 text-muted-foreground">
+                <Loader2 class="h-6 w-6 animate-spin mr-2" /> 加载中...
+            </div>
+        {:else}
+            <form onsubmit={(e) => { e.preventDefault(); saveSettings(); }} class="space-y-6">
+                <!-- 全局热键设置 -->
+                <Card class="p-6 space-y-4">
+                    <div>
+                        <h2 class="text-lg font-semibold flex items-center gap-2">
+                            <Keyboard class="h-5 w-5" /> 全局热键
+                        </h2>
+                        <p class="text-sm text-muted-foreground mt-1">
+                            设置打开 ClipMan 窗口的快捷键。Mac 上 Ctrl 会自动替换为 Cmd。
+                        </p>
                     </div>
-                </div>
-            </section>
 
-            <!-- 历史记录设置 -->
-            <section class="setting-section">
-                <h2>📜 历史记录</h2>
+                    <div class="space-y-2">
+                        <label for="shortcut-input" class="text-sm font-medium">自定义快捷键</label>
+                        <Input
+                            id="shortcut-input"
+                            type="text"
+                            bind:value={settings.globalShortcut}
+                            placeholder="例如: CommandOrControl+Shift+V"
+                        />
+                    </div>
 
-                <div class="form-group">
-                    <label for="max-items">
-                        最大历史条目数：
-                        <span class="value">{settings.maxHistoryItems}</span>
-                    </label>
-                    <input
-                        id="max-items"
-                        type="range"
-                        min="50"
-                        max="500"
-                        step="50"
-                        bind:value={settings.maxHistoryItems}
-                    />
-                    <small>范围: 50 - 500 条</small>
-                </div>
+                    <div class="space-y-2">
+                        <span class="text-sm font-medium">快速选择</span>
+                        <div class="flex flex-wrap gap-2">
+                            {#each shortcutPresets as preset}
+                                <Button
+                                    type="button"
+                                    variant={settings.globalShortcut === preset.value ? 'default' : 'outline'}
+                                    size="sm"
+                                    onclick={() => settings.globalShortcut = preset.value}
+                                >
+                                    {preset.label}
+                                </Button>
+                            {/each}
+                        </div>
+                    </div>
+                </Card>
 
-                <div class="form-group checkbox">
-                    <label>
+                <!-- 历史记录设置 -->
+                <Card class="p-6 space-y-4">
+                    <h2 class="text-lg font-semibold flex items-center gap-2">
+                        <History class="h-5 w-5" /> 历史记录
+                    </h2>
+
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <label for="max-items" class="text-sm font-medium">最大历史条目数</label>
+                            <span class="text-sm font-bold text-primary">{settings.maxHistoryItems}</span>
+                        </div>
+                        <input
+                            id="max-items"
+                            type="range"
+                            min="50"
+                            max="500"
+                            step="50"
+                            bind:value={settings.maxHistoryItems}
+                            class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
+                        />
+                        <p class="text-xs text-muted-foreground text-right">范围: 50 - 500 条</p>
+                    </div>
+
+                    <div class="flex items-center gap-2">
                         <input
                             type="checkbox"
+                            id="auto-cleanup"
                             bind:checked={settings.autoCleanup}
+                            class="w-4 h-4 rounded border-input text-primary focus:ring-ring"
                         />
-                        自动清理超出限制的历史记录
-                    </label>
-                </div>
-            </section>
+                        <label for="auto-cleanup" class="text-sm font-medium cursor-pointer">
+                            自动清理超出限制的历史记录
+                        </label>
+                    </div>
+                </Card>
 
-            <!-- 关于和更新 -->
-            <section class="setting-section">
-                <h2>ℹ️ 关于和更新</h2>
+                <!-- 关于和更新 -->
+                <Card class="p-6 space-y-4">
+                    <h2 class="text-lg font-semibold flex items-center gap-2">
+                        <Info class="h-5 w-5" /> 关于和更新
+                    </h2>
 
-                <div class="update-info">
-                    <div class="version-info">
+                    <div class="space-y-4">
                         {#if updateInfo}
-                            <p>
-                                <strong>当前版本：</strong>
-                                <span class="version">{updateInfo.current_version}</span>
-                            </p>
-                            {#if updateInfo.available && updateInfo.latest_version}
-                                <p>
-                                    <strong>最新版本：</strong>
-                                    <span class="version latest">{updateInfo.latest_version}</span>
+                            <div class="space-y-2">
+                                <p class="text-sm">
+                                    <strong>当前版本：</strong>
+                                    <span class="bg-muted px-2 py-0.5 rounded text-xs font-mono">{updateInfo.current_version}</span>
                                 </p>
-                                {#if updateInfo.body}
-                                    <div class="release-notes">
-                                        <strong>更新内容：</strong>
-                                        <pre>{updateInfo.body}</pre>
-                                    </div>
+                                {#if updateInfo.available && updateInfo.latest_version}
+                                    <p class="text-sm">
+                                        <strong>最新版本：</strong>
+                                        <span class="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 px-2 py-0.5 rounded text-xs font-mono font-bold">{updateInfo.latest_version}</span>
+                                    </p>
+                                    {#if updateInfo.body}
+                                        <div class="mt-2 p-3 bg-muted/50 rounded border border-border text-sm">
+                                            <strong class="block mb-1">更新内容：</strong>
+                                            <pre class="whitespace-pre-wrap font-sans text-muted-foreground">{updateInfo.body}</pre>
+                                        </div>
+                                    {/if}
                                 {/if}
-                            {/if}
+                            </div>
                         {:else}
-                            <p class="hint">点击下方按钮检查更新</p>
+                            <p class="text-sm text-muted-foreground italic">点击下方按钮检查更新</p>
                         {/if}
-                    </div>
 
-                    <div class="update-actions">
-                        <button
-                            type="button"
-                            class="btn-update"
-                            onclick={checkForUpdates}
-                            disabled={checkingUpdate || installingUpdate}
-                        >
-                            {checkingUpdate ? '检查中...' : '🔍 检查更新'}
-                        </button>
-
-                        {#if updateInfo?.available}
-                            <button
+                        <div class="flex gap-2">
+                            <Button
                                 type="button"
-                                class="btn-install"
-                                onclick={installUpdate}
-                                disabled={installingUpdate}
+                                variant="secondary"
+                                onclick={checkForUpdates}
+                                disabled={checkingUpdate || installingUpdate}
                             >
-                                {installingUpdate ? '安装中...' : '⬇️ 安装更新'}
-                            </button>
+                                {#if checkingUpdate}
+                                    <Loader2 class="h-4 w-4 animate-spin mr-2" /> 检查中...
+                                {:else}
+                                    <RefreshCw class="h-4 w-4 mr-2" /> 检查更新
+                                {/if}
+                            </Button>
+
+                            {#if updateInfo?.available}
+                                <Button
+                                    type="button"
+                                    class="bg-green-600 hover:bg-green-700 text-white"
+                                    onclick={installUpdate}
+                                    disabled={installingUpdate}
+                                >
+                                    {#if installingUpdate}
+                                        <Loader2 class="h-4 w-4 animate-spin mr-2" /> 安装中...
+                                    {:else}
+                                        <Download class="h-4 w-4 mr-2" /> 安装更新
+                                    {/if}
+                                </Button>
+                            {/if}
+                        </div>
+
+                        {#if updateMessage}
+                            <div
+                                class="p-3 rounded text-sm
+                                {updateMessage.includes('失败') ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200' : 
+                                 updateMessage.includes('最新版本') || updateMessage.includes('成功') ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 
+                                 'bg-muted text-muted-foreground'}"
+                            >
+                                {updateMessage}
+                            </div>
                         {/if}
                     </div>
+                </Card>
 
-                    {#if updateMessage}
-                        <div
-                            class="update-message"
-                            class:error={updateMessage.includes('失败')}
-                            class:success={updateMessage.includes('最新版本') || updateMessage.includes('成功')}
-                        >
-                            {updateMessage}
-                        </div>
-                    {/if}
+                <!-- 按钮组 -->
+                <div class="flex gap-4 pt-4">
+                    <Button type="submit" class="flex-1" disabled={saving}>
+                        {#if saving}
+                            <Loader2 class="h-4 w-4 animate-spin mr-2" /> 保存中...
+                        {:else}
+                            <Save class="h-4 w-4 mr-2" /> 保存设置
+                        {/if}
+                    </Button>
+                    <Button type="button" variant="secondary" onclick={loadSettings}>
+                        <RotateCcw class="h-4 w-4 mr-2" /> 重置
+                    </Button>
                 </div>
-            </section>
 
-            <!-- 按钮组 -->
-            <div class="actions">
-                <button type="submit" class="btn-primary" disabled={saving}>
-                    {saving ? '保存中...' : '💾 保存设置'}
-                </button>
-                <button type="button" class="btn-secondary" onclick={loadSettings}>
-                    🔄 重置
-                </button>
-            </div>
-
-            {#if message}
-                <div class="message" class:error={message.includes('失败')}>
-                    {message}
-                </div>
-            {/if}
-        </form>
-    {/if}
+                {#if message}
+                    <div 
+                        class="p-4 rounded-md text-sm font-medium text-center
+                        {message.includes('失败') ? 'bg-destructive/10 text-destructive' : 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'}"
+                    >
+                        {message}
+                    </div>
+                {/if}
+            </form>
+        {/if}
+    </div>
 </div>
-
-<style>
-.settings-page {
-    max-width: 700px;
-    margin: 0 auto;
-    padding: 2rem;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    height: 100vh;
-    overflow-y: auto;
-    box-sizing: border-box;
-}
-
-header {
-    margin-bottom: 2rem;
-    border-bottom: 2px solid #e0e0e0;
-    padding-bottom: 1rem;
-}
-
-.header-top {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 0.5rem;
-}
-
-.back-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid #ddd;
-    background: white;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    transition: all 0.2s;
-}
-
-.back-btn:hover {
-    background: #f0f0f0;
-    border-color: #999;
-}
-
-h1 {
-    margin: 0;
-    font-size: 2rem;
-    color: #333;
-}
-
-.subtitle {
-    margin: 0.5rem 0 0 0;
-    color: #666;
-    font-size: 0.95rem;
-}
-
-.loading {
-    text-align: center;
-    padding: 3rem;
-    color: #666;
-}
-
-.setting-section {
-    background: #f8f9fa;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-}
-
-.setting-section h2 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.3rem;
-    color: #444;
-}
-
-.description {
-    margin: 0 0 1rem 0;
-    color: #666;
-    font-size: 0.9rem;
-}
-
-.form-group {
-    margin-bottom: 1.5rem;
-}
-
-.form-group:last-child {
-    margin-bottom: 0;
-}
-
-label,
-.form-label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: #555;
-}
-
-.value {
-    color: #007bff;
-    font-weight: 600;
-}
-
-input[type="text"],
-input[type="range"] {
-    width: 100%;
-    padding: 0.6rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    box-sizing: border-box;
-}
-
-input[type="text"]:focus {
-    outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
-}
-
-input[type="range"] {
-    padding: 0;
-    cursor: pointer;
-}
-
-.preset-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-}
-
-.preset-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid #ddd;
-    background: white;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-}
-
-.preset-btn:hover {
-    border-color: #007bff;
-    background: #f0f8ff;
-}
-
-.preset-btn.active {
-    border-color: #007bff;
-    background: #007bff;
-    color: white;
-}
-
-.checkbox label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: normal;
-}
-
-.checkbox input[type="checkbox"] {
-    width: auto;
-    cursor: pointer;
-}
-
-.actions {
-    display: flex;
-    gap: 1rem;
-    margin-top: 2rem;
-}
-
-.btn-primary,
-.btn-secondary {
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.btn-primary {
-    background: #007bff;
-    color: white;
-    flex: 1;
-}
-
-.btn-primary:hover:not(:disabled) {
-    background: #0056b3;
-}
-
-.btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.btn-secondary {
-    background: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background: #545b62;
-}
-
-.message {
-    margin-top: 1rem;
-    padding: 1rem;
-    border-radius: 4px;
-    background: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.message.error {
-    background: #f8d7da;
-    color: #721c24;
-    border-color: #f5c6cb;
-}
-
-small {
-    display: block;
-    margin-top: 0.3rem;
-    color: #888;
-    font-size: 0.85rem;
-}
-
-/* 更新相关样式 */
-.update-info {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.version-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.version-info p {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.version {
-    font-family: 'Courier New', monospace;
-    background: #e9ecef;
-    padding: 0.2rem 0.5rem;
-    border-radius: 3px;
-    font-size: 0.9rem;
-}
-
-.version.latest {
-    background: #d4edda;
-    color: #155724;
-    font-weight: 600;
-}
-
-.release-notes {
-    margin-top: 0.5rem;
-    padding: 0.75rem;
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-}
-
-.release-notes strong {
-    display: block;
-    margin-bottom: 0.5rem;
-}
-
-.release-notes pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    color: #555;
-}
-
-.hint {
-    margin: 0;
-    color: #888;
-    font-style: italic;
-}
-
-.update-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-}
-
-.btn-update,
-.btn-install {
-    padding: 0.6rem 1.2rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    min-width: 120px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-
-.btn-update {
-    background: #6c757d;
-    color: white;
-}
-
-.btn-update:hover:not(:disabled) {
-    background: #545b62;
-}
-
-.btn-install {
-    background: #28a745;
-    color: white;
-}
-
-.btn-install:hover:not(:disabled) {
-    background: #218838;
-}
-
-.btn-update:disabled,
-.btn-install:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.update-message {
-    padding: 0.75rem;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    background: #e9ecef;
-    color: #495057;
-}
-
-.update-message.success {
-    background: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.update-message.error {
-    background: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-</style>

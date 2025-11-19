@@ -4,6 +4,8 @@ export interface Toast {
     type: 'success' | 'error' | 'info';
 }
 
+const TOAST_DURATION_MS = 2000;
+
 class ToastStore {
     toasts = $state<Toast[]>([]);
     private counter = 0;
@@ -13,10 +15,10 @@ class ToastStore {
         const toast = { id, message, type };
         this.toasts.push(toast);
 
-        // Auto remove after 2 seconds
+        // Auto remove after configured duration
         setTimeout(() => {
             this.remove(id);
-        }, 2000);
+        }, TOAST_DURATION_MS);
     }
 
     remove(id: number) {

@@ -1,242 +1,174 @@
 <script lang="ts">
-import type { ClipItem } from '$lib/stores/clipboard.svelte';
-import { clipboardStore } from '$lib/stores/clipboard.svelte';
-import { toastStore } from '$lib/stores/toast.svelte';
+  import { onDestroy } from 'svelte';
+  import { clipboardStore } from '$lib/stores/clipboard.svelte';
+  import type { ClipItem } from '$lib/stores/clipboard.svelte';
+  import Card from './ui/Card.svelte';
+  import Button from './ui/Button.svelte';
+  import { Copy, Pin, Trash2, FileText, Image as ImageIcon, File } from 'lucide-svelte';
 
-let { item }: { item: ClipItem } = $props();
-
-// Helper function to decode content (handles both array and base64 string)
-function decodeContent(content: number[] | string): Uint8Array {
-  if (Array.isArray(content)) {
-    return new Uint8Array(content);
-  } else {
-    const binaryString = atob(content);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-  }
-}
-
-// Compute these values once when component is created
-let formattedTime = $state('');
-let previewText = $state('');
-let imageDataUrl = $state('');
-
-// Track the last created URL for cleanup (non-reactive to avoid loops)
-let lastObjectUrl: string | undefined;
-
-// Update values when item changes
-$effect(() => {
-  // Format timestamp
-  const date = new Date(item.timestamp * 1000);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) formattedTime = '刚刚';
-  else if (diffMins < 60) formattedTime = `${diffMins}分钟前`;
-  else if (diffMins < 1440) formattedTime = `${Math.floor(diffMins / 60)}小时前`;
-  else formattedTime = date.toLocaleDateString('zh-CN');
-
-  // Decode text content
-  if (item.contentType === 'text') {
-    if (!item.content || item.content.length === 0) {
-      previewText = '[内容为空]';
-    } else {
-      try {
-        const bytes = decodeContent(item.content);
-        const text = new TextDecoder().decode(bytes);
-        previewText = text.slice(0, 200);
-      } catch (e) {
-        console.error('Failed to decode content:', e);
-        previewText = '[解码失败]';
-      }
-    }
-  } else {
-    previewText = ''; // Clear previewText if not text content
+  interface Props {
+    item: ClipItem;
   }
 
-  // Convert image to Blob URL (much faster than Base64)
-  if (item.contentType === 'image') {
+  let { item }: Props = $props();
+
+  // Track blob URLs for cleanup
+  let blobUrls: string[] = [];
+
+  function formatTime(timestamp: number): string {
+    const date = new Date(timestamp * 1000);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    
+    // Less than 1 minute
+    if (diff < 60000) {
+      return '刚刚';
+    }
+    
+    // Less than 1 hour
+    if (diff < 3600000) {
+      return `${Math.floor(diff / 60000)}分钟前`;
+    }
+    
+    // Less than 24 hours
+    if (diff < 86400000) {
+      return `${Math.floor(diff / 3600000)}小时前`;
+    }
+    
+    // Otherwise show date
+    return date.toLocaleDateString('zh-CN');
+  }
+
+  // Helper to decode UTF-8 text from byte array or base64 string
+  function decodeText(content: number[] | string): string {
+    if (!content || (Array.isArray(content) && content.length === 0) || (typeof content === 'string' && content.length === 0)) {
+      return '[内容为空]';
+    }
     try {
-      let blob: Blob;
-      if (Array.isArray(item.content)) {
-        const bytes = new Uint8Array(item.content);
-        blob = new Blob([bytes], { type: 'image/png' });
+      let bytes: Uint8Array;
+      if (Array.isArray(content)) {
+        bytes = new Uint8Array(content);
       } else {
-        // Fallback for base64 string
-        const binary = atob(item.content);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
+        const binaryString = atob(content);
+        bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
         }
-        blob = new Blob([bytes], { type: 'image/png' });
       }
-      
-      // Revoke old URL if exists
-      if (lastObjectUrl) {
-        URL.revokeObjectURL(lastObjectUrl);
-      }
-      
-      lastObjectUrl = URL.createObjectURL(blob);
-      imageDataUrl = lastObjectUrl;
+      return new TextDecoder().decode(bytes);
     } catch (e) {
-      console.error('Failed to convert image:', e);
-      imageDataUrl = '';
+      console.error('Failed to decode text content:', e);
+      return '[解码失败]';
     }
-  } else {
-    imageDataUrl = ''; 
   }
-});
 
-// Cleanup on destroy
-$effect.root(() => {
-  return () => {
-    if (lastObjectUrl) {
-      URL.revokeObjectURL(lastObjectUrl);
+  // Helper to create blob URL for images from byte array or base64 string
+  function createImageSrc(content: number[] | string): string {
+    let blob: Blob;
+    if (Array.isArray(content)) {
+      blob = new Blob([new Uint8Array(content)], { type: 'image/png' });
+    } else {
+      const binary = atob(content);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      blob = new Blob([bytes], { type: 'image/png' });
     }
-  };
-});
+    const url = URL.createObjectURL(blob);
+    blobUrls.push(url); // Track for cleanup
+    return url;
+  }
 
-async function handleCopy() {
-  await clipboardStore.copyToClipboard(item);
-  toastStore.add('已复制到剪切板', 'success');
-}
-
-async function handleTogglePin() {
-  await clipboardStore.togglePin(item.id);
-}
-
-async function handleDelete() {
-  await clipboardStore.deleteItem(item.id);
-}
+  // Cleanup blob URLs on component destroy
+  onDestroy(() => {
+    blobUrls.forEach(url => URL.revokeObjectURL(url));
+  });
 </script>
 
-<div
-  class="clip-item"
-  onclick={handleCopy}
-  onkeydown={(e) => e.key === 'Enter' && handleCopy()}
-  role="button"
-  tabindex="0"
-  aria-label="复制到剪切板"
+<div 
+  class="group relative transition-all duration-200 ease-in-out hover:scale-[1.01]"
+  role="listitem"
 >
-  <div class="clip-content">
-    {#if item.contentType === 'text'}
-      <p class="preview-text">{previewText}</p>
-    {:else if item.contentType === 'image'}
-      <div class="image-preview">
-        <img
-          src={imageDataUrl}
-          alt="预览"
-        />
+  <Card class="overflow-hidden border-l-4 {item.isPinned ? 'border-l-primary bg-primary/5' : 'border-l-transparent hover:border-l-primary/50'}">
+    <div class="p-3 flex gap-3">
+      <!-- Content Type Icon -->
+      <div class="flex-none pt-1 text-muted-foreground">
+        {#if item.contentType === 'text'}
+          <FileText class="h-4 w-4" />
+        {:else if item.contentType === 'image'}
+          <ImageIcon class="h-4 w-4" />
+        {:else}
+          <File class="h-4 w-4" />
+        {/if}
       </div>
-    {:else}
-      <p class="file-preview">📎 文件</p>
-    {/if}
-  </div>
 
-  <div class="clip-meta">
-    <span class="timestamp">{formattedTime}</span>
-    <div class="actions">
-      <button
-        class="action-btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          handleTogglePin();
-        }}
-        aria-label={item.isPinned ? '取消置顶' : '置顶'}
-      >
-        {item.isPinned ? '📌' : '📍'}
-      </button>
-      <button
-        class="action-btn delete-btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          handleDelete();
-        }}
-        aria-label="删除"
-      >
-        🗑️
-      </button>
+      <!-- Main Content -->
+      <div class="flex-1 min-w-0">
+        {#if item.contentType === 'text'}
+          <p class="text-sm text-foreground line-clamp-3 break-all font-mono leading-relaxed">
+            {decodeText(item.content)}
+          </p>
+        {:else if item.contentType === 'image'}
+          <div class="relative rounded-md overflow-hidden border border-border bg-muted/50 max-h-32 w-fit">
+            <img 
+              src={createImageSrc(item.content)} 
+              alt="Clipboard content" 
+              class="max-w-full h-auto object-contain max-h-32"
+              loading="lazy"
+            />
+          </div>
+        {:else}
+          <p class="text-sm text-muted-foreground italic">
+            [Binary File Data]
+          </p>
+        {/if}
+        
+        <div class="mt-2 flex items-center justify-between">
+          <span class="text-xs text-muted-foreground font-medium">
+            {formatTime(item.timestamp)}
+          </span>
+          
+          <!-- Actions (visible on hover) -->
+          <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              class="h-7 w-7"
+              title="复制"
+              onclick={async () => {
+                await clipboardStore.copyToClipboard(item);
+              }}
+            >
+              <Copy class="h-3.5 w-3.5" />
+            </Button>
+            
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              class="h-7 w-7 {item.isPinned ? 'text-primary' : 'text-muted-foreground'}"
+              title={item.isPinned ? "取消置顶" : "置顶"}
+              onclick={async () => {
+                await clipboardStore.togglePin(item.id);
+              }}
+            >
+              <Pin class="h-3.5 w-3.5 {item.isPinned ? 'fill-current' : ''}" />
+            </Button>
+            
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              class="h-7 w-7 text-muted-foreground hover:text-destructive"
+              title="删除"
+              onclick={async () => {
+                await clipboardStore.deleteItem(item.id);
+              }}
+            >
+              <Trash2 class="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
+  </Card>
 </div>
-
-<style>
-  .clip-item {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid #e5e7eb;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-  }
-
-  .clip-item:hover {
-    background-color: #f9fafb;
-  }
-
-  .clip-content {
-    margin-bottom: 0.5rem;
-  }
-
-  .preview-text {
-    font-size: 0.875rem;
-    line-height: 1.5;
-    color: #374151;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .image-preview {
-    max-width: 100%;
-    max-height: 128px;
-    overflow: hidden;
-    border-radius: 0.375rem;
-  }
-
-  .image-preview img {
-    width: 100%;
-    height: auto;
-    object-fit: contain;
-  }
-
-  .file-preview {
-    font-size: 0.875rem;
-    color: #6b7280;
-  }
-
-  .clip-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .timestamp {
-    font-size: 0.75rem;
-    color: #9ca3af;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .action-btn {
-    padding: 0.25rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 1rem;
-    opacity: 0.6;
-    transition: opacity 0.15s ease;
-  }
-
-  .action-btn:hover {
-    opacity: 1;
-  }
-
-  .delete-btn:hover {
-    filter: brightness(0.8);
-  }
-</style>

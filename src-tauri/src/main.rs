@@ -112,7 +112,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
 
     if pinned_count > 0 {
         // 添加置顶标题
-        let pinned_header = MenuItemBuilder::with_id("pinned_header", "📌 置顶项").enabled(false).build(app)?;
+        let pinned_header = MenuItemBuilder::with_id("pinned_header", "置顶项").enabled(false).build(app)?;
         menu_builder = menu_builder.item(&pinned_header);
 
         // 添加置顶项
@@ -138,7 +138,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
 
     if !recent_unpinned.is_empty() {
         // 添加历史标题
-        let recent_header = MenuItemBuilder::with_id("recent_header", "🕒 最近复制").enabled(false).build(app)?;
+        let recent_header = MenuItemBuilder::with_id("recent_header", "最近复制").enabled(false).build(app)?;
         menu_builder = menu_builder.item(&recent_header);
 
         // 添加最近项
@@ -155,8 +155,8 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
     // 底部分隔线和操作按钮
     menu_builder = menu_builder
         .separator()
-        .item(&MenuItemBuilder::with_id("clear_non_pinned", "🗑️ 清除非置顶").build(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "⚙️ 设置").build(app)?)
+        .item(&MenuItemBuilder::with_id("clear_non_pinned", "清除非置顶").build(app)?)
+        .item(&MenuItemBuilder::with_id("settings", "设置").build(app)?)
         .item(&MenuItemBuilder::with_id("quit", "退出").build(app)?);
 
     menu_builder.build()
@@ -178,8 +178,8 @@ fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usize) 
                 text.to_string()
             }
         }
-        ContentType::Image => "🖼️ 图片".to_string(),
-        ContentType::File => "📎 文件".to_string(),
+        ContentType::Image => "[图片]".to_string(),
+        ContentType::File => "[文件]".to_string(),
     }
 }
 

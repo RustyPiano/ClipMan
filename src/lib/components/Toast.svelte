@@ -1,57 +1,23 @@
 <script lang="ts">
 import { toastStore } from '$lib/stores/toast.svelte';
+import { fly } from 'svelte/transition';
+import { CheckCircle, AlertCircle } from 'lucide-svelte';
 </script>
 
-<div class="toast-container">
+<div class="fixed bottom-8 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-[9999] pointer-events-none">
   {#each toastStore.toasts as toast (toast.id)}
-    <div class="toast" class:success={toast.type === 'success'} class:error={toast.type === 'error'}>
+    <div
+      class="px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2 justify-center
+             {toast.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}"
+      in:fly={{ y: 10, duration: 200 }}
+      out:fly={{ y: -10, duration: 200 }}
+    >
+      {#if toast.type === 'success'}
+        <CheckCircle class="h-4 w-4" />
+      {:else}
+        <AlertCircle class="h-4 w-4" />
+      {/if}
       {toast.message}
     </div>
   {/each}
 </div>
-
-<style>
-  .toast-container {
-    position: fixed;
-    bottom: 2rem;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    z-index: 9999;
-    pointer-events: none;
-  }
-
-  .toast {
-    padding: 0.5rem 1rem;
-    border-radius: 2rem;
-    background-color: #333;
-    color: white;
-    font-size: 0.875rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    animation: slide-up 0.2s ease-out;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .toast.success {
-    background-color: #10b981;
-  }
-
-  .toast.error {
-    background-color: #ef4444;
-  }
-
-  @keyframes slide-up {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-</style>

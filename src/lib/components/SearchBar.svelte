@@ -1,124 +1,58 @@
 <script lang="ts">
-import { clipboardStore } from '$lib/stores/clipboard.svelte';
+  import { onDestroy } from 'svelte';
+  import { clipboardStore } from '$lib/stores/clipboard.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import { Search, X } from 'lucide-svelte';
 
-let { placeholder = '搜索剪切板历史...' } = $props();
+  const SEARCH_DEBOUNCE_MS = 300;
 
-let inputValue = $state('');
+  let searchQuery = $state('');
+  let debounceTimer: ReturnType<typeof setTimeout>;
 
-let timer: number;
+  function handleInput(e: Event) {
+    const target = e.target as HTMLInputElement;
+    searchQuery = target.value;
+    
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      clipboardStore.search(searchQuery);
+    }, SEARCH_DEBOUNCE_MS);
+  }
 
-function handleInput(event: Event) {
-  const target = event.target as HTMLInputElement;
-  inputValue = target.value;
-  
-  clearTimeout(timer);
-  timer = setTimeout(() => {
-    clipboardStore.search(inputValue);
-  }, 300);
-}
+  function clearSearch() {
+    searchQuery = '';
+    clipboardStore.search('');
+  }
 
-function clearSearch() {
-  inputValue = '';
-  clipboardStore.search('');
-}
+  // Cleanup debounce timer on component destroy
+  onDestroy(() => {
+    clearTimeout(debounceTimer);
+  });
 </script>
 
-<div class="search-bar">
-  <div class="search-input-wrapper">
-    <svg
-      class="search-icon"
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-    >
-      <path
-        fill-rule="evenodd"
-        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
-        clip-rule="evenodd"
-      />
-    </svg>
-
-    <input
-      type="text"
-      value={inputValue}
-      oninput={handleInput}
-      {placeholder}
-      class="search-input"
-    />
-
-    {#if inputValue}
-      <button
-        onclick={clearSearch}
-        class="clear-button"
-        aria-label="清除搜索"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-          />
-        </svg>
-      </button>
-    {/if}
+<div class="relative w-full max-w-md mx-auto">
+  <div class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
+    <Search class="h-4 w-4" />
   </div>
+  
+  <Input
+    type="text"
+    placeholder="搜索剪切板内容..."
+    value={searchQuery}
+    oninput={handleInput}
+    class="pl-9 pr-8 bg-muted/50 border-transparent focus:bg-background focus:border-input transition-all"
+  />
+
+  {#if searchQuery}
+    <Button
+      variant="ghost"
+      size="icon"
+      class="absolute right-1 top-1 h-7 w-7 text-muted-foreground hover:text-foreground"
+      onclick={clearSearch}
+      title="清除搜索"
+    >
+      <X class="h-4 w-4" />
+    </Button>
+  {/if}
 </div>
-
-<style>
-  .search-bar {
-    padding: 1rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .search-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 0.75rem;
-    width: 1.25rem;
-    height: 1.25rem;
-    color: #9ca3af;
-    pointer-events: none;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 0.5rem 2.5rem 0.5rem 2.5rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
-    font-size: 0.875rem;
-    transition: all 0.15s ease;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .clear-button {
-    position: absolute;
-    right: 0.75rem;
-    padding: 0.25rem;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: #9ca3af;
-    transition: color 0.15s ease;
-  }
-
-  .clear-button:hover {
-    color: #6b7280;
-  }
-
-  .clear-button svg {
-    width: 1.25rem;
-    height: 1.25rem;
-  }
-</style>
