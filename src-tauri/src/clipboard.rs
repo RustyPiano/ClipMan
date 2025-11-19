@@ -135,9 +135,9 @@ impl ClipboardMonitor {
             // Emit event to frontend
             app_handle.emit("clipboard-changed", &item_for_emit).ok();
 
-            // Update tray menu to show new item
-            crate::update_tray_menu(app_handle);
-            log::debug!("Tray menu updated after clipboard change");
+            // Note: We don't update tray menu here to avoid lag.
+            // Tray menu is updated only on explicit user actions (pin, delete, clear).
+            log::debug!("Clipboard item saved successfully");
         }
     }
 

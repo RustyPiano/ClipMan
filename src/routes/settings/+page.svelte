@@ -9,6 +9,14 @@ interface Settings {
     autoCleanup: boolean;
 }
 
+interface UpdateInfo {
+    available: boolean;
+    current_version: string;
+    latest_version?: string;
+    body?: string;
+    date?: string;
+}
+
 let settings = $state<Settings>({
     globalShortcut: 'CommandOrControl+Shift+V',
     maxHistoryItems: 100,
@@ -18,6 +26,12 @@ let settings = $state<Settings>({
 let loading = $state(true);
 let saving = $state(false);
 let message = $state('');
+
+// 更新相关状态
+let updateInfo = $state<UpdateInfo | null>(null);
+let checkingUpdate = $state(false);
+let installingUpdate = $state(false);
+let updateMessage = $state('');
 
 onMount(async () => {
     await loadSettings();
@@ -58,6 +72,45 @@ const shortcutPresets = [
     { label: 'Alt + V', value: 'Alt+V' },
     { label: 'Ctrl/Cmd + `', value: 'CommandOrControl+`' },
 ];
+
+// 检查更新
+async function checkForUpdates() {
+    try {
+        checkingUpdate = true;
+        updateMessage = '';
+        updateInfo = await invoke<UpdateInfo>('check_for_updates');
+
+        if (updateInfo.available) {
+            updateMessage = `发现新版本 ${updateInfo.latest_version}！`;
+        } else {
+            updateMessage = '当前已是最新版本';
+        }
+    } catch (err) {
+        console.error('Failed to check for updates:', err);
+        updateMessage = '检查更新失败: ' + err;
+        if (err.toString().includes('Not Found') || err.toString().includes('404')) {
+            updateMessage = '检查更新失败: 未找到更新信息 (可能是尚未发布新版本)';
+        }
+    } finally {
+        checkingUpdate = false;
+    }
+}
+
+// 安装更新
+async function installUpdate() {
+    if (!updateInfo?.available) return;
+
+    try {
+        installingUpdate = true;
+        updateMessage = '正在下载并安装更新...';
+        await invoke('install_update');
+        updateMessage = '更新安装成功！应用将重启。';
+    } catch (err) {
+        console.error('Failed to install update:', err);
+        updateMessage = '安装更新失败: ' + err;
+        installingUpdate = false;
+    }
+}
 </script>
 
 <div class="settings-page">
@@ -136,6 +189,68 @@ const shortcutPresets = [
                         />
                         自动清理超出限制的历史记录
                     </label>
+                </div>
+            </section>
+
+            <!-- 关于和更新 -->
+            <section class="setting-section">
+                <h2>ℹ️ 关于和更新</h2>
+
+                <div class="update-info">
+                    <div class="version-info">
+                        {#if updateInfo}
+                            <p>
+                                <strong>当前版本：</strong>
+                                <span class="version">{updateInfo.current_version}</span>
+                            </p>
+                            {#if updateInfo.available && updateInfo.latest_version}
+                                <p>
+                                    <strong>最新版本：</strong>
+                                    <span class="version latest">{updateInfo.latest_version}</span>
+                                </p>
+                                {#if updateInfo.body}
+                                    <div class="release-notes">
+                                        <strong>更新内容：</strong>
+                                        <pre>{updateInfo.body}</pre>
+                                    </div>
+                                {/if}
+                            {/if}
+                        {:else}
+                            <p class="hint">点击下方按钮检查更新</p>
+                        {/if}
+                    </div>
+
+                    <div class="update-actions">
+                        <button
+                            type="button"
+                            class="btn-update"
+                            onclick={checkForUpdates}
+                            disabled={checkingUpdate || installingUpdate}
+                        >
+                            {checkingUpdate ? '检查中...' : '🔍 检查更新'}
+                        </button>
+
+                        {#if updateInfo?.available}
+                            <button
+                                type="button"
+                                class="btn-install"
+                                onclick={installUpdate}
+                                disabled={installingUpdate}
+                            >
+                                {installingUpdate ? '安装中...' : '⬇️ 安装更新'}
+                            </button>
+                        {/if}
+                    </div>
+
+                    {#if updateMessage}
+                        <div
+                            class="update-message"
+                            class:error={updateMessage.includes('失败')}
+                            class:success={updateMessage.includes('最新版本') || updateMessage.includes('成功')}
+                        >
+                            {updateMessage}
+                        </div>
+                    {/if}
                 </div>
             </section>
 
@@ -376,5 +491,133 @@ small {
     margin-top: 0.3rem;
     color: #888;
     font-size: 0.85rem;
+}
+
+/* 更新相关样式 */
+.update-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.version-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.version-info p {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.version {
+    font-family: 'Courier New', monospace;
+    background: #e9ecef;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.9rem;
+}
+
+.version.latest {
+    background: #d4edda;
+    color: #155724;
+    font-weight: 600;
+}
+
+.release-notes {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.release-notes strong {
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.release-notes pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #555;
+}
+
+.hint {
+    margin: 0;
+    color: #888;
+    font-style: italic;
+}
+
+.update-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.btn-update,
+.btn-install {
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 120px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.btn-update {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-update:hover:not(:disabled) {
+    background: #545b62;
+}
+
+.btn-install {
+    background: #28a745;
+    color: white;
+}
+
+.btn-install:hover:not(:disabled) {
+    background: #218838;
+}
+
+.btn-update:disabled,
+.btn-install:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.update-message {
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    background: #e9ecef;
+    color: #495057;
+}
+
+.update-message.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.update-message.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
 }
 </style>

@@ -4,26 +4,11 @@ import { clipboardStore } from '$lib/stores/clipboard.svelte';
 
 let { item }: { item: ClipItem } = $props();
 
-// Format timestamp
-const formattedTime = $derived(() => {
-  const date = new Date(item.timestamp * 1000);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return '刚刚';
-  if (diffMins < 60) return `${diffMins}分钟前`;
-  if (diffMins < 1440) return `${Math.floor(diffMins / 60)}小时前`;
-  return date.toLocaleDateString('zh-CN');
-});
-
 // Helper function to decode content (handles both array and base64 string)
 function decodeContent(content: number[] | string): Uint8Array {
   if (Array.isArray(content)) {
-    // Content is already a byte array
     return new Uint8Array(content);
   } else {
-    // Content is base64 string, decode it
     const binaryString = atob(content);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
@@ -33,48 +18,63 @@ function decodeContent(content: number[] | string): Uint8Array {
   }
 }
 
-// Get preview text
-const previewText = $derived(() => {
-  if (item.contentType !== 'text') return '';
+// Compute these values once when component is created
+let formattedTime = $state('');
+let previewText = $state('');
+let imageDataUrl = $state('');
 
-  // Check if content is empty
-  if (!item.content || item.content.length === 0) {
-    console.warn('Empty content for item:', item.id);
-    return '[内容为空]';
-  }
+// Update values when item changes
+$effect(() => {
+  // Format timestamp
+  const date = new Date(item.timestamp * 1000);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
 
-  try {
-    // Decode to bytes
-    const bytes = decodeContent(item.content);
-    const text = new TextDecoder().decode(bytes);
-    console.log('Decoded text:', text.slice(0, 50));
-    return text.slice(0, 200);
-  } catch (e) {
-    console.error('Failed to decode content:', e, 'Content:', Array.isArray(item.content) ? `Array(${item.content.length})` : item.content.slice(0, 50));
-    return '[解码失败]';
-  }
-});
+  if (diffMins < 1) formattedTime = '刚刚';
+  else if (diffMins < 60) formattedTime = `${diffMins}分钟前`;
+  else if (diffMins < 1440) formattedTime = `${Math.floor(diffMins / 60)}小时前`;
+  else formattedTime = date.toLocaleDateString('zh-CN');
 
-// Convert content to base64 for image display
-const imageBase64 = $derived(() => {
-  if (item.contentType !== 'image') return '';
-
-  try {
-    if (Array.isArray(item.content)) {
-      // Convert byte array to base64
-      const bytes = new Uint8Array(item.content);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      return btoa(binary);
+  // Decode text content
+  if (item.contentType === 'text') {
+    if (!item.content || item.content.length === 0) {
+      previewText = '[内容为空]';
     } else {
-      // Already base64 string
-      return item.content;
+      try {
+        const bytes = decodeContent(item.content);
+        const text = new TextDecoder().decode(bytes);
+        previewText = text.slice(0, 200);
+      } catch (e) {
+        console.error('Failed to decode content:', e);
+        previewText = '[解码失败]';
+      }
     }
-  } catch (e) {
-    console.error('Failed to convert image to base64:', e);
-    return '';
+  } else {
+    previewText = ''; // Clear previewText if not text content
+  }
+
+  // Convert image to data URL
+  if (item.contentType === 'image') {
+    try {
+      let base64: string;
+      if (Array.isArray(item.content)) {
+        const bytes = new Uint8Array(item.content);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        base64 = btoa(binary);
+      } else {
+        base64 = item.content;
+      }
+      imageDataUrl = `data:image/png;base64,${base64}`;
+    } catch (e) {
+      console.error('Failed to convert image:', e);
+      imageDataUrl = '';
+    }
+  } else {
+    imageDataUrl = ''; // Clear imageDataUrl if not image content
   }
 });
 
@@ -101,11 +101,11 @@ async function handleDelete() {
 >
   <div class="clip-content">
     {#if item.contentType === 'text'}
-      <p class="preview-text">{previewText()}</p>
+      <p class="preview-text">{previewText}</p>
     {:else if item.contentType === 'image'}
       <div class="image-preview">
         <img
-          src={`data:image/png;base64,${imageBase64()}`}
+          src={imageDataUrl}
           alt="预览"
         />
       </div>
@@ -115,7 +115,7 @@ async function handleDelete() {
   </div>
 
   <div class="clip-meta">
-    <span class="timestamp">{formattedTime()}</span>
+    <span class="timestamp">{formattedTime}</span>
     <div class="actions">
       <button
         class="action-btn"

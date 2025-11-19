@@ -16,6 +16,7 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 use std::sync::{Arc, Mutex};
 use std::fs;
 use std::path::PathBuf;
@@ -372,6 +373,98 @@ async fn copy_to_system_clipboard(
 }
 
 #[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, String> {
+    log::info!("Checking for updates...");
+
+    // Get current version from package info
+    let current_version = app.package_info().version.to_string();
+
+    // Check for updates using Tauri updater
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(update) => {
+                    if let Some(update_info) = update {
+                        let available_version = update_info.version.clone();
+                        log::info!("Update available: {} -> {}", current_version, available_version);
+
+                        Ok(serde_json::json!({
+                            "available": true,
+                            "current_version": current_version,
+                            "latest_version": available_version,
+                            "body": update_info.body,
+                            "date": update_info.date.map(|d| d.to_string())
+                        }))
+                    } else {
+                        log::info!("No updates available. Current version: {}", current_version);
+                        Ok(serde_json::json!({
+                            "available": false,
+                            "current_version": current_version
+                        }))
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to check for updates: {}", e);
+                    Err(format!("Failed to check for updates: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to get updater: {}", e);
+            Err(format!("Failed to get updater: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    log::info!("Installing update...");
+
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(update) => {
+                    if let Some(update_info) = update {
+                        log::info!("Downloading and installing update: {}", update_info.version);
+
+                        // Download and install the update
+                        match update_info.download_and_install(|chunk_length, content_length| {
+                            if let Some(total) = content_length {
+                                let progress = (chunk_length as f64 / total as f64) * 100.0;
+                                log::debug!("Download progress: {:.2}%", progress);
+                            }
+                        }, || {
+                            log::info!("Download complete, installing...");
+                        }).await {
+                            Ok(_) => {
+                                log::info!("Update installed successfully. Restarting app...");
+                                // Restart the application to apply the update
+                                // Note: restart() returns ! (never), so code after it is unreachable
+                                app.restart();
+                            }
+                            Err(e) => {
+                                log::error!("Failed to download/install update: {}", e);
+                                Err(format!("Failed to download/install update: {}", e))
+                            }
+                        }
+                    } else {
+                        Err("No update available".to_string())
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to check for updates: {}", e);
+                    Err(format!("Failed to check for updates: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to get updater: {}", e);
+            Err(format!("Failed to get updater: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
 async fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -455,6 +548,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Initialize storage
             let app_data_dir = app.path().app_data_dir()
@@ -621,7 +715,9 @@ fn main() {
             check_clipboard_permission,
             clear_all_history,
             clear_non_pinned_history,
-            copy_to_system_clipboard
+            copy_to_system_clipboard,
+            check_for_updates,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

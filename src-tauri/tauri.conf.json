@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClipMan",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.clipman.manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,12 +26,15 @@
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: asset: https://asset.localhost",
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -57,6 +60,14 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQ0NGMkNGMDI5NEZDQkEKUldTNi9KUUN6L0xNazAxVHdBR3VjVHlrK0hidlRtTUM3bWJuVHRrcC9sVnB0TC8rZzV6eFdLU1YK",
+      "endpoints": [
+        "https://github.com/Kiaana/ClipMan/releases/latest/download/latest.json"
+      ],
+      "dialog": false
     }
   }
 }
