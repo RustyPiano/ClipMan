@@ -63,33 +63,6 @@ impl ClipStorage {
             [],
         )?;
 
-        // Create FTS5 virtual table for full-text search
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts
-             USING fts5(id, content_text, content=clips, content_rowid=rowid)",
-            [],
-        )?;
-
-        // Create triggers to keep FTS in sync
-        conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS clips_ai AFTER INSERT ON clips BEGIN
-                INSERT INTO clips_fts(rowid, id, content_text)
-                VALUES (new.rowid, new.id, CASE
-                    WHEN new.content_type = 'text' THEN new.content
-                    ELSE ''
-                END);
-             END",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS clips_ad AFTER DELETE ON clips BEGIN
-                INSERT INTO clips_fts(clips_fts, rowid, id, content_text)
-                VALUES('delete', old.rowid, old.id, '');
-             END",
-            [],
-        )?;
-
         // Create index for fast queries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON clips(timestamp DESC)",
@@ -210,7 +183,7 @@ impl ClipStorage {
              FROM clips
              WHERE content_type = 'text'
              ORDER BY timestamp DESC
-             LIMIT 100"
+             LIMIT 500"
         )?;
 
         let items = stmt.query_map([], |row| {

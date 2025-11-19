@@ -42,7 +42,7 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 struct AppState {
-    storage: Mutex<ClipStorage>,
+    storage: Arc<Mutex<ClipStorage>>,
     monitor: Mutex<Option<ClipboardMonitor>>,
     #[allow(dead_code)] // crypto is used indirectly via storage
     crypto: Arc<Crypto>,
@@ -201,9 +201,15 @@ async fn get_clipboard_history(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<ClipItem>, String> {
-    let storage = safe_lock(&state.storage);
-    storage.get_recent(limit.unwrap_or(100))
-        .map_err(|e| e.to_string())
+    let storage = state.storage.clone();
+    let limit = limit.unwrap_or(100);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.get_recent(limit).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -211,9 +217,14 @@ async fn search_clips(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<ClipItem>, String> {
-    let storage = safe_lock(&state.storage);
-    storage.search(&query)
-        .map_err(|e| e.to_string())
+    let storage = state.storage.clone();
+    
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.search(&query).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -223,12 +234,15 @@ async fn toggle_pin(
     id: String,
     is_pinned: bool,
 ) -> Result<(), String> {
-    let storage = safe_lock(&state.storage);
-    storage.update_pin(&id, is_pinned)
-        .map_err(|e| e.to_string())?;
+    let storage = state.storage.clone();
+    
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.update_pin(&id, is_pinned).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
-    // 释放锁后更新托盘菜单
-    drop(storage);
     update_tray_menu(&app);
 
     Ok(())
@@ -240,12 +254,15 @@ async fn delete_clip(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let storage = safe_lock(&state.storage);
-    storage.delete(&id)
-        .map_err(|e| e.to_string())?;
+    let storage = state.storage.clone();
 
-    // 释放锁后更新托盘菜单
-    drop(storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.delete(&id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
     update_tray_menu(&app);
 
     Ok(())
@@ -255,9 +272,14 @@ async fn delete_clip(
 async fn get_pinned_clips(
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
-    let storage = safe_lock(&state.storage);
-    storage.get_pinned()
-        .map_err(|e| e.to_string())
+    let storage = state.storage.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.get_pinned().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -288,11 +310,15 @@ async fn clear_all_history(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     log::info!("Clearing all clipboard history (user requested)");
-    let storage = safe_lock(&state.storage);
-    storage.clear_all().map_err(|e| e.to_string())?;
+    let storage = state.storage.clone();
 
-    // 更新托盘菜单
-    drop(storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.clear_all().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
     update_tray_menu(&app);
 
     Ok(())
@@ -304,11 +330,15 @@ async fn clear_non_pinned_history(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     log::info!("Clearing non-pinned clipboard history (user requested)");
-    let storage = safe_lock(&state.storage);
-    storage.clear_non_pinned().map_err(|e| e.to_string())?;
+    let storage = state.storage.clone();
 
-    // 更新托盘菜单
-    drop(storage);
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage.clear_non_pinned().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
     update_tray_menu(&app);
 
     // 发送事件通知前端更新
@@ -324,17 +354,24 @@ async fn copy_to_system_clipboard(
     state: State<'_, AppState>,
     clip_id: String,
 ) -> Result<(), String> {
-    use arboard::Clipboard;
+    use arboard::{Clipboard, ImageData};
+    use image::GenericImageView;
+    use std::borrow::Cow;
 
-    let storage = safe_lock(&state.storage);
+    let storage = state.storage.clone();
+    
+    // Fetch item in blocking thread
+    let item = tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        let items = storage.get_recent(100).map_err(|e| e.to_string())?;
+        items.into_iter()
+            .find(|i| i.id == clip_id)
+            .ok_or_else(|| "Clip not found".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
-    // 从数据库获取完整内容
-    let items = storage.get_recent(100).map_err(|e| e.to_string())?;
-    let item = items.iter()
-        .find(|i| i.id == clip_id)
-        .ok_or_else(|| "Clip not found".to_string())?;
-
-    // 复制到系统剪切板
+    // Copy to system clipboard
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
     match item.content_type {
@@ -343,9 +380,10 @@ async fn copy_to_system_clipboard(
 
             // Mark this text as "copied by us" so monitor doesn't re-capture it
             let last_copy = state.last_copied_by_us.clone();
-            let mut last_copy_guard = last_copy.lock().unwrap();
-            *last_copy_guard = Some(text.clone());
-            drop(last_copy_guard);
+            {
+                let mut last_copy_guard = last_copy.lock().unwrap();
+                *last_copy_guard = Some(text.clone());
+            }
 
             clipboard.set_text(&text).map_err(|e| e.to_string())?;
 
@@ -361,9 +399,22 @@ async fn copy_to_system_clipboard(
             Ok(())
         }
         ContentType::Image => {
-            // TODO: 实现图片复制（需要 ImageData → arboard 转换）
-            log::warn!("Image copy from window not yet implemented");
-            Err("图片复制功能尚未实现".to_string())
+            // Decode PNG to RGBA
+            let img = image::load_from_memory(&item.content)
+                .map_err(|e| format!("Failed to decode image: {}", e))?;
+            
+            let (width, height) = img.dimensions();
+            let rgba_bytes = img.to_rgba8().into_raw();
+
+            let image_data = ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: Cow::from(rgba_bytes),
+            };
+
+            clipboard.set_image(image_data).map_err(|e| e.to_string())?;
+            log::info!("✅ Copied image to clipboard from window ({}x{})", width, height);
+            Ok(())
         }
         ContentType::File => {
             log::warn!("File copy not supported");
@@ -581,7 +632,7 @@ fn main() {
             let last_copied_by_us = Arc::new(Mutex::new(None));
 
             let app_state = AppState {
-                storage: Mutex::new(storage),
+                storage: Arc::new(Mutex::new(storage)),
                 monitor: Mutex::new(None),
                 crypto: crypto.clone(),
                 settings: settings_manager.clone(),
@@ -626,12 +677,15 @@ fn main() {
                         }
                         id if id.starts_with("clip:") => {
                             // 提取剪切板项 ID 并复制内容
-                            let clip_id = id.strip_prefix("clip:").unwrap();
+                            let clip_id = id.strip_prefix("clip:").unwrap().to_string();
                             log::info!("Clip item clicked: {}", clip_id);
 
-                            if let Err(e) = copy_clip_to_clipboard(app, clip_id) {
-                                log::error!("Failed to copy clip: {}", e);
-                            }
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = copy_clip_to_clipboard(&app_clone, &clip_id).await {
+                                    log::error!("Failed to copy clip: {}", e);
+                                }
+                            });
                         }
                         _ => {
                             log::debug!("Unhandled menu event: {}", event_id);
@@ -724,17 +778,26 @@ fn main() {
 }
 
 // 复制剪切板项到系统剪切板
-fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), String> {
-    use arboard::Clipboard;
+// 复制剪切板项到系统剪切板
+async fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), String> {
+    use arboard::{Clipboard, ImageData};
+    use image::GenericImageView;
+    use std::borrow::Cow;
 
     let state = app.state::<AppState>();
-    let storage = safe_lock(&state.storage);
+    let storage = state.storage.clone();
+    let clip_id = clip_id.to_string();
 
-    // 从数据库获取完整内容
-    let items = storage.get_recent(100).map_err(|e| e.to_string())?;
-    let item = items.iter()
-        .find(|i| i.id == clip_id)
-        .ok_or_else(|| "Clip not found".to_string())?;
+    // Fetch item in blocking thread
+    let item = tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        let items = storage.get_recent(100).map_err(|e| e.to_string())?;
+        items.into_iter()
+            .find(|i| i.id == clip_id)
+            .ok_or_else(|| "Clip not found".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     // 复制到系统剪切板
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
@@ -762,9 +825,21 @@ fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), String> 
             });
         }
         ContentType::Image => {
-            // TODO: 实现图片复制
-            log::warn!("Image copy not yet implemented");
-            return Err("图片复制功能开发中".to_string());
+            // Decode PNG to RGBA
+            let img = image::load_from_memory(&item.content)
+                .map_err(|e| format!("Failed to decode image: {}", e))?;
+            
+            let (width, height) = img.dimensions();
+            let rgba_bytes = img.to_rgba8().into_raw();
+
+            let image_data = ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: Cow::from(rgba_bytes),
+            };
+
+            clipboard.set_image(image_data).map_err(|e| e.to_string())?;
+            log::info!("✅ Copied image to clipboard from tray ({}x{})", width, height);
         }
         ContentType::File => {
             log::warn!("File copy not yet implemented");

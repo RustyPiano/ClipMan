@@ -115,6 +115,7 @@ impl ClipboardMonitor {
 
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
         use crate::AppState;
+        use crate::update_tray_menu;
 
         // Clone item for emission
         let item_for_emit = item.clone();
@@ -135,9 +136,13 @@ impl ClipboardMonitor {
             // Emit event to frontend
             app_handle.emit("clipboard-changed", &item_for_emit).ok();
 
-            // Note: We don't update tray menu here to avoid lag.
-            // Tray menu is updated only on explicit user actions (pin, delete, clear).
-            log::debug!("Clipboard item saved successfully");
+            // Update tray menu
+            // We run this in the monitor thread, which is fine as it won't block the UI thread
+            // but it might delay the next clipboard check slightly.
+            log::debug!("Updating tray menu...");
+            update_tray_menu(app_handle);
+            
+            log::debug!("Clipboard item saved and tray updated");
         }
     }
 
