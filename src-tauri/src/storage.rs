@@ -63,6 +63,22 @@ impl ClipStorage {
             [],
         )?;
 
+        // Migration: Add content_hash column if it doesn't exist
+        // Check if column exists by querying pragma
+        let has_content_hash: bool = conn
+            .prepare("PRAGMA table_info(clips)")?
+            .query_map([], |row| {
+                let name: String = row.get(1)?;
+                Ok(name)
+            })?
+            .filter_map(Result::ok)
+            .any(|name| name == "content_hash");
+
+        if !has_content_hash {
+            log::info!("📦 Migrating database: adding content_hash column");
+            conn.execute("ALTER TABLE clips ADD COLUMN content_hash TEXT", [])?;
+        }
+
         // Create index for fast queries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON clips(timestamp DESC)",
@@ -74,10 +90,40 @@ impl ClipStorage {
             [],
         )?;
 
+        // Create index for content hash to speed up duplicate checks
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_hash ON clips(content_hash, content_type)",
+            [],
+        )?;
+
         Ok(Self { conn, crypto })
     }
 
     pub fn insert(&self, item: &ClipItem) -> Result<()> {
+        use sha2::{Sha256, Digest};
+
+        // Calculate content hash for deduplication
+        let mut hasher = Sha256::new();
+        hasher.update(&item.content);
+        let content_hash = format!("{:x}", hasher.finalize());
+
+        // Check if content already exists in recent items (last 100)
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM clips 
+                WHERE content_hash = ?1 AND content_type = ?2
+                ORDER BY timestamp DESC
+                LIMIT 100
+            )",
+            params![content_hash, item.content_type.to_string()],
+            |row| row.get(0)
+        )?;
+
+        if exists {
+            log::debug!("⏭️ Duplicate content detected (hash: {}), skipping", &content_hash[..8]);
+            return Ok(());
+        }
+
         // Encrypt content if crypto is available
         let content_to_store = if let Some(crypto) = &self.crypto {
             crypto.encrypt(&item.content)
@@ -90,11 +136,12 @@ impl ClipStorage {
         };
 
         self.conn.execute(
-            "INSERT INTO clips (id, content, content_type, timestamp, is_pinned, pin_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO clips (id, content, content_hash, content_type, timestamp, is_pinned, pin_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 item.id,
                 content_to_store,
+                content_hash,
                 item.content_type.to_string(),
                 item.timestamp,
                 item.is_pinned as i32,
