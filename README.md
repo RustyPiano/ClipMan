@@ -9,14 +9,15 @@
 
 ## ✨ 特性
 
-- 🔄 **自动剪切板监控** - 实时捕获文本和图像（每 500ms）
+- 🔄 **事件驱动剪切板监控** - 基于系统事件的即时捕获（v1.5.0+），CPU 占用接近 0%
+- ⚡ **异步图像处理** - 后台处理图片，不阻塞主线程（v1.6.0+）
 - 🔍 **强大搜索功能** - 基于 SQLite FTS5 全文搜索
-- 🚀 **高性能渲染** - 虚拟列表 (Virtual List) 支持海量历史记录流畅滚动
 - 📌 **置顶常用内容** - 快速访问常用剪切板项
-- 🎯 **原生托盘菜单** - 左键点击直接显示历史列表
+- 🎯 **可配置托盘菜单** - 自定义显示项数量（3-10 置顶，10-50 最近）
 - ⌨️ **全局热键** - `Cmd+Shift+V` (macOS) / `Ctrl+Shift+V` (Windows/Linux)
 - 🎨 **现代化 UI** - 简洁易用，支持暗色模式
 - 🔐 **隐私保护** - 本地存储，AES-256-GCM 端到端加密
+- 🔄 **自动更新** - GitHub Releases 集成，自动检测新版本
 - ⚡ **高性能** - Rust 后端，内存占用 < 50MB
 - 🪶 **轻量级** - 安装包 < 5MB
 - 🍎 **macOS 优化** - 菜单栏专属模式，无 Dock 图标
@@ -27,7 +28,8 @@
 - **Rust 1.82+** - 安全、高性能系统编程语言
 - **Tauri 2.0** - 现代桌面应用框架，WebView2 渲染
 - **SQLite + FTS5** - 本地数据库，全文搜索支持
-- **arboard 3.4** - 跨平台剪切板操作
+- **clipboard-master** - 事件驱动剪切板监控
+- **arboard** - 跨平台剪切板读写操作
 - **ring 0.17** - AES-256-GCM 加密
 - **image 0.25** - 图像处理和缩略图生成
 
@@ -106,16 +108,16 @@ ClipMan/
 ├── src/                    # Svelte 前端
 │   ├── lib/
 │   │   ├── components/     # Svelte 组件
-│   │   │   ├── VirtualList.svelte      # 虚拟列表组件 (New!)
-│   │   │   ├── SearchBar.svelte        # 搜索栏
-│   │   │   ├── ClipboardItem.svelte    # 历史项卡片
-│   │   │   └── PermissionCheck.svelte  # macOS 权限检查 UI
+│   │   │   ├── SearchBar.svelte          # 搜索栏
+│   │   │   ├── ClipboardItem.svelte      # 历史项卡片
+│   │   │   ├── PermissionCheck.svelte    # macOS 权限检查 UI
+│   │   │   └── Toast.svelte              # 通知提示
 │   │   └── stores/
-│   │       ├── clipboard.svelte.ts     # 剪切板状态管理（Runes）
-│   │       └── router.svelte.ts        # 客户端路由
+│   │       ├── clipboard.svelte.ts       # 剪切板状态管理（Runes）
+│   │       └── router.svelte.ts          # 客户端路由
 │   ├── routes/
-│   │   ├── +page.svelte                # 主页面
-│   │   └── settings/+page.svelte       # 设置页面
+│   │   ├── +page.svelte                  # 主页面
+│   │   └── settings/+page.svelte         # 设置页面
 │   ├── app.css             # 全局样式
 │   └── main.ts             # 前端入口
 ├── package.json            # npm 依赖
