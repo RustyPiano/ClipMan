@@ -28,7 +28,7 @@ use std::num::NonZeroUsize;
 const MAX_PINNED_IN_TRAY: usize = 5;
 const MAX_RECENT_IN_TRAY: usize = 20;
 const RECENT_ITEMS_QUERY_LIMIT: usize = 30;
-const MAX_TEXT_LENGTH_IN_TRAY: usize = 50;
+// MAX_TEXT_LENGTH_IN_TRAY is now in user settings
 const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
 
@@ -186,7 +186,11 @@ fn add_clip_menu_item(
     item: &ClipItem,
     icon_cache: &TrayIconCache,
 ) -> Result<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>, tauri::Error> {
-    let preview = truncate_content(&item.content, &item.content_type, MAX_TEXT_LENGTH_IN_TRAY);
+    // Get text length from settings
+    let state = app.state::<AppState>();
+    let max_len = state.settings.get().tray_text_length;
+    
+    let preview = truncate_content(&item.content, &item.content_type, max_len);
     
     if matches!(item.content_type, ContentType::Image) {
         // Try to get cached icon or create new one
@@ -666,13 +670,17 @@ async fn update_settings(
 
     // 检查热键是否改变
     let old_shortcut = state.settings.get().global_shortcut;
+    let old_tray_text_length = state.settings.get().tray_text_length;
     let new_shortcut = settings.global_shortcut.clone();
     let shortcut_changed = old_shortcut != new_shortcut;
+    let tray_text_changed = old_tray_text_length != settings.tray_text_length;
 
     // 更新设置
     state.settings.set_global_shortcut(settings.global_shortcut.clone());
     state.settings.set_max_history_items(settings.max_history_items);
     state.settings.set_auto_cleanup(settings.auto_cleanup);
+    state.settings.set_tray_text_length(settings.tray_text_length);
+    state.settings.set_store_original_image(settings.store_original_image);
 
     // 保存设置
     state.settings.save(&app)?;
@@ -702,6 +710,13 @@ async fn update_settings(
             .map_err(|e| format!("Failed to register new shortcut '{}': {}", new_shortcut, e))?;
 
         log::info!("Hotkey successfully updated to '{}'", new_shortcut);
+    }
+
+    // 如果托盘文本长度改变，重建托盘菜单
+    if tray_text_changed {
+        log::info!("Tray text length changed from {} to {}, rebuilding menu...", 
+                   old_tray_text_length, settings.tray_text_length);
+        update_tray_menu(&app);
     }
 
     Ok(())

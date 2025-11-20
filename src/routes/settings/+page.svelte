@@ -1,134 +1,142 @@
 <script lang="ts">
-import { invoke } from '@tauri-apps/api/core';
-import { onMount } from 'svelte';
-import { router } from '$lib/stores/router.svelte';
-import Button from '$lib/components/ui/Button.svelte';
-import Input from '$lib/components/ui/Input.svelte';
-import Card from '$lib/components/ui/Card.svelte';
-import { 
-    ChevronLeft, 
-    Keyboard, 
-    History, 
-    Info, 
-    Loader2, 
-    RefreshCw, 
-    Download, 
-    Save, 
-    RotateCcw 
-} from 'lucide-svelte';
+    import { invoke } from "@tauri-apps/api/core";
+    import { onMount } from "svelte";
+    import { router } from "$lib/stores/router.svelte";
+    import Button from "$lib/components/ui/Button.svelte";
+    import Input from "$lib/components/ui/Input.svelte";
+    import Card from "$lib/components/ui/Card.svelte";
+    import {
+        ChevronLeft,
+        Keyboard,
+        History,
+        Info,
+        Loader2,
+        RefreshCw,
+        Download,
+        Save,
+        RotateCcw,
+    } from "lucide-svelte";
 
-interface Settings {
-    globalShortcut: string;
-    maxHistoryItems: number;
-    autoCleanup: boolean;
-}
-
-interface UpdateInfo {
-    available: boolean;
-    current_version: string;
-    latest_version?: string;
-    body?: string;
-    date?: string;
-}
-
-let settings = $state<Settings>({
-    globalShortcut: 'CommandOrControl+Shift+V',
-    maxHistoryItems: 100,
-    autoCleanup: true
-});
-
-let loading = $state(true);
-let saving = $state(false);
-let message = $state('');
-
-// 更新相关状态
-let updateInfo = $state<UpdateInfo | null>(null);
-let checkingUpdate = $state(false);
-let installingUpdate = $state(false);
-let updateMessage = $state('');
-
-onMount(async () => {
-    await loadSettings();
-});
-
-async function loadSettings() {
-    try {
-        loading = true;
-        settings = await invoke<Settings>('get_settings');
-    } catch (err) {
-        console.error('Failed to load settings:', err);
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        message = '加载设置失败: ' + errorMsg;
-    } finally {
-        loading = false;
+    interface Settings {
+        globalShortcut: string;
+        maxHistoryItems: number;
+        autoCleanup: boolean;
+        trayTextLength: number;
+        storeOriginalImage: boolean;
     }
-}
 
-async function saveSettings() {
-    try {
-        saving = true;
-        message = '';
-        await invoke('update_settings', { settings });
-        message = '设置已保存！';
-        setTimeout(() => message = '', 3000);
-    } catch (err) {
-        console.error('Failed to save settings:', err);
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        message = '保存失败: ' + errorMsg;
-    } finally {
-        saving = false;
+    interface UpdateInfo {
+        available: boolean;
+        current_version: string;
+        latest_version?: string;
+        body?: string;
+        date?: string;
     }
-}
 
-// 常用热键预设
-const shortcutPresets = [
-    { label: 'Ctrl/Cmd + Shift + V (默认)', value: 'CommandOrControl+Shift+V' },
-    { label: 'Ctrl/Cmd + Alt + V', value: 'CommandOrControl+Alt+V' },
-    { label: 'Ctrl/Cmd + Shift + C', value: 'CommandOrControl+Shift+C' },
-    { label: 'Alt + V', value: 'Alt+V' },
-    { label: 'Ctrl/Cmd + `', value: 'CommandOrControl+`' },
-];
+    let settings = $state<Settings>({
+        globalShortcut: "CommandOrControl+Shift+V",
+        maxHistoryItems: 100,
+        autoCleanup: true,
+        trayTextLength: 50,
+        storeOriginalImage: false,
+    });
 
-// 检查更新
-async function checkForUpdates() {
-    try {
-        checkingUpdate = true;
-        updateMessage = '';
-        updateInfo = await invoke<UpdateInfo>('check_for_updates');
+    let loading = $state(true);
+    let saving = $state(false);
+    let message = $state("");
 
-        if (updateInfo.available) {
-            updateMessage = `发现新版本 ${updateInfo.latest_version}！`;
-        } else {
-            updateMessage = '当前已是最新版本';
+    // 更新相关状态
+    let updateInfo = $state<UpdateInfo | null>(null);
+    let checkingUpdate = $state(false);
+    let installingUpdate = $state(false);
+    let updateMessage = $state("");
+
+    onMount(async () => {
+        await loadSettings();
+    });
+
+    async function loadSettings() {
+        try {
+            loading = true;
+            settings = await invoke<Settings>("get_settings");
+        } catch (err) {
+            console.error("Failed to load settings:", err);
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            message = "加载设置失败: " + errorMsg;
+        } finally {
+            loading = false;
         }
-    } catch (err) {
-        console.error('Failed to check for updates:', err);
-        const errStr = String(err);
-        updateMessage = '检查更新失败: ' + errStr;
-        if (errStr.includes('Not Found') || errStr.includes('404')) {
-            updateMessage = '检查更新失败: 未找到更新信息 (可能是尚未发布新版本)';
+    }
+
+    async function saveSettings() {
+        try {
+            saving = true;
+            message = "";
+            await invoke("update_settings", { settings });
+            message = "设置已保存！";
+            setTimeout(() => (message = ""), 3000);
+        } catch (err) {
+            console.error("Failed to save settings:", err);
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            message = "保存失败: " + errorMsg;
+        } finally {
+            saving = false;
         }
-    } finally {
-        checkingUpdate = false;
     }
-}
 
-// 安装更新
-async function installUpdate() {
-    if (!updateInfo?.available) return;
+    // 常用热键预设
+    const shortcutPresets = [
+        {
+            label: "Ctrl/Cmd + Shift + V (默认)",
+            value: "CommandOrControl+Shift+V",
+        },
+        { label: "Ctrl/Cmd + Alt + V", value: "CommandOrControl+Alt+V" },
+        { label: "Ctrl/Cmd + Shift + C", value: "CommandOrControl+Shift+C" },
+        { label: "Alt + V", value: "Alt+V" },
+        { label: "Ctrl/Cmd + `", value: "CommandOrControl+`" },
+    ];
 
-    try {
-        installingUpdate = true;
-        updateMessage = '正在下载并安装更新...';
-        await invoke('install_update');
-        updateMessage = '更新安装成功！应用将重启。';
-    } catch (err) {
-        console.error('Failed to install update:', err);
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        updateMessage = '安装更新失败: ' + errorMsg;
-        installingUpdate = false;
+    // 检查更新
+    async function checkForUpdates() {
+        try {
+            checkingUpdate = true;
+            updateMessage = "";
+            updateInfo = await invoke<UpdateInfo>("check_for_updates");
+
+            if (updateInfo.available) {
+                updateMessage = `发现新版本 ${updateInfo.latest_version}！`;
+            } else {
+                updateMessage = "当前已是最新版本";
+            }
+        } catch (err) {
+            console.error("Failed to check for updates:", err);
+            const errStr = String(err);
+            updateMessage = "检查更新失败: " + errStr;
+            if (errStr.includes("Not Found") || errStr.includes("404")) {
+                updateMessage =
+                    "检查更新失败: 未找到更新信息 (可能是尚未发布新版本)";
+            }
+        } finally {
+            checkingUpdate = false;
+        }
     }
-}
+
+    // 安装更新
+    async function installUpdate() {
+        if (!updateInfo?.available) return;
+
+        try {
+            installingUpdate = true;
+            updateMessage = "正在下载并安装更新...";
+            await invoke("install_update");
+            updateMessage = "更新安装成功！应用将重启。";
+        } catch (err) {
+            console.error("Failed to install update:", err);
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            updateMessage = "安装更新失败: " + errorMsg;
+            installingUpdate = false;
+        }
+    }
 </script>
 
 <div class="min-h-screen bg-background text-foreground p-6 overflow-y-auto">
@@ -139,7 +147,9 @@ async function installUpdate() {
             </Button>
             <div>
                 <h1 class="text-2xl font-bold">设置</h1>
-                <p class="text-sm text-muted-foreground">配置 ClipMan 的行为和快捷键</p>
+                <p class="text-sm text-muted-foreground">
+                    配置 ClipMan 的行为和快捷键
+                </p>
             </div>
         </header>
 
@@ -148,20 +158,31 @@ async function installUpdate() {
                 <Loader2 class="h-6 w-6 animate-spin mr-2" /> 加载中...
             </div>
         {:else}
-            <form onsubmit={(e) => { e.preventDefault(); saveSettings(); }} class="space-y-6">
+            <form
+                onsubmit={(e) => {
+                    e.preventDefault();
+                    saveSettings();
+                }}
+                class="space-y-6"
+            >
                 <!-- 全局热键设置 -->
                 <Card class="p-6 space-y-4">
                     <div>
-                        <h2 class="text-lg font-semibold flex items-center gap-2">
+                        <h2
+                            class="text-lg font-semibold flex items-center gap-2"
+                        >
                             <Keyboard class="h-5 w-5" /> 全局热键
                         </h2>
                         <p class="text-sm text-muted-foreground mt-1">
-                            设置打开 ClipMan 窗口的快捷键。Mac 上 Ctrl 会自动替换为 Cmd。
+                            设置打开 ClipMan 窗口的快捷键。Mac 上 Ctrl
+                            会自动替换为 Cmd。
                         </p>
                     </div>
 
                     <div class="space-y-2">
-                        <label for="shortcut-input" class="text-sm font-medium">自定义快捷键</label>
+                        <label for="shortcut-input" class="text-sm font-medium"
+                            >自定义快捷键</label
+                        >
                         <Input
                             id="shortcut-input"
                             type="text"
@@ -176,9 +197,14 @@ async function installUpdate() {
                             {#each shortcutPresets as preset}
                                 <Button
                                     type="button"
-                                    variant={settings.globalShortcut === preset.value ? 'default' : 'outline'}
+                                    variant={settings.globalShortcut ===
+                                    preset.value
+                                        ? "default"
+                                        : "outline"}
                                     size="sm"
-                                    onclick={() => settings.globalShortcut = preset.value}
+                                    onclick={() =>
+                                        (settings.globalShortcut =
+                                            preset.value)}
                                 >
                                     {preset.label}
                                 </Button>
@@ -195,8 +221,12 @@ async function installUpdate() {
 
                     <div class="space-y-2">
                         <div class="flex justify-between">
-                            <label for="max-items" class="text-sm font-medium">最大历史条目数</label>
-                            <span class="text-sm font-bold text-primary">{settings.maxHistoryItems}</span>
+                            <label for="max-items" class="text-sm font-medium"
+                                >最大历史条目数</label
+                            >
+                            <span class="text-sm font-bold text-primary"
+                                >{settings.maxHistoryItems}</span
+                            >
                         </div>
                         <input
                             id="max-items"
@@ -207,7 +237,9 @@ async function installUpdate() {
                             bind:value={settings.maxHistoryItems}
                             class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
                         />
-                        <p class="text-xs text-muted-foreground text-right">范围: 50 - 500 条</p>
+                        <p class="text-xs text-muted-foreground text-right">
+                            范围: 50 - 500 条
+                        </p>
                     </div>
 
                     <div class="flex items-center gap-2">
@@ -217,8 +249,85 @@ async function installUpdate() {
                             bind:checked={settings.autoCleanup}
                             class="w-4 h-4 rounded border-input text-primary focus:ring-ring"
                         />
-                        <label for="auto-cleanup" class="text-sm font-medium cursor-pointer">
+                        <label
+                            for="auto-cleanup"
+                            class="text-sm font-medium cursor-pointer"
+                        >
                             自动清理超出限制的历史记录
+                        </label>
+                    </div>
+                </Card>
+
+                <!-- 显示设置 -->
+                <Card class="p-6 space-y-4">
+                    <h2 class="text-lg font-semibold flex items-center gap-2">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="20"
+                            height="20"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            ><rect
+                                width="18"
+                                height="18"
+                                x="3"
+                                y="3"
+                                rx="2"
+                            /><path d="M7 7h10" /><path d="M7 12h10" /><path
+                                d="M7 17h10"
+                            /></svg
+                        >
+                        显示设置
+                    </h2>
+
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <label
+                                for="tray-text-length"
+                                class="text-sm font-medium"
+                                >托盘菜单文本长度</label
+                            >
+                            <span class="text-sm font-bold text-primary"
+                                >{settings.trayTextLength} 字符</span
+                            >
+                        </div>
+                        <input
+                            id="tray-text-length"
+                            type="range"
+                            min="15"
+                            max="80"
+                            step="5"
+                            bind:value={settings.trayTextLength}
+                            class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
+                        />
+                        <p class="text-xs text-muted-foreground">
+                            根据个人喜好调整，建议 30-50 字符
+                        </p>
+                    </div>
+
+                    <div class="flex items-start gap-2">
+                        <input
+                            type="checkbox"
+                            id="store-original-image"
+                            bind:checked={settings.storeOriginalImage}
+                            class="w-4 h-4 mt-0.5 rounded border-input text-primary focus:ring-ring"
+                        />
+                        <label
+                            for="store-original-image"
+                            class="text-sm font-medium cursor-pointer flex-1"
+                        >
+                            <div>保存高质量图片</div>
+                            <p
+                                class="text-xs text-muted-foreground font-normal mt-1"
+                            >
+                                开启后保存最大 2048px 的高质量图片（约
+                                200-500KB/张）<br />
+                                关闭则保存 256x256 缩略图（约 50KB/张，节省空间）
+                            </p>
                         </label>
                     </div>
                 </Card>
@@ -234,23 +343,36 @@ async function installUpdate() {
                             <div class="space-y-2">
                                 <p class="text-sm">
                                     <strong>当前版本：</strong>
-                                    <span class="bg-muted px-2 py-0.5 rounded text-xs font-mono">{updateInfo.current_version}</span>
+                                    <span
+                                        class="bg-muted px-2 py-0.5 rounded text-xs font-mono"
+                                        >{updateInfo.current_version}</span
+                                    >
                                 </p>
                                 {#if updateInfo.available && updateInfo.latest_version}
                                     <p class="text-sm">
                                         <strong>最新版本：</strong>
-                                        <span class="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 px-2 py-0.5 rounded text-xs font-mono font-bold">{updateInfo.latest_version}</span>
+                                        <span
+                                            class="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 px-2 py-0.5 rounded text-xs font-mono font-bold"
+                                            >{updateInfo.latest_version}</span
+                                        >
                                     </p>
                                     {#if updateInfo.body}
-                                        <div class="mt-2 p-3 bg-muted/50 rounded border border-border text-sm">
-                                            <strong class="block mb-1">更新内容：</strong>
-                                            <pre class="whitespace-pre-wrap font-sans text-muted-foreground">{updateInfo.body}</pre>
+                                        <div
+                                            class="mt-2 p-3 bg-muted/50 rounded border border-border text-sm"
+                                        >
+                                            <strong class="block mb-1"
+                                                >更新内容：</strong
+                                            >
+                                            <pre
+                                                class="whitespace-pre-wrap font-sans text-muted-foreground">{updateInfo.body}</pre>
                                         </div>
                                     {/if}
                                 {/if}
                             </div>
                         {:else}
-                            <p class="text-sm text-muted-foreground italic">点击下方按钮检查更新</p>
+                            <p class="text-sm text-muted-foreground italic">
+                                点击下方按钮检查更新
+                            </p>
                         {/if}
 
                         <div class="flex gap-2">
@@ -261,7 +383,9 @@ async function installUpdate() {
                                 disabled={checkingUpdate || installingUpdate}
                             >
                                 {#if checkingUpdate}
-                                    <Loader2 class="h-4 w-4 animate-spin mr-2" /> 检查中...
+                                    <Loader2
+                                        class="h-4 w-4 animate-spin mr-2"
+                                    /> 检查中...
                                 {:else}
                                     <RefreshCw class="h-4 w-4 mr-2" /> 检查更新
                                 {/if}
@@ -275,7 +399,9 @@ async function installUpdate() {
                                     disabled={installingUpdate}
                                 >
                                     {#if installingUpdate}
-                                        <Loader2 class="h-4 w-4 animate-spin mr-2" /> 安装中...
+                                        <Loader2
+                                            class="h-4 w-4 animate-spin mr-2"
+                                        /> 安装中...
                                     {:else}
                                         <Download class="h-4 w-4 mr-2" /> 安装更新
                                     {/if}
@@ -286,9 +412,12 @@ async function installUpdate() {
                         {#if updateMessage}
                             <div
                                 class="p-3 rounded text-sm
-                                {updateMessage.includes('失败') ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200' : 
-                                 updateMessage.includes('最新版本') || updateMessage.includes('成功') ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 
-                                 'bg-muted text-muted-foreground'}"
+                                {updateMessage.includes('失败')
+                                    ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200'
+                                    : updateMessage.includes('最新版本') ||
+                                        updateMessage.includes('成功')
+                                      ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
+                                      : 'bg-muted text-muted-foreground'}"
                             >
                                 {updateMessage}
                             </div>
@@ -305,15 +434,21 @@ async function installUpdate() {
                             <Save class="h-4 w-4 mr-2" /> 保存设置
                         {/if}
                     </Button>
-                    <Button type="button" variant="secondary" onclick={loadSettings}>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        onclick={loadSettings}
+                    >
                         <RotateCcw class="h-4 w-4 mr-2" /> 重置
                     </Button>
                 </div>
 
                 {#if message}
-                    <div 
+                    <div
                         class="p-4 rounded-md text-sm font-medium text-center
-                        {message.includes('失败') ? 'bg-destructive/10 text-destructive' : 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'}"
+                        {message.includes('失败')
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'}"
                     >
                         {message}
                     </div>

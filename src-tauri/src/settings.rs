@@ -9,6 +9,8 @@ pub struct Settings {
     pub global_shortcut: String,
     pub max_history_items: usize,
     pub auto_cleanup: bool,
+    pub tray_text_length: usize,
+    pub store_original_image: bool,
 }
 
 impl Default for Settings {
@@ -17,6 +19,8 @@ impl Default for Settings {
             global_shortcut: "CommandOrControl+Shift+V".to_string(),
             max_history_items: 100,
             auto_cleanup: true,
+            tray_text_length: 50,  // Unified default for all platforms
+            store_original_image: false, // Default to thumbnails for space
         }
     }
 }
@@ -55,6 +59,18 @@ impl SettingsManager {
             }
         }
 
+        if let Some(tray_text_length) = store.get("tray_text_length") {
+            if let Some(n) = tray_text_length.as_u64() {
+                self.settings.lock().unwrap().tray_text_length = n as usize;
+            }
+        }
+
+        if let Some(store_original) = store.get("store_original_image") {
+            if let Some(b) = store_original.as_bool() {
+                self.settings.lock().unwrap().store_original_image = b;
+            }
+        }
+
         log::info!("Settings loaded: {:?}", self.settings.lock().unwrap());
         Ok(())
     }
@@ -68,6 +84,8 @@ impl SettingsManager {
         store.set("global_shortcut", serde_json::json!(settings.global_shortcut));
         store.set("max_history_items", serde_json::json!(settings.max_history_items));
         store.set("auto_cleanup", serde_json::json!(settings.auto_cleanup));
+        store.set("tray_text_length", serde_json::json!(settings.tray_text_length));
+        store.set("store_original_image", serde_json::json!(settings.store_original_image));
 
         store.save().map_err(|e| format!("Failed to save store: {}", e))?;
 
@@ -89,5 +107,13 @@ impl SettingsManager {
 
     pub fn set_auto_cleanup(&self, auto_cleanup: bool) {
         self.settings.lock().unwrap().auto_cleanup = auto_cleanup;
+    }
+
+    pub fn set_tray_text_length(&self, length: usize) {
+        self.settings.lock().unwrap().tray_text_length = length;
+    }
+
+    pub fn set_store_original_image(&self, store_original: bool) {
+        self.settings.lock().unwrap().store_original_image = store_original;
     }
 }

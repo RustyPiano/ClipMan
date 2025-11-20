@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, Emitter};
 use uuid::Uuid;
 use chrono::Utc;
+use image::GenericImageView;
 
 use crate::storage::{ClipItem, ContentType};
 
@@ -92,12 +93,24 @@ impl ClipboardMonitor {
                         log::info!("Image clipboard changed: {} bytes", image_bytes.len());
                         last_image = Some(image_bytes.clone());
 
-                        // Create thumbnail
-                        let thumbnail = Self::create_thumbnail(&image_bytes);
+                        // Check settings for image quality preference
+                        let store_original = if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                            state.settings.get().store_original_image
+                        } else {
+                            false // Default to thumbnail
+                        };
+
+                        let content = if store_original {
+                            // Store original or size-limited version
+                            Self::process_full_image(&image_bytes)
+                        } else {
+                            // Store thumbnail
+                            Self::create_thumbnail(&image_bytes)
+                        };
 
                         let item = ClipItem {
                             id: Uuid::new_v4().to_string(),
-                            content: thumbnail,
+                            content,
                             content_type: ContentType::Image,
                             timestamp: Utc::now().timestamp(),
                             is_pinned: false,
@@ -173,54 +186,63 @@ impl ClipboardMonitor {
     }
 
     fn create_thumbnail(image_bytes: &[u8]) -> Vec<u8> {
-        use image::{GenericImageView, imageops::FilterType, ImageFormat};
-
-        // Try to decode the image
-        let img = match image::load_from_memory(image_bytes) {
-            Ok(img) => img,
-            Err(e) => {
-                log::warn!("Failed to decode image for thumbnail: {}. Using first 10KB as fallback", e);
-                // Fallback: return truncated raw bytes
-                return if image_bytes.len() > 10000 {
-                    image_bytes[..10000].to_vec()
+        const THUMBNAIL_SIZE: u32 = 256;
+        
+        match image::load_from_memory(image_bytes) {
+            Ok(img) => {
+                let thumbnail = img.resize(
+                    THUMBNAIL_SIZE,
+                    THUMBNAIL_SIZE,
+                    image::imageops::FilterType::Lanczos3,
+                );
+                
+                let mut buffer = Vec::new();
+                if thumbnail.write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png).is_ok() {
+                    log::info!("Created thumbnail: {}x{} -> {}x{}, {} bytes",
+                               img.width(), img.height(), thumbnail.width(), thumbnail.height(), buffer.len());
+                    buffer
                 } else {
+                    log::error!("Failed to encode thumbnail. Returning original bytes.");
                     image_bytes.to_vec()
-                };
+                }
             }
-        };
-
-        // Calculate thumbnail dimensions (max 256x256, preserve aspect ratio)
-        let (width, height) = img.dimensions();
-        let max_size = 256u32;
-        let (thumb_width, thumb_height) = if width > height {
-            let ratio = max_size as f32 / width as f32;
-            (max_size, (height as f32 * ratio) as u32)
-        } else {
-            let ratio = max_size as f32 / height as f32;
-            ((width as f32 * ratio) as u32, max_size)
-        };
-
-        // Resize image
-        let thumbnail = img.resize(thumb_width, thumb_height, FilterType::Lanczos3);
-
-        // Encode as PNG
-        let mut png_bytes = Vec::new();
-        if let Err(e) = thumbnail.write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            ImageFormat::Png
-        ) {
-            log::error!("Failed to encode thumbnail: {}", e);
-            // Fallback to truncated original
-            return if image_bytes.len() > 10000 {
-                image_bytes[..10000].to_vec()
-            } else {
+            Err(e) => {
+                log::warn!("Failed to decode image for thumbnail: {}. Returning original bytes.", e);
                 image_bytes.to_vec()
-            };
+            },
         }
+    }
 
-        log::info!("Created thumbnail: {}x{} -> {}x{}, {} bytes",
-                  width, height, thumb_width, thumb_height, png_bytes.len());
-
-        png_bytes
+    // Process full-resolution image with size limit
+    fn process_full_image(image_bytes: &[u8]) -> Vec<u8> {
+        const MAX_SIZE: u32 = 2048;
+        
+        match image::load_from_memory(image_bytes) {
+            Ok(img) => {
+                let (w, h) = img.dimensions();
+                
+                // Limit to 2048px on longest side to avoid huge database
+                let final_img = if w > MAX_SIZE || h > MAX_SIZE {
+                    img.resize(MAX_SIZE, MAX_SIZE, image::imageops::FilterType::Lanczos3)
+                } else {
+                    img
+                };
+                
+                let mut buffer = Vec::new();
+                if final_img.write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png).is_ok() {
+                    log::info!("Stored high-quality image: {}x{} -> {} bytes", 
+                               final_img.width(), final_img.height(), buffer.len());
+                    buffer
+                } else {
+                    log::error!("Failed to encode high-quality image. Falling back to thumbnail.");
+                    // Fallback to thumbnail on encode failure
+                    Self::create_thumbnail(image_bytes)
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to decode image for high-quality storage: {}. Falling back to thumbnail.", e);
+                Self::create_thumbnail(image_bytes)
+            },
+        }
     }
 }
