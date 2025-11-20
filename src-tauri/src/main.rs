@@ -839,17 +839,11 @@ async fn migrate_data_location(
     
     log::info!("Data migration completed successfully");
     
-    // Restart clipboard monitoring
-    let app_clone = app.clone();
-    let last_copied_clone = state.last_copied_by_us.clone();
-    tauri::async_runtime::spawn(async move {
-        let monitor = ClipboardMonitor::new(app_clone.clone(), last_copied_clone);
-        monitor.start();
-        
-        let state: State<AppState> = app_clone.state();
-        *state.monitor.lock().unwrap() = Some(monitor);
-        log::info!("Clipboard monitoring restarted after migration");
-    });
+    // Restart clipboard monitoring with proper error handling
+    let monitor = ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
+    monitor.start();
+    *state.monitor.lock().unwrap() = Some(monitor);
+    log::info!("Clipboard monitoring restarted after migration");
     
     Ok(())
 }
