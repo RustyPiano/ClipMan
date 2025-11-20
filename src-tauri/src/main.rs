@@ -78,10 +78,17 @@ impl TrayIconCache {
         log::debug!("📸 Icon cache miss for {}, decoding...", id);
         match image::load_from_memory(content) {
             Ok(img) => {
-                // Resize to optimal icon size
+                // Resize so shortest side is TRAY_ICON_SIZE, preserving aspect ratio
+                let (orig_width, orig_height) = (img.width(), img.height());
+                let min_side = orig_width.min(orig_height);
+                let scale = TRAY_ICON_SIZE as f32 / min_side as f32;
+                
+                let new_width = (orig_width as f32 * scale) as u32;
+                let new_height = (orig_height as f32 * scale) as u32;
+                
                 let resized = img.resize_exact(
-                    TRAY_ICON_SIZE,
-                    TRAY_ICON_SIZE,
+                    new_width,
+                    new_height,
                     image::imageops::FilterType::Lanczos3,
                 );
                 let width = resized.width();
