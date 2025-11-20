@@ -31,8 +31,6 @@ pub fn migrate_data(from: &Path, to: &Path, delete_old: bool) -> Result<(), Stri
         "clipman.db-shm",     // SQLite shared memory (if exists)
         "clipman.db-wal",     // SQLite write-ahead log (if exists)
         ".clipman.key",       // Encryption key
-        "settings.json",      // Settings store
-        "settings.dat",       // Settings store binary (if exists)
     ];
     
     // Copy files
@@ -104,13 +102,18 @@ pub fn get_data_directory(app_data_dir: PathBuf, custom_path: Option<String>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     
     #[test]
     fn test_same_path_error() {
-        let path = PathBuf::from("/tmp/test");
-        let result = migrate_data(&path, &path, false);
+        // Create a temporary directory that exists
+        let test_dir = std::env::temp_dir().join("clipman_test");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        
+        let result = migrate_data(&test_dir, &test_dir, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("same"));
+        
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 }
