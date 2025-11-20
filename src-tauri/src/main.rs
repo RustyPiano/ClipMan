@@ -12,10 +12,11 @@ use crypto::Crypto;
 use settings::{Settings, SettingsManager};
 use tauri::{
     AppHandle, Manager, State, Emitter,
-    menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder},
-    tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
     image::Image,
 };
+use tauri::menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 use std::sync::{Arc, Mutex};
@@ -756,6 +757,7 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Initialize storage
             let app_data_dir = app.path().app_data_dir()
@@ -972,6 +974,14 @@ async fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), St
 
             clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
             log::info!("✅ Copied text to clipboard: {} chars (marked as self-copy)", text.len());
+            
+            // Send notification
+            #[cfg(not(target_os = "linux"))]
+            let _ = app.notification()
+                .builder()
+                .title("已复制")
+                .body("文本已复制到剪贴板")
+                .show();
 
             // Clear the marker after 2 seconds using std::thread (not tokio)
             let last_copied_by_us = state.last_copied_by_us.clone();
@@ -998,10 +1008,27 @@ async fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), St
 
             clipboard.set_image(image_data).map_err(|e| e.to_string())?;
             log::info!("✅ Copied image to clipboard from tray ({}x{})", width, height);
+            
+            // Send notification
+            #[cfg(not(target_os = "linux"))]
+            let _ = app.notification()
+                .builder()
+                .title("已复制")
+                .body("图片已复制到剪贴板")
+                .show();
         }
         ContentType::File => {
-            log::warn!("File copy not yet implemented");
-            return Err("文件复制功能开发中".to_string());
+            let path = String::from_utf8_lossy(&item.content).to_string();
+            clipboard.set_text(path.clone()).map_err(|e| e.to_string())?;
+            log::info!("✅ Copied file path to clipboard: {}", path);
+            
+            // Send notification
+            #[cfg(not(target_os = "linux"))]
+            let _ = app.notification()
+                .builder()
+                .title("已复制")
+                .body("文件路径已复制到剪贴板")
+                .show();
         }
     }
 

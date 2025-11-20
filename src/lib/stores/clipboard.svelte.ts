@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { toastStore } from './toast.svelte';
 
 export interface ClipItem {
   id: string;
@@ -183,8 +184,17 @@ class ClipboardStore {
       // 使用后端命令来复制，这样可以防止重复捕获
       await invoke('copy_to_system_clipboard', { clipId: item.id });
       console.log('[SUCCESS] Successfully copied to clipboard');
+
+      // Show success toast
+      const contentPreview = item.contentType === 'text'
+        ? '文本'
+        : item.contentType === 'image'
+          ? '图片'
+          : '文件';
+      toastStore.add(`已复制${contentPreview}到剪贴板`, 'success');
     } catch (error) {
       console.error('[ERROR] Failed to copy to clipboard:', error);
+      toastStore.add('复制失败', 'error');
       throw error;
     }
   }
@@ -192,3 +202,4 @@ class ClipboardStore {
 
 // Export a single instance
 export const clipboardStore = new ClipboardStore();
+
