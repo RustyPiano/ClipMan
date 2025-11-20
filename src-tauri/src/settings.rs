@@ -134,12 +134,4 @@ impl SettingsManager {
     pub fn set_store_original_image(&self, store_original: bool) {
         self.settings.lock().unwrap().store_original_image = store_original;
     }
-
-    pub fn set_max_pinned_in_tray(&self, max: usize) {
-        self.settings.lock().unwrap().max_pinned_in_tray = max;
-    }
-
-    pub fn set_max_recent_in_tray(&self, max: usize) {
-        self.settings.lock().unwrap().max_recent_in_tray = max;
-    }
 }
