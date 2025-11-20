@@ -884,20 +884,34 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            // Initialize storage
-            let app_data_dir = app.path().app_data_dir()
+            // Initialize settings FIRST to check for custom data path
+            let settings_manager = Arc::new(SettingsManager::new());
+            if let Err(e) = settings_manager.load(&app.handle()) {
+                log::warn!("Failed to load settings, using defaults: {}", e);
+            }
+            
+            // Get data directory (custom or default)
+            let default_app_data_dir = app.path().app_data_dir()
                 .expect("Failed to get app data directory");
+            
+            let settings = settings_manager.get();
+            let data_dir = migration::get_data_directory(
+                default_app_data_dir.clone(),
+                settings.custom_data_path.clone()
+            );
+            
+            log::info!("Using data directory: {:?}", data_dir);
+            
+            std::fs::create_dir_all(&data_dir)
+                .expect("Failed to create data directory");
 
-            std::fs::create_dir_all(&app_data_dir)
-                .expect("Failed to create app data directory");
-
-            // Initialize encryption
-            let encryption_key = get_or_create_encryption_key(&app_data_dir)
+            // Initialize encryption with the correct path
+            let encryption_key = get_or_create_encryption_key(&data_dir)
                 .expect("Failed to initialize encryption key");
             let crypto = Arc::new(Crypto::new(&encryption_key));
             log::info!("Encryption initialized");
 
-            let db_path = app_data_dir.join("clipman.db");
+            let db_path = data_dir.join("clipman.db");
             log::info!("Database path: {:?}", db_path);
 
             let storage = ClipStorage::new(
@@ -905,11 +919,6 @@ fn main() {
                 Some(crypto.clone())
             ).expect("Failed to initialize database");
 
-            // Initialize settings
-            let settings_manager = Arc::new(SettingsManager::new());
-            if let Err(e) = settings_manager.load(&app.handle()) {
-                log::warn!("Failed to load settings, using defaults: {}", e);
-            }
             log::info!("Settings initialized");
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
