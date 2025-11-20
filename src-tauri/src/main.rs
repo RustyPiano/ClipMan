@@ -703,21 +703,20 @@ async fn update_settings(
     // 如果自启动设置改变
     if autostart_changed {
         use tauri_plugin_autostart::ManagerExt;
-        let autostart_manager = app.autostart();
         
-        if settings.enable_autostart {
-            if let Err(e) = autostart_manager.enable() {
-                log::error!("Failed to enable autostart: {}", e);
-                return Err(format!("Failed to enable autostart: {}", e));
-            }
-            log::info!("Autostart enabled");
+        let result = if settings.enable_autostart {
+            app.autolaunch().enable()
         } else {
-            if let Err(e) = autostart_manager.disable() {
-                log::error!("Failed to disable autostart: {}", e);
-                return Err(format!("Failed to disable autostart: {}", e));
-            }
-            log::info!("Autostart disabled");
+            app.autolaunch().disable()
+        };
+        
+        if let Err(e) = result {
+            log::error!("Failed to update autostart: {}", e);
+            return Err(format!("Failed to update autostart: {}", e));
         }
+        
+        log::info!("Autostart {} successfully", 
+            if settings.enable_autostart { "enabled" } else { "disabled" });
     }
 
     // 如果热键改变，重新注册
