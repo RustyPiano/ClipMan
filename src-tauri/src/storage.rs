@@ -9,6 +9,8 @@ pub enum ContentType {
     Text,
     Image,
     File,
+    Html,
+    Rtf,
 }
 
 impl ContentType {
@@ -17,6 +19,8 @@ impl ContentType {
             ContentType::Text => "text",
             ContentType::Image => "image",
             ContentType::File => "file",
+            ContentType::Html => "html",
+            ContentType::Rtf => "rtf",
         }
     }
 
@@ -24,6 +28,8 @@ impl ContentType {
         match s {
             "image" => ContentType::Image,
             "file" => ContentType::File,
+            "html" => ContentType::Html,
+            "rtf" => ContentType::Rtf,
             _ => ContentType::Text,
         }
     }

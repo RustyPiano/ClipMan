@@ -54,6 +54,7 @@ lru = "0.12"
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tauri-plugin-notification = "2.3.3"
+clipboard-master = "4.0.0-beta.6"
 
 # macOS specific
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -278,7 +278,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tau
 // 截断内容用于菜单显示（安全处理 Unicode 字符边界）
 fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usize) -> String {
     match content_type {
-        ContentType::Text => {
+        ContentType::Text | ContentType::Html | ContentType::Rtf => {
             let text = String::from_utf8_lossy(content);
             // Replace newlines and carriage returns, then collapse whitespace
             let text: String = text.chars()
@@ -565,6 +565,12 @@ async fn copy_to_system_clipboard(
         ContentType::File => {
             log::warn!("File copy not supported");
             Err("文件复制不支持".to_string())
+        }
+        ContentType::Html | ContentType::Rtf => {
+            let text = String::from_utf8_lossy(&item.content).to_string();
+            clipboard.set_text(&text).map_err(|e| e.to_string())?;
+            log::info!("✅ Copied rich text to clipboard as plain text");
+            Ok(())
         }
     }
 }
@@ -1028,6 +1034,19 @@ async fn copy_clip_to_clipboard(app: &AppHandle, clip_id: &str) -> Result<(), St
                 .builder()
                 .title("已复制")
                 .body("文件路径已复制到剪贴板")
+                .show();
+        }
+        ContentType::Html | ContentType::Rtf => {
+            let text = String::from_utf8_lossy(&item.content).to_string();
+            clipboard.set_text(text).map_err(|e| e.to_string())?;
+            log::info!("✅ Copied rich text to clipboard as plain text");
+            
+            // Send notification
+            #[cfg(not(target_os = "linux"))]
+            let _ = app.notification()
+                .builder()
+                .title("已复制")
+                .body("富文本已复制到剪贴板")
                 .show();
         }
     }
