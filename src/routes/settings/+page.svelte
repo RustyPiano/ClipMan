@@ -26,6 +26,7 @@
         maxPinnedInTray: number;
         maxRecentInTray: number;
         customDataPath: string | null;
+        enableAutostart: boolean;
     }
 
     interface UpdateInfo {
@@ -45,6 +46,7 @@
         maxPinnedInTray: 5,
         maxRecentInTray: 20,
         customDataPath: null,
+        enableAutostart: false,
     });
 
     let loading = $state(true);
@@ -487,6 +489,29 @@
                         >
                         数据存储位置
                     </h2>
+
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label
+                                for="enable-autostart"
+                                class="text-sm font-medium cursor-pointer"
+                            >
+                                开机自启动
+                            </label>
+                            <input
+                                id="enable-autostart"
+                                type="checkbox"
+                                bind:checked={settings.enableAutostart}
+                                class="w-11 h-6 appearance-none bg-muted rounded-full relative cursor-pointer transition-colors
+                                       checked:bg-primary
+                                       before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white before:rounded-full before:transition-transform
+                                       checked:before:translate-x-5"
+                            />
+                        </div>
+                        <p class="text-xs text-muted-foreground text-right">
+                            系统启动时自动运行 ClipMan
+                        </p>
+                    </div>
 
                     <div class="space-y-2">
                         <label

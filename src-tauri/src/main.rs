@@ -684,9 +684,11 @@ async fn update_settings(
     // 检查热键是否改变
     let old_shortcut = state.settings.get().global_shortcut;
     let old_tray_text_length = state.settings.get().tray_text_length;
+    let old_autostart = state.settings.get().enable_autostart;
     let new_shortcut = settings.global_shortcut.clone();
     let shortcut_changed = old_shortcut != new_shortcut;
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
+    let autostart_changed = old_autostart != settings.enable_autostart;
 
     // 更新设置
     state.settings.set_global_shortcut(settings.global_shortcut.clone());
@@ -697,6 +699,26 @@ async fn update_settings(
 
     // 保存设置
     state.settings.save(&app)?;
+
+    // 如果自启动设置改变
+    if autostart_changed {
+        use tauri_plugin_autostart::ManagerExt;
+        let autostart_manager = app.autostart();
+        
+        if settings.enable_autostart {
+            if let Err(e) = autostart_manager.enable() {
+                log::error!("Failed to enable autostart: {}", e);
+                return Err(format!("Failed to enable autostart: {}", e));
+            }
+            log::info!("Autostart enabled");
+        } else {
+            if let Err(e) = autostart_manager.disable() {
+                log::error!("Failed to disable autostart: {}", e);
+                return Err(format!("Failed to disable autostart: {}", e));
+            }
+            log::info!("Autostart disabled");
+        }
+    }
 
     // 如果热键改变，重新注册
     if shortcut_changed {
@@ -883,6 +905,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .setup(|app| {
             // Initialize settings FIRST to check for custom data path
             let settings_manager = Arc::new(SettingsManager::new());

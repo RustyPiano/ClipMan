@@ -14,6 +14,7 @@ pub struct Settings {
     pub max_pinned_in_tray: usize,
     pub max_recent_in_tray: usize,
     pub custom_data_path: Option<String>,
+    pub enable_autostart: bool,
 }
 
 impl Default for Settings {
@@ -27,6 +28,7 @@ impl Default for Settings {
             max_pinned_in_tray: 5,
             max_recent_in_tray: 20,
             custom_data_path: None,
+            enable_autostart: false,
         }
     }
 }
@@ -95,6 +97,12 @@ impl SettingsManager {
             }
         }
 
+        if let Some(autostart) = store.get("enable_autostart") {
+            if let Some(enabled) = autostart.as_bool() {
+                self.settings.lock().unwrap().enable_autostart = enabled;
+            }
+        }
+
         log::info!("Settings loaded: {:?}", self.settings.lock().unwrap());
         Ok(())
     }
@@ -113,6 +121,7 @@ impl SettingsManager {
         store.set("max_pinned_in_tray", serde_json::json!(settings.max_pinned_in_tray));
         store.set("max_recent_in_tray", serde_json::json!(settings.max_recent_in_tray));
         store.set("custom_data_path", serde_json::json!(settings.custom_data_path));
+        store.set("enable_autostart", serde_json::json!(settings.enable_autostart));
 
         store.save().map_err(|e| format!("Failed to save store: {}", e))?;
 
