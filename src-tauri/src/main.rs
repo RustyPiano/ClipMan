@@ -12,14 +12,25 @@ use crypto::Crypto;
 use settings::{Settings, SettingsManager};
 use tauri::{
     AppHandle, Manager, State, Emitter,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{MenuBuilder, MenuItemBuilder, IconMenuItemBuilder},
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
+    image::Image,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 use std::sync::{Arc, Mutex};
 use std::fs;
 use std::path::PathBuf;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+
+// Tray menu configuration constants
+const MAX_PINNED_IN_TRAY: usize = 5;
+const MAX_RECENT_IN_TRAY: usize = 20;
+const RECENT_ITEMS_QUERY_LIMIT: usize = 30;
+const MAX_TEXT_LENGTH_IN_TRAY: usize = 30;
+const TRAY_ICON_SIZE: u32 = 32;
+const ICON_CACHE_SIZE: usize = 50;
 
 #[cfg(target_os = "macos")]
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
@@ -41,6 +52,67 @@ fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     })
 }
 
+// Icon cache for tray menu
+struct TrayIconCache {
+    cache: Mutex<LruCache<String, Image<'static>>>,
+}
+
+impl TrayIconCache {
+    fn new() -> Self {
+        Self {
+            cache: Mutex::new(LruCache::new(NonZeroUsize::new(ICON_CACHE_SIZE).unwrap())),
+        }
+    }
+
+    fn get_or_create(&self, id: &str, content: &[u8]) -> Option<Image<'static>> {
+        // Check cache first
+        {
+            let mut cache = self.cache.lock().unwrap();
+            if let Some(icon) = cache.get(id) {
+                log::debug!("🎯 Icon cache hit for {}", id);
+                return Some(icon.clone());
+            }
+        }
+
+        // Cache miss - decode and resize image
+        log::debug!("📸 Icon cache miss for {}, decoding...", id);
+        match image::load_from_memory(content) {
+            Ok(img) => {
+                // Resize to optimal icon size
+                let resized = img.resize_exact(
+                    TRAY_ICON_SIZE,
+                    TRAY_ICON_SIZE,
+                    image::imageops::FilterType::Lanczos3,
+                );
+                let width = resized.width();
+                let height = resized.height();
+                let rgba = resized.to_rgba8().into_raw();
+                
+                // Create owned image for caching
+                let icon = Image::new_owned(rgba, width, height);
+                
+                // Cache it
+                {
+                    let mut cache = self.cache.lock().unwrap();
+                    cache.put(id.to_string(), icon.clone());
+                }
+                
+                Some(icon)
+            }
+            Err(e) => {
+                log::warn!("Failed to decode image for clip {}: {}", id, e);
+                None
+            }
+        }
+    }
+
+    fn clear(&self) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.clear();
+        log::info!("Icon cache cleared");
+    }
+}
+
 struct AppState {
     storage: Arc<Mutex<ClipStorage>>,
     monitor: Mutex<Option<ClipboardMonitor>>,
@@ -49,6 +121,8 @@ struct AppState {
     settings: Arc<SettingsManager>,
     // Track content we just copied to prevent re-capturing
     last_copied_by_us: Arc<Mutex<Option<String>>>,
+    // Icon cache for tray menu
+    icon_cache: Arc<TrayIconCache>,
 }
 
 // 密钥管理：生成或加载加密密钥
@@ -99,60 +173,87 @@ fn get_or_create_encryption_key(app_data_dir: &PathBuf) -> Result<[u8; 32], Stri
     Ok(key)
 }
 
+// Helper function to add a clip menu item (extracted to avoid duplication)
+fn add_clip_menu_item(
+    app: &AppHandle,
+    item: &ClipItem,
+    icon_cache: &TrayIconCache,
+) -> Result<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>, tauri::Error> {
+    let preview = truncate_content(&item.content, &item.content_type, MAX_TEXT_LENGTH_IN_TRAY);
+    
+    if matches!(item.content_type, ContentType::Image) {
+        // Try to get cached icon or create new one
+        if let Some(icon) = icon_cache.get_or_create(&item.id, &item.content) {
+            let menu_item = IconMenuItemBuilder::with_id(
+                format!("clip:{}", item.id),
+                preview
+            )
+            .icon(icon)
+            .build(app)?;
+            Ok(Box::new(menu_item))
+        } else {
+            // Image decode failed, fallback to text
+            let menu_item = MenuItemBuilder::with_id(
+                format!("clip:{}", item.id),
+                preview
+            ).build(app)?;
+            Ok(Box::new(menu_item))
+        }
+    } else {
+        let menu_item = MenuItemBuilder::with_id(
+            format!("clip:{}", item.id),
+            preview
+        ).build(app)?;
+        Ok(Box::new(menu_item))
+    }
+}
+
 // 构建动态托盘菜单
 fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let state = app.state::<AppState>();
-    let storage = safe_lock(&state.storage);
-
+    
+    // Quick lock acquisition - get data and release immediately
+    let (pinned_items, recent_items) = {
+        let storage = safe_lock(&state.storage);
+        (
+            storage.get_pinned().unwrap_or_default(),
+            storage.get_recent(RECENT_ITEMS_QUERY_LIMIT).unwrap_or_default(),
+        )
+    }; // Lock released here
+    
     let mut menu_builder = MenuBuilder::new(app);
 
-    // 获取置顶项（最多显示 5 个）
-    let pinned_items = storage.get_pinned().unwrap_or_default();
-    let pinned_count = pinned_items.len().min(5);
-
+    // Add pinned items (max 5)
+    let pinned_count = pinned_items.len().min(MAX_PINNED_IN_TRAY);
     if pinned_count > 0 {
-        // 添加置顶标题
         let pinned_header = MenuItemBuilder::with_id("pinned_header", "置顶项").enabled(false).build(app)?;
         menu_builder = menu_builder.item(&pinned_header);
 
-        // 添加置顶项
-        for item in pinned_items.iter().take(5) {
-            let preview = truncate_content(&item.content, &item.content_type, 50);
-            let menu_item = MenuItemBuilder::with_id(
-                format!("clip:{}", item.id),
-                preview
-            ).build(app)?;
-            menu_builder = menu_builder.item(&menu_item);
+        for item in pinned_items.iter().take(MAX_PINNED_IN_TRAY) {
+            let menu_item = add_clip_menu_item(app, item, &state.icon_cache)?;
+            menu_builder = menu_builder.item(&*menu_item);
         }
 
-        // 分隔线
         menu_builder = menu_builder.separator();
     }
 
-    // 获取最近项（最多显示 20 个，排除置顶的）
-    let recent_items = storage.get_recent(30).unwrap_or_default();
+    // Add recent items (max 20, excluding pinned)
     let recent_unpinned: Vec<_> = recent_items.iter()
         .filter(|item| !item.is_pinned)
-        .take(20)
+        .take(MAX_RECENT_IN_TRAY)
         .collect();
 
     if !recent_unpinned.is_empty() {
-        // 添加历史标题
         let recent_header = MenuItemBuilder::with_id("recent_header", "最近复制").enabled(false).build(app)?;
         menu_builder = menu_builder.item(&recent_header);
 
-        // 添加最近项
         for item in recent_unpinned {
-            let preview = truncate_content(&item.content, &item.content_type, 50);
-            let menu_item = MenuItemBuilder::with_id(
-                format!("clip:{}", item.id),
-                preview
-            ).build(app)?;
-            menu_builder = menu_builder.item(&menu_item);
+            let menu_item = add_clip_menu_item(app, item, &state.icon_cache)?;
+            menu_builder = menu_builder.item(&*menu_item);
         }
     }
 
-    // 底部分隔线和操作按钮
+    // Bottom actions
     menu_builder = menu_builder
         .separator()
         .item(&MenuItemBuilder::with_id("clear_non_pinned", "清除非置顶").build(app)?)
@@ -167,19 +268,41 @@ fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usize) 
     match content_type {
         ContentType::Text => {
             let text = String::from_utf8_lossy(content);
-            let text = text.replace('\n', " ").replace('\r', "");
+            // Replace newlines and carriage returns, then collapse whitespace
+            let text: String = text.chars()
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
 
-            // 安全截断：使用字符迭代器而不是字节索引
+            // Safe truncation by character count
             let char_count = text.chars().count();
             if char_count > max_len {
                 let truncated: String = text.chars().take(max_len).collect();
                 format!("{}...", truncated)
             } else {
-                text.to_string()
+                text
             }
         }
-        ContentType::Image => "[图片]".to_string(),
-        ContentType::File => "[文件]".to_string(),
+        ContentType::Image => "图片".to_string(),
+        ContentType::File => {
+            // Try to parse as file path with error handling
+            match std::str::from_utf8(content) {
+                Ok(path_str) => {
+                    let path = std::path::Path::new(path_str);
+                    if let Some(file_name) = path.file_name() {
+                        format!("文件: {}", file_name.to_string_lossy())
+                    } else {
+                        "文件".to_string()
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Invalid UTF-8 in file path content: {}", e);
+                    "文件".to_string()
+                }
+            }
+        },
     }
 }
 
@@ -319,6 +442,9 @@ async fn clear_all_history(
     .await
     .map_err(|e| e.to_string())??;
 
+    // Clear icon cache since all items are deleted
+    state.icon_cache.clear();
+
     update_tray_menu(&app);
 
     Ok(())
@@ -338,6 +464,9 @@ async fn clear_non_pinned_history(
     })
     .await
     .map_err(|e| e.to_string())??;
+
+    // Clear icon cache (pinned items will be re-cached)
+    state.icon_cache.clear();
 
     update_tray_menu(&app);
 
@@ -630,6 +759,7 @@ fn main() {
             log::info!("Settings initialized");
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
+            let icon_cache = Arc::new(TrayIconCache::new());
 
             let app_state = AppState {
                 storage: Arc::new(Mutex::new(storage)),
@@ -637,6 +767,7 @@ fn main() {
                 crypto: crypto.clone(),
                 settings: settings_manager.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
+                icon_cache: icon_cache.clone(),
             };
 
             app.manage(app_state);

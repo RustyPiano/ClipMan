@@ -48,6 +48,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
+lru = "0.12"
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
