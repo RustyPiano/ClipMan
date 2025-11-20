@@ -25,6 +25,7 @@
         storeOriginalImage: boolean;
         maxPinnedInTray: number;
         maxRecentInTray: number;
+        customDataPath: string | null;
     }
 
     interface UpdateInfo {
@@ -43,6 +44,7 @@
         storeOriginalImage: false,
         maxPinnedInTray: 5,
         maxRecentInTray: 20,
+        customDataPath: null,
     });
 
     let loading = $state(true);
@@ -54,6 +56,13 @@
     let checkingUpdate = $state(false);
     let installingUpdate = $state(false);
     let updateMessage = $state("");
+
+    // 数据位置相关状态
+    let currentDataPath = $state("");
+    let changingDataPath = $state(false);
+    let showMigrationDialog = $state(false);
+    let newDataPath = $state("");
+    let deleteOldData = $state(true);
 
     onMount(async () => {
         await loadSettings();
@@ -141,6 +150,73 @@
             installingUpdate = false;
         }
     }
+
+    // 加载当前数据路径
+    async function loadDataPath() {
+        try {
+            currentDataPath = await invoke<string>("get_current_data_path");
+        } catch (err) {
+            console.error("Failed to load data path:", err);
+        }
+    }
+
+    // 选择新的数据存储位置
+    async function changeDataLocation() {
+        try {
+            changingDataPath = true;
+            const selectedPath = await invoke<string | null>(
+                "choose_data_folder",
+            );
+
+            if (selectedPath) {
+                newDataPath = selectedPath;
+                showMigrationDialog = true;
+            }
+        } catch (err) {
+            console.error("Failed to choose folder:", err);
+            message = "选择文件夹失败: " + String(err);
+        } finally {
+            changingDataPath = false;
+        }
+    }
+
+    // 确认迁移数据
+    async function confirmMigration() {
+        try {
+            changingDataPath = true;
+            message = "正在迁移数据...";
+
+            await invoke("migrate_data_location", {
+                newPath: newDataPath,
+                deleteOld: deleteOldData,
+            });
+
+            message = "数据迁移成功！";
+            showMigrationDialog = false;
+            await loadDataPath();
+            await loadSettings();
+
+            setTimeout(() => (message = ""), 3000);
+        } catch (err) {
+            console.error("Failed to migrate data:", err);
+            message = "数据迁移失败: " + String(err);
+        } finally {
+            changingDataPath = false;
+        }
+    }
+
+    // 打开数据文件夹
+    async function openDataFolder() {
+        if (currentDataPath) {
+            await invoke("open", { path: currentDataPath });
+        }
+    }
+
+    // 初始化时加载数据路径
+    onMount(async () => {
+        await loadSettings();
+        await loadDataPath();
+    });
 </script>
 
 <div class="min-h-screen bg-background text-foreground p-6 overflow-y-auto">
@@ -387,6 +463,67 @@
                     </div>
                 </Card>
 
+                <!-- 数据存储位置 -->
+                <Card class="p-6 space-y-4">
+                    <h2 class="text-lg font-semibold flex items-center gap-2">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="20"
+                            height="20"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            ><path
+                                d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                            /></svg
+                        >
+                        数据存储位置
+                    </h2>
+
+                    <div class="space-y-2">
+                        <label class="text-sm font-medium">当前位置:</label>
+                        <div class="flex gap-2">
+                            <Input
+                                value={currentDataPath}
+                                readonly
+                                class="flex-1 text-xs"
+                            />
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onclick={openDataFolder}
+                            >
+                                打开
+                            </Button>
+                        </div>
+                        <p class="text-xs text-muted-foreground">
+                            数据库、加密密钥和设置文件的存储位置
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onclick={changeDataLocation}
+                            disabled={changingDataPath}
+                        >
+                            {#if changingDataPath}
+                                <Loader2 class="h-4 w-4 animate-spin mr-2" /> 处理中...
+                            {:else}
+                                更改存储位置...
+                            {/if}
+                        </Button>
+                        <p class="text-xs text-muted-foreground">
+                            更改后会自动迁移现有数据到新位置
+                        </p>
+                    </div>
+                </Card>
+
                 <!-- 关于和更新 -->
                 <Card class="p-6 space-y-4">
                     <h2 class="text-lg font-semibold flex items-center gap-2">
@@ -512,3 +649,100 @@
         {/if}
     </div>
 </div>
+
+<!-- 数据迁移确认对话框 -->
+{#if showMigrationDialog}
+    <div
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+    >
+        <div
+            class="bg-background border border-border rounded-lg p-6 max-w-lg w-full mx-4 space-y-4"
+        >
+            <h3 class="text-lg font-semibold">确认数据迁移</h3>
+
+            <div class="space-y-2 text-sm">
+                <div>
+                    <span class="text-muted-foreground">当前位置:</span>
+                    <p
+                        class="font-mono text-xs bg-muted p-2 rounded mt-1 break-all"
+                    >
+                        {currentDataPath}
+                    </p>
+                </div>
+                <div>
+                    <span class="text-muted-foreground">新位置:</span>
+                    <p
+                        class="font-mono text-xs bg-muted p-2 rounded mt-1 break-all"
+                    >
+                        {newDataPath}
+                    </p>
+                </div>
+            </div>
+
+            <div
+                class="flex items-start gap-2 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded"
+            >
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="text-yellow-600 dark:text-yellow-400 flex-shrink-0"
+                    ><path
+                        d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
+                    /><line x1="12" x2="12" y1="9" y2="13" /><line
+                        x1="12"
+                        x2="12.01"
+                        y1="17"
+                        y2="17"
+                    /></svg
+                >
+                <p class="text-sm text-yellow-800 dark:text-yellow-200">
+                    数据迁移过程中，剪贴板监控将暂时停止。迁移完成后会自动恢复。
+                </p>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <input
+                    type="checkbox"
+                    id="delete-old-data"
+                    bind:checked={deleteOldData}
+                    class="w-4 h-4 rounded border-input text-primary focus:ring-ring"
+                />
+                <label
+                    for="delete-old-data"
+                    class="text-sm font-medium cursor-pointer"
+                >
+                    迁移完成后删除旧位置的数据
+                </label>
+            </div>
+
+            <div class="flex gap-2 justify-end">
+                <Button
+                    type="button"
+                    variant="outline"
+                    onclick={() => (showMigrationDialog = false)}
+                    disabled={changingDataPath}
+                >
+                    取消
+                </Button>
+                <Button
+                    type="button"
+                    onclick={confirmMigration}
+                    disabled={changingDataPath}
+                >
+                    {#if changingDataPath}
+                        <Loader2 class="h-4 w-4 animate-spin mr-2" /> 迁移中...
+                    {:else}
+                        确认迁移
+                    {/if}
+                </Button>
+            </div>
+        </div>
+    </div>
+{/if}

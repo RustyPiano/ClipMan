@@ -13,6 +13,7 @@ pub struct Settings {
     pub store_original_image: bool,
     pub max_pinned_in_tray: usize,
     pub max_recent_in_tray: usize,
+    pub custom_data_path: Option<String>,
 }
 
 impl Default for Settings {
@@ -25,6 +26,7 @@ impl Default for Settings {
             store_original_image: false,
             max_pinned_in_tray: 5,
             max_recent_in_tray: 20,
+            custom_data_path: None,
         }
     }
 }
@@ -87,6 +89,12 @@ impl SettingsManager {
             }
         }
 
+        if let Some(custom_path) = store.get("custom_data_path") {
+            if let Some(path) = custom_path.as_str() {
+                self.settings.lock().unwrap().custom_data_path = Some(path.to_string());
+            }
+        }
+
         log::info!("Settings loaded: {:?}", self.settings.lock().unwrap());
         Ok(())
     }
@@ -104,6 +112,7 @@ impl SettingsManager {
         store.set("store_original_image", serde_json::json!(settings.store_original_image));
         store.set("max_pinned_in_tray", serde_json::json!(settings.max_pinned_in_tray));
         store.set("max_recent_in_tray", serde_json::json!(settings.max_recent_in_tray));
+        store.set("custom_data_path", serde_json::json!(settings.custom_data_path));
 
         store.save().map_err(|e| format!("Failed to save store: {}", e))?;
 
@@ -133,5 +142,9 @@ impl SettingsManager {
 
     pub fn set_store_original_image(&self, store_original: bool) {
         self.settings.lock().unwrap().store_original_image = store_original;
+    }
+
+    pub fn set(&self, settings: Settings) {
+        *self.settings.lock().unwrap() = settings;
     }
 }

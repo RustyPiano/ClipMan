@@ -5,6 +5,7 @@ mod clipboard;
 mod storage;
 mod crypto;
 mod settings;
+mod migration;
 
 use clipboard::ClipboardMonitor;
 use storage::{ClipStorage, ClipItem, ContentType};
@@ -734,6 +735,93 @@ async fn update_settings(
     Ok(())
 }
 
+// 获取当前数据存储路径
+#[tauri::command]
+async fn get_current_data_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let settings = state.settings.get();
+    let default_path = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    
+    let current_path = migration::get_data_directory(default_path, settings.custom_data_path);
+    
+    Ok(current_path.to_string_lossy().to_string())
+}
+
+// 选择文件夹对话框
+#[tauri::command]
+async fn choose_data_folder(app: AppHandle) -> Result<Option<String>, String> {
+    let folder = tauri::async_runtime::spawn_blocking(move || {
+        use rfd::FileDialog;
+        
+        FileDialog::new()
+            .set_title("选择数据存储位置")
+            .pick_folder()
+    }).await
+    .map_err(|e| format!("Failed to show folder dialog: {}", e))?;
+    
+    Ok(folder.map(|p| p.to_string_lossy().to_string()))
+}
+
+// 迁移数据到新位置
+#[tauri::command]
+async fn migrate_data_location(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    new_path: String,
+    delete_old: bool,
+) -> Result<(), String> {
+    log::info!("Starting data migration to: {}, delete_old: {}", new_path, delete_old);
+    
+    // Stop clipboard monitoring during migration
+    {
+        let mut monitor_guard = state.monitor.lock().unwrap();
+        if let Some(monitor) = monitor_guard.take() {
+            drop(monitor);
+            log::info!("Clipboard monitoring stopped for migration");
+        }
+    }
+    
+    // Get current and new paths
+    let default_path = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    
+    let settings = state.settings.get();
+    let custom_path = settings.custom_data_path.clone();
+    let old_path = migration::get_data_directory(default_path.clone(), custom_path);
+    let new_path_buf = std::path::PathBuf::from(&new_path);
+    
+    // Perform migration
+    migration::migrate_data(&old_path, &new_path_buf, delete_old)?;
+    
+    // Update settings with new path
+    let mut new_settings = settings.clone();
+    new_settings.custom_data_path = Some(new_path.clone());
+    
+    // Save settings
+    state.settings.set(new_settings.clone());
+    state.settings.save(&app)
+        .map_err(|e| format!("Failed to save settings: {}", e))?;
+    
+    log::info!("Data migration completed successfully");
+    
+    // Restart clipboard monitoring
+    let app_clone = app.clone();
+    let last_copied_clone = state.last_copied_by_us.clone();
+    tauri::async_runtime::spawn(async move {
+        let monitor = ClipboardMonitor::new(app_clone.clone(), last_copied_clone);
+        monitor.start();
+        
+        let state: State<AppState> = app_clone.state();
+        *state.monitor.lock().unwrap() = Some(monitor);
+        log::info!("Clipboard monitoring restarted after migration");
+    });
+    
+    Ok(())
+}
+
 fn main() {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Debug)
@@ -942,7 +1030,10 @@ fn main() {
             clear_non_pinned_history,
             copy_to_system_clipboard,
             check_for_updates,
-            install_update
+            install_update,
+            get_current_data_path,
+            choose_data_folder,
+            migrate_data_location
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
