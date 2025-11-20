@@ -52,6 +52,7 @@ jobs:
 
       - name: Extract release notes
         id: release_notes
+        shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
           # Remove 'v' prefix to get version number
