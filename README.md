@@ -2,9 +2,9 @@
 
 <div align="center">
 
-![ClipMan](app-icon.png)
+<img src="app-icon.png" alt="ClipMan" width="128" />
 
-**终于，一个真正懂你需求的剪切板工具**
+**一个真正懂你需求的剪切板工具**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/Version-1.8.0-blue.svg)](https://github.com/Kiaana/ClipMan/releases)
