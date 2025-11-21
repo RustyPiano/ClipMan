@@ -86,8 +86,12 @@
     }
 
     async function loadDataPath() {
-        // Display the custom path if set, otherwise show placeholder
-        currentDataPath = settings.customDataPath || "使用默认应用数据目录";
+        try {
+            currentDataPath = await invoke<string>("get_current_data_path");
+        } catch (err) {
+            console.error("Failed to load data path:", err);
+            currentDataPath = "无法获取存储位置";
+        }
     }
 
     async function saveSettings() {

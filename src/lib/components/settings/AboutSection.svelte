@@ -47,10 +47,12 @@
                     高效的剪贴板管理工具
                 </p>
                 <div class="flex items-center gap-2 mt-1">
-                    <span
-                        class="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground"
-                        >v1.7.0</span
-                    >
+                    {#if updateInfo}
+                        <span
+                            class="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground"
+                            >v{updateInfo.current_version}</span
+                        >
+                    {/if}
                     <a
                         href="https://github.com/Kiaana/ClipMan"
                         target="_blank"

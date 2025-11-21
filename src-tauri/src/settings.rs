@@ -133,26 +133,6 @@ impl SettingsManager {
         self.settings.lock().unwrap().clone()
     }
 
-    pub fn set_global_shortcut(&self, shortcut: String) {
-        self.settings.lock().unwrap().global_shortcut = shortcut;
-    }
-
-    pub fn set_max_history_items(&self, max_items: usize) {
-        self.settings.lock().unwrap().max_history_items = max_items;
-    }
-
-    pub fn set_auto_cleanup(&self, auto_cleanup: bool) {
-        self.settings.lock().unwrap().auto_cleanup = auto_cleanup;
-    }
-
-    pub fn set_tray_text_length(&self, length: usize) {
-        self.settings.lock().unwrap().tray_text_length = length;
-    }
-
-    pub fn set_store_original_image(&self, store_original: bool) {
-        self.settings.lock().unwrap().store_original_image = store_original;
-    }
-
     pub fn set(&self, settings: Settings) {
         *self.settings.lock().unwrap() = settings;
     }

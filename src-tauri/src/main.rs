@@ -677,12 +677,8 @@ async fn update_settings(
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
     let autostart_changed = old_autostart != settings.enable_autostart;
 
-    // 更新设置
-    state.settings.set_global_shortcut(settings.global_shortcut.clone());
-    state.settings.set_max_history_items(settings.max_history_items);
-    state.settings.set_auto_cleanup(settings.auto_cleanup);
-    state.settings.set_tray_text_length(settings.tray_text_length);
-    state.settings.set_store_original_image(settings.store_original_image);
+    // 更新设置 - 使用完整的 set() 确保所有字段都被更新
+    state.settings.set(settings.clone());
 
     // 保存设置
     state.settings.save(&app)?;
@@ -744,7 +740,24 @@ async fn update_settings(
 }
 
 // 获取当前数据存储路径
-
+#[tauri::command]
+async fn get_current_data_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let default_path = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    
+    let settings = state.settings.get();
+    let data_dir = migration::get_data_directory(
+        default_path,
+        settings.custom_data_path
+    );
+    
+    data_dir.to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Invalid data path".to_string())
+}
 
 // 临时禁用全局快捷键（用于录入快捷键时）
 #[tauri::command]
@@ -1093,7 +1106,8 @@ fn main() {
             disable_global_shortcut,
             enable_global_shortcut,
             open_folder,
-            migrate_data_location
+            migrate_data_location,
+            get_current_data_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
