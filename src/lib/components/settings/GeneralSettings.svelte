@@ -15,14 +15,24 @@
         settings: Settings;
     }>();
 
-    const shortcutPresets = [
-        { label: "Cmd+Shift+V", value: "CommandOrControl+Shift+V" },
-        { label: "Cmd+Shift+C", value: "CommandOrControl+Shift+C" },
-        { label: "Alt+V", value: "Alt+V" },
-    ];
-
     // Detect OS
     const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+
+    // Dynamic shortcut presets based on OS
+    const shortcutPresets = [
+        {
+            label: isMac ? "⌘⇧V" : "Ctrl+Shift+V",
+            value: "CommandOrControl+Shift+V",
+        },
+        {
+            label: isMac ? "⌘⇧C" : "Ctrl+Shift+C",
+            value: "CommandOrControl+Shift+C",
+        },
+        {
+            label: isMac ? "⌥V" : "Alt+V",
+            value: "Alt+V",
+        },
+    ];
 
     // Convert Tauri shortcut to display format
     function formatShortcut(shortcut: string): string[] {

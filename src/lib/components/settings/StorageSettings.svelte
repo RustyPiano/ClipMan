@@ -21,6 +21,17 @@
         changeDataLocation: () => void;
     }>();
 
+    // Detect OS for dynamic text
+    const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+    const isWindows = navigator.platform.toUpperCase().indexOf("WIN") >= 0;
+
+    // Dynamic button text based on OS
+    const openFolderText = isMac
+        ? "在Finder中打开"
+        : isWindows
+          ? "在资源管理器中打开"
+          : "打开文件夹";
+
     async function openDataFolder() {
         if (!currentDataPath || currentDataPath === "使用默认应用数据目录") {
             alert("数据路径未加载，请稍后重试");
@@ -56,7 +67,7 @@
                     class="gap-1 h-7 text-xs"
                 >
                     <FolderOpen class="h-3.5 w-3.5" />
-                    在Finder中打开
+                    {openFolderText}
                 </Button>
             </div>
             <div
