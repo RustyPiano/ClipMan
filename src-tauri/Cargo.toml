@@ -73,3 +73,7 @@ codegen-units = 1
 lto = true
 opt-level = "z"
 strip = true
+
+# Force rfd to use xdg-portal on Linux instead of gtk3
+[patch.crates-io]
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "tokio"] }
