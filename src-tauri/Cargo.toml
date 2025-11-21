@@ -14,7 +14,7 @@ tauri-build = { version = "2.5", features = [] }
 # Tauri Core
 tauri = { version = "2.9", features = [ "tray-icon", "devtools"] }
 tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = { version = "2", default-features = false }
 tauri-plugin-fs = "2"
 tauri-plugin-clipboard-manager = "2.3"
 tauri-plugin-global-shortcut = "2"
