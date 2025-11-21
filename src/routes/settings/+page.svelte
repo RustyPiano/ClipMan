@@ -94,7 +94,7 @@
         try {
             saving = true;
             message = "";
-            await invoke("update_settings", { newSettings: settings });
+            await invoke("update_settings", { settings: settings });
             message = "设置已保存";
             setTimeout(() => (message = ""), 3000);
         } catch (err) {

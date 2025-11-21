@@ -746,6 +746,49 @@ async fn update_settings(
 // 获取当前数据存储路径
 
 
+// 临时禁用全局快捷键（用于录入快捷键时）
+#[tauri::command]
+async fn disable_global_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current_shortcut = state.settings.get().global_shortcut;
+    
+    if let Err(e) = app.global_shortcut().unregister(current_shortcut.as_str()) {
+        log::warn!("Failed to disable global shortcut '{}': {}", current_shortcut, e);
+        return Err(format!("Failed to disable shortcut: {}", e));
+    }
+    
+    log::info!("Global shortcut '{}' temporarily disabled", current_shortcut);
+    Ok(())
+}
+
+// 重新启用全局快捷键
+#[tauri::command]
+async fn enable_global_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let current_shortcut = state.settings.get().global_shortcut;
+    let app_clone = app.clone();
+    let shortcut_clone = current_shortcut.clone();
+    
+    app.global_shortcut()
+        .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::info!("Global shortcut triggered: {}", shortcut_clone);
+                if let Some(window) = app_clone.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
+    
+    log::info!("Global shortcut '{}' re-enabled", current_shortcut);
+    Ok(())
+}
+
 // 打开文件夹
 #[tauri::command]
 async fn open_folder(path: String) -> Result<(), String> {
@@ -1047,6 +1090,8 @@ fn main() {
             copy_to_system_clipboard,
             check_for_updates,
             install_update,
+            disable_global_shortcut,
+            enable_global_shortcut,
             open_folder,
             migrate_data_location
         ])
