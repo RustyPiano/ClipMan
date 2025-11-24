@@ -7,8 +7,8 @@
 **轻量级现代剪切板管理器**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/Kiaana/ClipMan/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/Kiaana/ClipMan)
+[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/RustyPiano/ClipMan/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
 
 [下载使用](#-安装) · [功能特性](#-功能) · [开发文档](#-开发)
 
@@ -49,7 +49,7 @@ ClipMan 是一个**轻量级**（< 5MB）、**高性能**（< 50MB 内存）的�
 
 ## 📥 安装
 
-访问 [GitHub Releases](https://github.com/Kiaana/ClipMan/releases/latest) 下载：
+访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
 - **Windows**: `ClipMan_1.9.1_x64_en-US.msi`
 - **macOS (Apple Silicon)**: `ClipMan_1.9.1_aarch64.dmg`
@@ -101,7 +101,7 @@ ClipMan 是一个**轻量级**（< 5MB）、**高性能**（< 50MB 内存）的�
 
 ```bash
 # 克隆项目
-git clone https://github.com/Kiaana/ClipMan.git
+git clone https://github.com/RustyPiano/ClipMan.git
 cd ClipMan
 
 # 安装依赖
@@ -160,9 +160,9 @@ ClipMan/
 
 欢迎贡献！请查看 [贡献指南](CONTRIBUTING.md)。
 
-- 🐛 [报告 Bug](https://github.com/Kiaana/ClipMan/issues)
-- ✨ [功能建议](https://github.com/Kiaana/ClipMan/issues)
-- 💬 [讨论区](https://github.com/Kiaana/ClipMan/discussions)
+- 🐛 [报告 Bug](https://github.com/RustyPiano/ClipMan/issues)
+- ✨ [功能建议](https://github.com/RustyPiano/ClipMan/issues)
+- 💬 [讨论区](https://github.com/RustyPiano/ClipMan/discussions)
 
 ## 📄 许可证
 
@@ -182,6 +182,6 @@ ClipMan/
 
 **如果觉得有帮助，请给个 ⭐️ Star！**
 
-Made with ❤️ by [Kiaana](https://github.com/Kiaana)
+Made with ❤️ by [RustyPiano](https://github.com/RustyPiano)
 
 </div>

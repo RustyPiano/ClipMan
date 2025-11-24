@@ -69,7 +69,7 @@
                         >
                     {/if}
                     <a
-                        href="https://github.com/Kiaana/ClipMan"
+                        href="https://github.com/RustyPiano/ClipMan"
                         target="_blank"
                         class="text-xs text-primary hover:underline"
                         >GitHub 仓库</a

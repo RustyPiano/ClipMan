@@ -65,7 +65,7 @@
       "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQ0NGMkNGMDI5NEZDQkEKUldTNi9KUUN6L0xNazAxVHdBR3VjVHlrK0hidlRtTUM3bWJuVHRrcC9sVnB0TC8rZzV6eFdLU1YK",
       "endpoints": [
-        "https://github.com/Kiaana/ClipMan/releases/latest/download/latest.json"
+        "https://github.com/RustyPiano/ClipMan/releases/latest/download/latest.json"
       ],
       "dialog": false
     }

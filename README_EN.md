@@ -7,8 +7,8 @@
 **Lightweight Modern Clipboard Manager**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/Kiaana/ClipMan/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/Kiaana/ClipMan)
+[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/RustyPiano/ClipMan/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
 
 [Download](#-installation) · [Features](#-features) · [Development](#-development)
 
@@ -49,7 +49,7 @@ ClipMan is a **lightweight** (< 5MB), **high-performance** (< 50MB memory) moder
 
 ## 📥 Installation
 
-Visit [GitHub Releases](https://github.com/Kiaana/ClipMan/releases/latest) to download:
+Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
 
 - **Windows**: `ClipMan_1.9.1_x64_en-US.msi`
 - **macOS (Apple Silicon)**: `ClipMan_1.9.1_aarch64.dmg`
@@ -101,7 +101,7 @@ Grant Accessibility permission on first run:
 
 ```bash
 # Clone repository
-git clone https://github.com/Kiaana/ClipMan.git
+git clone https://github.com/RustyPiano/ClipMan.git
 cd ClipMan
 
 # Install dependencies
@@ -160,9 +160,9 @@ ClipMan/
 
 Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
 
-- 🐛 [Report Bug](https://github.com/Kiaana/ClipMan/issues)
-- ✨ [Feature Request](https://github.com/Kiaana/ClipMan/issues)
-- 💬 [Discussions](https://github.com/Kiaana/ClipMan/discussions)
+- 🐛 [Report Bug](https://github.com/RustyPiano/ClipMan/issues)
+- ✨ [Feature Request](https://github.com/RustyPiano/ClipMan/issues)
+- 💬 [Discussions](https://github.com/RustyPiano/ClipMan/discussions)
 
 ## 📄 License
 
@@ -182,6 +182,6 @@ Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
 
 **If you find it helpful, give it a ⭐️ Star!**
 
-Made with ❤️ by [Kiaana](https://github.com/Kiaana)
+Made with ❤️ by [RustyPiano](https://github.com/RustyPiano)
 
 </div>

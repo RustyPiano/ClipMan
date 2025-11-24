@@ -29,4 +29,4 @@
 
 ---
 
-**完整更新记录**: https://github.com/Kiaana/ClipMan/compare/v1.9.0...v1.9.1
+**完整更新记录**: https://github.com/RustyPiano/ClipMan/compare/v1.9.0...v1.9.1
