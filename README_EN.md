@@ -7,7 +7,7 @@
 **Lightweight Modern Clipboard Manager**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-1.9.0-blue.svg)](https://github.com/Kiaana/ClipMan/releases)
+[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/Kiaana/ClipMan/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/Kiaana/ClipMan)
 
 [Download](#-installation) · [Features](#-features) · [Development](#-development)
@@ -51,10 +51,10 @@ ClipMan is a **lightweight** (< 5MB), **high-performance** (< 50MB memory) moder
 
 Visit [GitHub Releases](https://github.com/Kiaana/ClipMan/releases/latest) to download:
 
-- **Windows**: `ClipMan_1.9.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_1.9.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_1.9.0_x64.dmg`
-- **Linux**: `ClipMan_1.9.0_amd64.AppImage`
+- **Windows**: `ClipMan_1.9.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_1.9.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_1.9.1_x64.dmg`
+- **Linux**: `ClipMan_1.9.1_amd64.AppImage`
 
 ### macOS Permissions
 
