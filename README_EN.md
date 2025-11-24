@@ -149,6 +149,7 @@ ClipMan/
 - [x] Launch at startup
 
 **Planned**
+- [ ] Smart image compression (AVIF/WebP/MozJPEG, configurable)
 - [ ] Multi-device sync
 - [ ] Group management
 - [ ] Filter rules
