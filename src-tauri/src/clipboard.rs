@@ -267,8 +267,9 @@ impl ClipboardMonitor {
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
         use crate::AppState;
         use crate::update_tray_menu;
+        use crate::storage::FrontendClipItem;
 
-        let item_for_emit = item.clone();
+        let mut item_for_emit = FrontendClipItem::from(item.clone());
 
         let state = app_handle.state::<AppState>();
         let max_history_items = state.settings.get().max_history_items;
@@ -281,13 +282,24 @@ impl ClipboardMonitor {
             storage.insert(&item, max_history_items)
         };
 
-        if let Err(e) = result {
-            log::error!("Failed to save clipboard item: {}", e);
-        } else {
-            app_handle.emit("clipboard-changed", &item_for_emit).ok();
-            log::debug!("Updating tray menu...");
-            update_tray_menu(app_handle);
-            log::debug!("Clipboard item saved and tray updated");
+        match result {
+            Ok(existing_id) => {
+                if let Some(id) = existing_id {
+                    // It was a duplicate, update the emitted item to use the existing ID
+                    // and current timestamp so frontend moves it to top
+                    item_for_emit.id = id;
+                    item_for_emit.timestamp = item.timestamp;
+                    log::debug!("Updated existing item {} timestamp", item_for_emit.id);
+                }
+                
+                app_handle.emit("clipboard-changed", &item_for_emit).ok();
+                log::debug!("Updating tray menu...");
+                update_tray_menu(app_handle);
+                log::debug!("Clipboard item saved/updated and tray updated");
+            }
+            Err(e) => {
+                log::error!("Failed to save clipboard item: {}", e);
+            }
         }
     }
 

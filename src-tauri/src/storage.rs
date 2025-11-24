@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params, Result};
+use rusqlite::{Connection, params, Result, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::crypto::Crypto;
@@ -143,7 +143,7 @@ impl ClipStorage {
         Ok(Self { conn, crypto })
     }
 
-    pub fn insert(&self, item: &ClipItem, max_history_items: usize) -> Result<()> {
+    pub fn insert(&self, item: &ClipItem, max_history_items: usize) -> Result<Option<String>> {
         use sha2::{Sha256, Digest};
 
         // Calculate content hash for deduplication
@@ -152,20 +152,25 @@ impl ClipStorage {
         let content_hash = format!("{:x}", hasher.finalize());
 
         // Check if content already exists in recent items (last 100)
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM clips 
-                WHERE content_hash = ?1 AND content_type = ?2
-                ORDER BY timestamp DESC
-                LIMIT 100
-            )",
+        let existing_id: Option<String> = self.conn.query_row(
+            "SELECT id FROM clips 
+             WHERE content_hash = ?1 AND content_type = ?2
+             ORDER BY timestamp DESC
+             LIMIT 100",
             params![content_hash, item.content_type.to_string()],
             |row| row.get(0)
-        )?;
+        ).optional()?;
 
-        if exists {
-            log::debug!("⏭️ Duplicate content detected (hash: {}), skipping", &content_hash[..8]);
-            return Ok(());
+        if let Some(id) = existing_id {
+            log::debug!("⏭️ Duplicate content detected (hash: {}), updating timestamp", &content_hash[..8]);
+            
+            // Update timestamp of existing item
+            self.conn.execute(
+                "UPDATE clips SET timestamp = ?1 WHERE id = ?2",
+                params![item.timestamp, id],
+            )?;
+            
+            return Ok(Some(id));
         }
 
         // Encrypt content if crypto is available
@@ -205,7 +210,7 @@ impl ClipStorage {
             params![max_history_items],
         )?;
 
-        Ok(())
+        Ok(None)
     }
 
     // Helper method to decrypt content
@@ -238,7 +243,7 @@ impl ClipStorage {
                  ORDER BY timestamp DESC
                  LIMIT ?1
              )
-             ORDER BY is_pinned DESC, pin_order ASC, timestamp DESC"
+             ORDER BY timestamp DESC"
         )?;
 
         let items = stmt.query_map([limit], |row| {

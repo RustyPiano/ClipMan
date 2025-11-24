@@ -4,7 +4,7 @@ import { toastStore } from './toast.svelte';
 
 export interface ClipItem {
   id: string;
-  content: number[] | string; // Array of bytes or base64 string from Rust backend
+  content: string; // Base64 string or data URL from Rust backend
   contentType: 'text' | 'image' | 'file';
   timestamp: number;
   isPinned: boolean;
@@ -15,6 +15,7 @@ class ClipboardStore {
   items = $state<ClipItem[]>([]);
   searchQuery = $state('');
   isLoading = $state(false);
+  maxHistoryItems = $state(100); // Default limit
   private unlisten?: () => void;
 
   // Derived state: pinned items sorted by pin order
@@ -33,45 +34,57 @@ class ClipboardStore {
     this.initialize();
   }
 
-  // Helper: Convert ClipItem from backend (raw bytes) to frontend format (data URLs)
-  private convertToFrontendFormat(item: ClipItem): ClipItem {
-    // If content is already a string, it's already in frontend format
-    if (typeof item.content === 'string') {
-      return item;
-    }
-
-    // Content is a byte array - convert to base64 or data URL
-    if (Array.isArray(item.content)) {
-      if (item.contentType === 'image') {
-        // For images, create data URL for direct browser usage
-        const base64 = btoa(String.fromCharCode(...item.content));
-        return {
-          ...item,
-          content: `data:image/png;base64,${base64}`
-        };
-      } else {
-        // For text and other types, just convert to base64 string
-        const base64 = btoa(String.fromCharCode(...item.content));
-        return {
-          ...item,
-          content: base64
-        };
-      }
-    }
-
-    return item;
-  }
-
   async initialize() {
+    // Load settings first to get maxHistoryItems
+    try {
+      const settings = await invoke<{ maxHistoryItems: number }>('get_settings');
+      this.maxHistoryItems = settings.maxHistoryItems;
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+
     // Load initial history
     await this.loadHistory();
 
     // Listen for clipboard changes from Rust backend
     const unlistenClipboard = await listen<ClipItem>('clipboard-changed', (event) => {
-      // Convert raw ClipItem to frontend format (data URLs for images)
-      const frontendItem = this.convertToFrontendFormat(event.payload);
+      // Backend now sends FrontendClipItem which matches our interface directly (Base64 content)
+      const newItem = event.payload;
+
+      // Deduplication: Remove existing item with same ID if present
+      const existingIndex = this.items.findIndex(i => i.id === newItem.id);
+      let currentItems = [...this.items];
+
+      if (existingIndex !== -1) {
+        // Remove existing item so we can add updated one to top
+        currentItems.splice(existingIndex, 1);
+      }
+
       // Add new item to the beginning
-      this.items = [frontendItem, ...this.items];
+      currentItems.unshift(newItem);
+
+      // Enforce limit on non-pinned items
+      // We need to be careful not to remove pinned items
+      if (currentItems.length > this.maxHistoryItems) {
+        // Find the last non-pinned item to remove
+        // We iterate from the end
+        for (let i = currentItems.length - 1; i >= 0; i--) {
+          if (!currentItems[i].isPinned) {
+            currentItems.splice(i, 1);
+            // Check if we are within limit now
+            // Note: The backend limit applies to non-pinned items mostly, 
+            // but here we just enforce total list size for simplicity or match backend logic
+            // The backend logic is: keep all pinned + N recent non-pinned.
+            // So we should count non-pinned items.
+            const nonPinnedCount = currentItems.filter(item => !item.isPinned).length;
+            if (nonPinnedCount <= this.maxHistoryItems) {
+              break;
+            }
+          }
+        }
+      }
+
+      this.items = currentItems;
     });
 
     // Listen for history cleared event from menu bar
