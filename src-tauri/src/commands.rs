@@ -400,10 +400,12 @@ pub async fn update_settings(
     let old_shortcut = state.settings.get().global_shortcut;
     let old_tray_text_length = state.settings.get().tray_text_length;
     let old_autostart = state.settings.get().enable_autostart;
+    let old_locale = state.settings.get().locale;
     let new_shortcut = settings.global_shortcut.clone();
     let shortcut_changed = old_shortcut != new_shortcut;
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
     let autostart_changed = old_autostart != settings.enable_autostart;
+    let locale_changed = old_locale != settings.locale;
 
     state.settings.set(settings.clone());
     state.settings.save(&app)?;
@@ -452,9 +454,9 @@ pub async fn update_settings(
         log::info!("Hotkey successfully updated to '{}'", new_shortcut);
     }
 
-    // Rebuild tray menu if text length changed
-    if tray_text_changed {
-        log::info!("Tray text length changed, rebuilding menu...");
+    // Rebuild tray menu if text length or locale changed
+    if tray_text_changed || locale_changed {
+        log::info!("Tray settings changed, rebuilding menu...");
         update_tray_menu(&app);
     }
 
