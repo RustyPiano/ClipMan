@@ -7,7 +7,7 @@
 **轻量级现代剪切板管理器**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-1.9.1-blue.svg)](https://github.com/RustyPiano/ClipMan/releases)
+[![Version](https://img.shields.io/badge/Version-1.9.2-blue.svg)](https://github.com/RustyPiano/ClipMan/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
 
 [下载使用](#-安装) · [功能特性](#-功能) · [开发文档](#-开发)
@@ -51,10 +51,10 @@ ClipMan 是一个**轻量级**（< 5MB）、**高性能**（< 50MB 内存）的�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_1.9.1_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_1.9.1_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_1.9.1_x64.dmg`
-- **Linux**: `ClipMan_1.9.1_amd64.AppImage`
+- **Windows**: `ClipMan_1.9.2_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_1.9.2_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_1.9.2_x64.dmg`
+- **Linux**: `ClipMan_1.9.2_amd64.AppImage`
 
 ### macOS 权限
 

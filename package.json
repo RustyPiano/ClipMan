@@ -1,6 +1,6 @@
 {
   "name": "clipman",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "A modern clipboard manager",
   "type": "module",
   "scripts": {
