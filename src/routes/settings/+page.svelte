@@ -29,6 +29,7 @@
         maxRecentInTray: 20,
         customDataPath: null,
         enableAutostart: false,
+        locale: "zh-CN",
     });
 
     let loading = $state(true);
@@ -108,6 +109,7 @@
                 maxRecentInTray: 20,
                 customDataPath: null,
                 enableAutostart: false,
+                locale: "zh-CN",
             };
             await saveSettings();
             message = t.reset + " ✓";

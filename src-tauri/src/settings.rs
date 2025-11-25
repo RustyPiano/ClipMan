@@ -15,6 +15,7 @@ pub struct Settings {
     pub max_recent_in_tray: usize,
     pub custom_data_path: Option<String>,
     pub enable_autostart: bool,
+    pub locale: String,
 }
 
 impl Default for Settings {
@@ -29,6 +30,7 @@ impl Default for Settings {
             max_recent_in_tray: 20,
             custom_data_path: None,
             enable_autostart: false,
+            locale: "zh-CN".to_string(),
         }
     }
 }
@@ -103,7 +105,11 @@ impl SettingsManager {
             }
         }
 
-
+        if let Some(locale) = store.get("locale") {
+            if let Some(l) = locale.as_str() {
+                self.settings.lock().unwrap().locale = l.to_string();
+            }
+        }
 
         log::info!("Settings loaded: {:?}", self.settings.lock().unwrap());
         Ok(())
@@ -124,6 +130,7 @@ impl SettingsManager {
         store.set("max_recent_in_tray", serde_json::json!(settings.max_recent_in_tray));
         store.set("custom_data_path", serde_json::json!(settings.custom_data_path));
         store.set("enable_autostart", serde_json::json!(settings.enable_autostart));
+        store.set("locale", serde_json::json!(settings.locale));
 
         store.save().map_err(|e| format!("Failed to save store: {}", e))?;
 

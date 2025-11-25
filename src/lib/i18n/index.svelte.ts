@@ -470,6 +470,23 @@ class I18n {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('locale', locale);
     }
+    // Notify backend to update tray menu
+    this.syncToBackend(locale);
+  }
+  
+  // Sync locale to backend for tray menu i18n
+  private async syncToBackend(locale: Locale) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      // Get current settings
+      const settings = await invoke('get_settings') as Record<string, unknown>;
+      // Update locale
+      settings.locale = locale;
+      // Save back
+      await invoke('update_settings', { settings });
+    } catch (e) {
+      console.warn('Failed to sync locale to backend:', e);
+    }
   }
   
   // Helper for interpolation: t.minutesAgo with {n} -> "5分钟前"

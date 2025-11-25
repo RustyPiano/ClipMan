@@ -12,6 +12,46 @@ use crate::AppState;
 pub const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
 
+/// Tray menu translations
+pub struct TrayI18n {
+    pub pinned_header: &'static str,
+    pub recent_header: &'static str,
+    pub image: &'static str,
+    pub file: &'static str,
+    pub file_prefix: &'static str,
+    pub clear: &'static str,
+    pub settings: &'static str,
+    pub quit: &'static str,
+}
+
+impl TrayI18n {
+    pub fn new(locale: &str) -> Self {
+        if locale.starts_with("zh") {
+            Self {
+                pinned_header: "置顶项",
+                recent_header: "最近复制",
+                image: "图片",
+                file: "文件",
+                file_prefix: "文件: ",
+                clear: "清除",
+                settings: "设置",
+                quit: "退出",
+            }
+        } else {
+            Self {
+                pinned_header: "Pinned",
+                recent_header: "Recent",
+                image: "Image",
+                file: "File",
+                file_prefix: "File: ",
+                clear: "Clear",
+                settings: "Settings",
+                quit: "Quit",
+            }
+        }
+    }
+}
+
 /// Icon cache for tray menu images
 pub struct TrayIconCache {
     cache: Mutex<LruCache<String, tauri::image::Image<'static>>>,
@@ -82,7 +122,7 @@ impl TrayIconCache {
 }
 
 /// Truncate content for menu display (handles Unicode safely)
-pub fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usize) -> String {
+pub fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usize, i18n: &TrayI18n) -> String {
     match content_type {
         ContentType::Text | ContentType::Html | ContentType::Rtf => {
             let text = String::from_utf8_lossy(content);
@@ -107,20 +147,20 @@ pub fn truncate_content(content: &[u8], content_type: &ContentType, max_len: usi
                 text
             }
         }
-        ContentType::Image => "图片".to_string(),
+        ContentType::Image => i18n.image.to_string(),
         ContentType::File => {
             match std::str::from_utf8(content) {
                 Ok(path_str) => {
                     let path = std::path::Path::new(path_str);
                     if let Some(file_name) = path.file_name() {
-                        format!("文件: {}", file_name.to_string_lossy())
+                        format!("{}{}", i18n.file_prefix, file_name.to_string_lossy())
                     } else {
-                        "文件".to_string()
+                        i18n.file.to_string()
                     }
                 }
                 Err(e) => {
                     log::warn!("Invalid UTF-8 in file path content: {}", e);
-                    "文件".to_string()
+                    i18n.file.to_string()
                 }
             }
         },
@@ -133,8 +173,9 @@ fn add_clip_menu_item(
     item: &ClipItem,
     icon_cache: &TrayIconCache,
     max_len: usize,
+    i18n: &TrayI18n,
 ) -> Result<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>, tauri::Error> {
-    let preview = truncate_content(&item.content, &item.content_type, max_len);
+    let preview = truncate_content(&item.content, &item.content_type, max_len, i18n);
     
     if matches!(item.content_type, ContentType::Image) {
         if let Some(icon) = icon_cache.get_or_create(&item.id, &item.content) {
@@ -170,6 +211,7 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     let max_pinned_in_tray = settings.max_pinned_in_tray;
     let max_recent_in_tray = settings.max_recent_in_tray;
     let max_len = settings.tray_text_length;
+    let i18n = TrayI18n::new(&settings.locale);
     
     // Calculate query limit
     let query_limit = (max_recent_in_tray + max_pinned_in_tray).max(30);
@@ -188,11 +230,11 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     // Add pinned items
     let pinned_count = pinned_items.len().min(max_pinned_in_tray);
     if pinned_count > 0 {
-        let pinned_header = MenuItemBuilder::with_id("pinned_header", "置顶项").enabled(false).build(app)?;
+        let pinned_header = MenuItemBuilder::with_id("pinned_header", i18n.pinned_header).enabled(false).build(app)?;
         menu_builder = menu_builder.item(&pinned_header);
 
         for item in pinned_items.iter().take(max_pinned_in_tray) {
-            let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len)?;
+            let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
             menu_builder = menu_builder.item(&*menu_item);
         }
 
@@ -206,11 +248,11 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
         .collect();
 
     if !recent_unpinned.is_empty() {
-        let recent_header = MenuItemBuilder::with_id("recent_header", "最近复制").enabled(false).build(app)?;
+        let recent_header = MenuItemBuilder::with_id("recent_header", i18n.recent_header).enabled(false).build(app)?;
         menu_builder = menu_builder.item(&recent_header);
 
         for item in recent_unpinned {
-            let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len)?;
+            let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
             menu_builder = menu_builder.item(&*menu_item);
         }
     }
@@ -218,9 +260,9 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     // Bottom actions
     menu_builder = menu_builder
         .separator()
-        .item(&MenuItemBuilder::with_id("clear_non_pinned", "清除").build(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "设置").build(app)?)
-        .item(&MenuItemBuilder::with_id("quit", "退出").build(app)?);
+        .item(&MenuItemBuilder::with_id("clear_non_pinned", i18n.clear).build(app)?)
+        .item(&MenuItemBuilder::with_id("settings", i18n.settings).build(app)?)
+        .item(&MenuItemBuilder::with_id("quit", i18n.quit).build(app)?);
 
     menu_builder.build()
 }
@@ -235,5 +277,65 @@ pub fn update_tray_menu(app: &AppHandle) {
                 log::debug!("Tray menu updated successfully");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::ContentType;
+
+    #[test]
+    fn test_tray_i18n_chinese() {
+        let i18n = TrayI18n::new("zh-CN");
+        assert_eq!(i18n.pinned_header, "置顶项");
+        assert_eq!(i18n.recent_header, "最近复制");
+        assert_eq!(i18n.quit, "退出");
+    }
+
+    #[test]
+    fn test_tray_i18n_english() {
+        let i18n = TrayI18n::new("en");
+        assert_eq!(i18n.pinned_header, "Pinned");
+        assert_eq!(i18n.recent_header, "Recent");
+        assert_eq!(i18n.quit, "Quit");
+    }
+
+    #[test]
+    fn test_truncate_content_text() {
+        let i18n = TrayI18n::new("en");
+        let content = b"Hello, World!";
+        let result = truncate_content(content, &ContentType::Text, 50, &i18n);
+        assert_eq!(result, "Hello, World!");
+    }
+
+    #[test]
+    fn test_truncate_content_long_text() {
+        let i18n = TrayI18n::new("en");
+        let content = b"This is a very long text that should be truncated";
+        let result = truncate_content(content, &ContentType::Text, 20, &i18n);
+        assert!(result.contains("..."));
+        assert!(result.len() <= 23); // 20 + "..."
+    }
+
+    #[test]
+    fn test_truncate_content_image() {
+        let i18n_zh = TrayI18n::new("zh-CN");
+        let i18n_en = TrayI18n::new("en");
+        
+        let result_zh = truncate_content(b"", &ContentType::Image, 50, &i18n_zh);
+        let result_en = truncate_content(b"", &ContentType::Image, 50, &i18n_en);
+        
+        assert_eq!(result_zh, "图片");
+        assert_eq!(result_en, "Image");
+    }
+
+    #[test]
+    fn test_truncate_content_newlines() {
+        let i18n = TrayI18n::new("en");
+        let content = b"Line 1\nLine 2\r\nLine 3";
+        let result = truncate_content(content, &ContentType::Text, 50, &i18n);
+        assert!(!result.contains('\n'));
+        assert!(!result.contains('\r'));
     }
 }

@@ -32,6 +32,7 @@ export interface Settings {
   maxRecentInTray: number;
   customDataPath: string | null;
   enableAutostart: boolean;
+  locale: string;
 }
 
 /**
