@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::menu::{IconMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::{AppHandle, Manager};
 
-use crate::storage::{ClipItem, ContentType};
+use crate::storage::{ClipPreviewItem, ContentType};
 use crate::AppState;
 
 // Tray configuration constants
@@ -139,7 +139,12 @@ pub fn truncate_content(
             // Smart truncation: show start...end for long text
             let char_count = text.chars().count();
             if char_count > max_len {
-                let start_len = max_len * 2 / 3;
+                if max_len <= 3 {
+                    return text.chars().take(max_len).collect();
+                }
+
+                let available = max_len - 3;
+                let start_len = (available * 2 / 3).max(1);
                 let end_len = max_len - start_len - 3;
 
                 let start: String = text.chars().take(start_len).collect();
@@ -156,16 +161,19 @@ pub fn truncate_content(
 /// Helper function to add a clip menu item
 fn add_clip_menu_item(
     app: &AppHandle,
-    item: &ClipItem,
+    item: &ClipPreviewItem,
     icon_cache: &TrayIconCache,
     max_len: usize,
     i18n: &TrayI18n,
 ) -> Result<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>, tauri::Error> {
-    let preview = truncate_content(&item.content, &item.content_type, max_len, i18n);
+    let preview = truncate_content(&item.preview_content, &item.content_type, max_len, i18n);
 
     if matches!(item.content_type, ContentType::Image) {
-        let icon_content = item.thumbnail.as_deref().unwrap_or(&item.content);
-        if let Some(icon) = icon_cache.get_or_create(&item.id, icon_content) {
+        if let Some(icon) = item
+            .thumbnail
+            .as_deref()
+            .and_then(|content| icon_cache.get_or_create(&item.id, content))
+        {
             let menu_item = IconMenuItemBuilder::with_id(format!("clip:{}", item.id), preview)
                 .icon(icon)
                 .build(app)?;
@@ -193,29 +201,37 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     let max_len = settings.tray_text_length;
     let i18n = TrayI18n::new(&settings.locale);
 
-    // Calculate query limit
-    let query_limit = (max_recent_in_tray + max_pinned_in_tray).max(30);
-
     // Quick lock acquisition - get data and release immediately
     let (pinned_items, recent_items) = {
         let storage = crate::safe_lock(&state.storage);
-        (
-            storage.get_pinned_clips().unwrap_or_default(),
-            storage.get_recent_clips(query_limit).unwrap_or_default(),
-        )
+        let pinned_items = if max_pinned_in_tray == 0 {
+            Vec::new()
+        } else {
+            storage
+                .get_pinned_clip_previews_with_limit(max_pinned_in_tray)
+                .unwrap_or_default()
+        };
+        let recent_items = if max_recent_in_tray == 0 {
+            Vec::new()
+        } else {
+            storage
+                .get_recent_clip_previews(max_recent_in_tray)
+                .unwrap_or_default()
+        };
+        (pinned_items, recent_items)
     };
 
     let mut menu_builder = MenuBuilder::new(app);
 
     // Add pinned items
-    let pinned_count = pinned_items.len().min(max_pinned_in_tray);
+    let pinned_count = pinned_items.len();
     if pinned_count > 0 {
         let pinned_header = MenuItemBuilder::with_id("pinned_header", i18n.pinned_header)
             .enabled(false)
             .build(app)?;
         menu_builder = menu_builder.item(&pinned_header);
 
-        for item in pinned_items.iter().take(max_pinned_in_tray) {
+        for item in &pinned_items {
             let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
             menu_builder = menu_builder.item(&*menu_item);
         }
@@ -224,19 +240,13 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     }
 
     // Add recent items (excluding pinned)
-    let recent_unpinned: Vec<_> = recent_items
-        .iter()
-        .filter(|item| !item.is_pinned)
-        .take(max_recent_in_tray)
-        .collect();
-
-    if !recent_unpinned.is_empty() {
+    if !recent_items.is_empty() {
         let recent_header = MenuItemBuilder::with_id("recent_header", i18n.recent_header)
             .enabled(false)
             .build(app)?;
         menu_builder = menu_builder.item(&recent_header);
 
-        for item in recent_unpinned {
+        for item in &recent_items {
             let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
             menu_builder = menu_builder.item(&*menu_item);
         }
@@ -300,7 +310,19 @@ mod tests {
         let content = b"This is a very long text that should be truncated";
         let result = truncate_content(content, &ContentType::Text, 20, &i18n);
         assert!(result.contains("..."));
-        assert!(result.len() <= 23); // 20 + "..."
+        assert!(result.len() <= 20);
+    }
+
+    #[test]
+    fn test_truncate_content_tiny_limits_do_not_underflow() {
+        let i18n = TrayI18n::new("en");
+        let content = b"abcdefg";
+
+        let tiny = truncate_content(content, &ContentType::Text, 3, &i18n);
+        let compact = truncate_content(content, &ContentType::Text, 6, &i18n);
+
+        assert_eq!("abc", tiny);
+        assert_eq!("ab...g", compact);
     }
 
     #[test]
