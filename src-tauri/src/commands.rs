@@ -128,11 +128,12 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 
 #[tauri::command]
 pub async fn check_clipboard_permission() -> Result<String, String> {
-    use arboard::Clipboard;
+    use arboard::{Clipboard, Error};
 
     match Clipboard::new() {
         Ok(mut clipboard) => match clipboard.get_text() {
             Ok(_) => Ok("granted".to_string()),
+            Err(Error::ContentNotAvailable) => Ok("granted".to_string()),
             Err(e) => Ok(format!("denied: {}", e)),
         },
         Err(e) => Err(format!("Failed to create clipboard: {}", e)),

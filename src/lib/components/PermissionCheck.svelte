@@ -12,10 +12,11 @@
     isChecking = true;
     errorMessage = '';
     try {
-      // Call backend to check permission
-      // Note: This command needs to be implemented in backend or use existing check
-      // For now we'll assume it returns boolean if the command exists, or we catch error
-      hasPermission = await invoke('check_clipboard_permission');
+      const res = await invoke<string>('check_clipboard_permission');
+      hasPermission = res === 'granted';
+      if (!hasPermission) {
+        errorMessage = res;
+      }
     } catch (e) {
       console.error('Failed to check permission:', e);
       // If command doesn't exist yet or fails, we might want to show error or assume true

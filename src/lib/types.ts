@@ -21,6 +21,9 @@ export interface ClipItem {
   groupName: string | null;
 }
 
+import type { Locale } from './i18n';
+export type { Locale };
+
 /**
  * Application settings
  */
@@ -35,7 +38,7 @@ export interface Settings {
   maxRecentInTray: number;
   customDataPath: string | null;
   enableAutostart: boolean;
-  locale: string;
+  locale: Locale;
 }
 
 export type PasteMode = 'default' | 'opposite' | 'paste' | 'copy';

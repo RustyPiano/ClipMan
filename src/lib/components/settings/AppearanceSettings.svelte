@@ -3,6 +3,11 @@
   import { themeStore } from '$lib/stores/theme.svelte';
   import { i18n, type Locale } from '$lib/i18n';
   import { Monitor, Moon, Sun, Heart, Globe } from 'lucide-svelte';
+  import type { Settings } from '$lib/types';
+
+  let { settings = $bindable() } = $props<{
+    settings: Settings;
+  }>();
 
   const t = $derived(i18n.t);
 
@@ -71,7 +76,10 @@
                         {i18n.locale === lang.value
               ? 'border-primary bg-primary/5'
               : 'border-transparent bg-muted/20'}"
-            onclick={() => i18n.setLocale(lang.value)}
+            onclick={() => {
+              i18n.setLocale(lang.value);
+              settings.locale = lang.value;
+            }}
             role="radio"
             aria-checked={i18n.locale === lang.value}
           >

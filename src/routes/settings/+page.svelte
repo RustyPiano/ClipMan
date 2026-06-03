@@ -7,7 +7,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
+  import type { Settings, UpdateInfo, SettingsTab, Locale } from '$lib/types';
 
   // Import modularized components
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
@@ -59,10 +59,29 @@
     await Promise.all([loadSettings(), loadDataPath()]);
   });
 
+  function isValidLocale(loc: any): loc is Locale {
+    return loc === 'zh-CN' || loc === 'en';
+  }
+
   async function loadSettings() {
     try {
       loading = true;
-      settings = await invoke<Settings>('get_settings');
+      const data = await invoke<any>('get_settings');
+      let needsSave = false;
+      if (!isValidLocale(data.locale)) {
+        console.warn(
+          `[WARNING] Invalid locale loaded from backend: ${data.locale}, falling back to 'zh-CN'`
+        );
+        data.locale = 'zh-CN';
+        needsSave = true;
+      }
+      settings = data;
+      if (settings.locale !== i18n.locale) {
+        i18n.setLocale(settings.locale);
+      } else if (needsSave) {
+        // If we corrected the locale, update backend settings immediately to fix the file on disk
+        await invoke('update_settings', { settings: settings });
+      }
     } catch (err) {
       console.error('Failed to load settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -260,7 +279,7 @@
           {:else if activeTab === 'clipboard'}
             <ClipboardSettings bind:settings />
           {:else if activeTab === 'appearance'}
-            <AppearanceSettings />
+            <AppearanceSettings bind:settings />
           {:else if activeTab === 'tray'}
             <TraySettings bind:settings />
           {:else if activeTab === 'storage'}

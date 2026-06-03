@@ -485,6 +485,15 @@ class I18n {
       if (saved && (saved === 'zh-CN' || saved === 'en')) {
         this._locale = saved;
       }
+
+      // Sync locale across windows via storage events
+      window.addEventListener('storage', (event) => {
+        if (event.key === 'locale' && event.newValue) {
+          if (event.newValue === 'zh-CN' || event.newValue === 'en') {
+            this._locale = event.newValue as Locale;
+          }
+        }
+      });
     }
   }
 

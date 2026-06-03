@@ -12,6 +12,15 @@ function createThemeStore() {
     if (stored && ['light', 'dark', 'light-pink', 'system'].includes(stored)) {
       theme = stored;
     }
+
+    // Sync theme across windows via storage events
+    window.addEventListener('storage', (event) => {
+      if (event.key === 'theme' && event.newValue) {
+        if (['light', 'dark', 'light-pink', 'system'].includes(event.newValue)) {
+          theme = event.newValue as Theme;
+        }
+      }
+    });
   }
 
   // Effect removed - handled in component
