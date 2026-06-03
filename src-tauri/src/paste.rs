@@ -318,7 +318,18 @@ fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn simulate_paste(_state: &AppState) -> Result<PasteSimulation, String> {
+fn simulate_paste(state: &AppState) -> Result<PasteSimulation, String> {
+    // The QuickBar stole keyboard focus while it was open. It is now hidden, so
+    // bring the previously frontmost app back to the front before pressing
+    // Cmd+V; otherwise the keystroke is delivered to nothing.
+    if let Err(e) =
+        crate::window::restore_recorded_foreground_window(&state.quickbar_foreground_window)
+    {
+        log::warn!("Could not reactivate previous app before paste: {}", e);
+    }
+    // Give the reactivated app a brief moment to become key and accept input.
+    thread::sleep(Duration::from_millis(60));
+
     send_paste_shortcut(Key::Meta)
         .map(|_| PasteSimulation::Pasted)
         .map_err(|e| format!("accessibility_permission_required_or_input_simulation_failed: {e}"))
@@ -357,7 +368,7 @@ fn send_paste_shortcut(modifier: Key) -> Result<(), String> {
         .key(modifier, Press)
         .map_err(|e| format!("Failed to press paste modifier: {e}"))?;
     let click_result = enigo
-        .key(Key::Unicode('v'), Click)
+        .key(paste_key(), Click)
         .map_err(|e| format!("Failed to click paste key: {e}"));
     let release_result = enigo
         .key(modifier, Release)
@@ -365,6 +376,24 @@ fn send_paste_shortcut(modifier: Key) -> Result<(), String> {
 
     click_result?;
     release_result
+}
+
+/// The "V" key pressed together with the platform modifier to trigger a paste.
+///
+/// On macOS we must NOT use `Key::Unicode('v')`: enigo resolves that character
+/// to a virtual key code through `TSMGetInputSourceProperty` (Text Input Source
+/// Manager). That API asserts it is running on the main dispatch queue and
+/// aborts the whole process (EXC_BREAKPOINT) when called from the Tokio worker
+/// thread handling the paste command. The raw key code for the physical "V"
+/// key (kVK_ANSI_V = 9) bypasses that lookup entirely.
+#[cfg(target_os = "macos")]
+fn paste_key() -> Key {
+    Key::Other(9)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn paste_key() -> Key {
+    Key::Unicode('v')
 }
 
 #[cfg(test)]

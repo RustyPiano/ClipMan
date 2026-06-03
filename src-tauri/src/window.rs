@@ -114,7 +114,35 @@ pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Resu
     restore_foreground_window(target)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
+    use cocoa::base::{id, nil, BOOL, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let target = (*crate::safe_lock(store))
+        .ok_or_else(|| "No foreground app was recorded before QuickBar opened".to_string())?;
+    let pid = target.raw() as i32;
+
+    unsafe {
+        let running: id = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: pid
+        ];
+        if running == nil {
+            return Err(format!("Recorded app (pid {pid}) is no longer running"));
+        }
+
+        // NSApplicationActivateIgnoringOtherApps = 1 << 1
+        let activated: BOOL = msg_send![running, activateWithOptions: 1u64 << 1];
+        if activated != YES {
+            return Err(format!("Failed to reactivate app (pid {pid})"));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 #[allow(dead_code)]
 pub fn restore_recorded_foreground_window(_store: &ForegroundWindowStore) -> Result<(), String> {
     Ok(())
@@ -292,7 +320,33 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
     log::debug!("Recorded Windows foreground window before QuickBar show");
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &WebviewWindow) {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let front: id = msg_send![workspace, frontmostApplication];
+        if front == nil {
+            log::warn!("No frontmost macOS application to record");
+            return;
+        }
+
+        let pid: i32 = msg_send![front, processIdentifier];
+        if pid == std::process::id() as i32 {
+            log::debug!("ClipMan is already frontmost; keeping previous paste target");
+            return;
+        }
+
+        *crate::safe_lock(store) = Some(ForegroundWindow {
+            raw: pid as isize,
+        });
+        log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn remember_foreground_window(_store: &ForegroundWindowStore, _quickbar: &WebviewWindow) {}
 
 #[cfg(windows)]

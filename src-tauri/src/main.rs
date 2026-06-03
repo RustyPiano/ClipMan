@@ -28,20 +28,6 @@ use std::sync::{Arc, Mutex};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
-#[cfg(target_os = "macos")]
-use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
-
-#[cfg(target_os = "macos")]
-fn set_activation_policy() {
-    unsafe {
-        let app = NSApp();
-        app.setActivationPolicy_(
-            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-        );
-    }
-    log::info!("macOS activation policy set to Accessory (menu bar only)");
-}
-
 /// Helper function: safely acquire Mutex even if poisoned
 pub fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| {
@@ -84,8 +70,6 @@ fn main() {
             },
             Err(e) => log::error!("❌ Failed to create clipboard instance: {}", e),
         }
-
-        set_activation_policy();
     }
 
     tauri::Builder::default()
@@ -102,6 +86,12 @@ fn main() {
             Some(vec!["--minimized"]),
         ))
         .setup(|app| {
+            // Hide the Dock icon: run as a menu-bar (Accessory) app. This must
+            // happen here, after Tauri/tao has created the NSApplication —
+            // doing it earlier (before the event loop) gets reset to Regular.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             // Initialize settings first
             let settings_manager = Arc::new(SettingsManager::new());
             if let Err(e) = settings_manager.load(&app.handle()) {
