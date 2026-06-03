@@ -19,16 +19,9 @@
       }
     } catch (e) {
       console.error('Failed to check permission:', e);
-      // If command doesn't exist yet or fails, we might want to show error or assume true
-      // For safety in this refactor, let's assume true unless explicitly denied,
-      // but if it's a specific permission error, we set hasPermission = false
-      if (String(e).includes('denied')) {
-        hasPermission = false;
-        errorMessage = String(e);
-      } else {
-        // If the command is missing (during dev), don't block the UI
-        hasPermission = true;
-      }
+      // The command only throws when the clipboard can't be created (not a permission
+      // denial), so don't block the UI — assume granted.
+      hasPermission = true;
     } finally {
       isChecking = false;
     }

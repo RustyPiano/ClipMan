@@ -1,5 +1,8 @@
 // Shared type definitions for ClipMan frontend
 
+import type { Locale } from './i18n';
+export type { Locale };
+
 /**
  * Clipboard item content types
  */
@@ -20,9 +23,6 @@ export interface ClipItem {
   label: string | null;
   groupName: string | null;
 }
-
-import type { Locale } from './i18n';
-export type { Locale };
 
 /**
  * Application settings
