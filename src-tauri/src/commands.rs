@@ -11,6 +11,25 @@ use crate::storage::{ContentType, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, safe_lock, AppState};
 
+type MainThreadAction = Box<dyn FnOnce() -> Result<(), String> + Send>;
+
+fn run_action_on_main_thread(
+    app: &AppHandle,
+    command_name: &'static str,
+    action: MainThreadAction,
+) -> Result<(), String> {
+    let (sender, receiver) = mpsc::channel();
+
+    app.run_on_main_thread(move || {
+        let _ = sender.send(action());
+    })
+    .map_err(|e| format!("Failed to schedule {command_name} on main thread: {e}"))?;
+
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("Timed out waiting for {command_name} on main thread: {e}"))?
+}
+
 fn run_window_command_on_main_thread<F>(
     app: &AppHandle,
     command_name: &'static str,
@@ -21,17 +40,8 @@ where
 {
     // Frontend IPC handlers can run off the event-loop thread; macOS window
     // focus/activation touches AppKit and must be dispatched back to main.
-    let app_for_task = app.clone();
-    let (sender, receiver) = mpsc::channel();
-
-    app.run_on_main_thread(move || {
-        let _ = sender.send(action(app_for_task));
-    })
-    .map_err(|e| format!("Failed to schedule {command_name} on main thread: {e}"))?;
-
-    receiver
-        .recv_timeout(Duration::from_secs(5))
-        .map_err(|e| format!("Timed out waiting for {command_name} on main thread: {e}"))?
+    let app_for_action = app.clone();
+    run_action_on_main_thread(app, command_name, Box::new(move || action(app_for_action)))
 }
 
 #[tauri::command]
@@ -240,27 +250,47 @@ pub fn register_quickbar_shortcut(
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                log::info!("Global shortcut triggered: {}", shortcut_display);
-                let result = match panel {
-                    crate::window::QuickBarPanel::Recent => {
-                        crate::window::show_quickbar(&app_clone, &foreground_store)
-                    }
-                    crate::window::QuickBarPanel::Pinned => {
-                        crate::window::show_quickbar_with_panel(
-                            &app_clone,
-                            &foreground_store,
-                            panel,
-                        )
-                    }
-                };
+            let app_for_action = app_clone.clone();
+            let foreground_store = foreground_store.clone();
+            let result = handle_quickbar_shortcut_event(
+                event.state,
+                &shortcut_display,
+                |command_name, action| run_action_on_main_thread(&app_clone, command_name, action),
+                move || {
+                    crate::window::show_quickbar_with_panel(
+                        &app_for_action,
+                        &foreground_store,
+                        panel,
+                    )
+                },
+            );
 
-                if let Err(e) = result {
-                    log::error!("Failed to show QuickBar: {}", e);
-                }
+            if let Some(Err(e)) = result {
+                log::error!("Failed to show QuickBar: {}", e);
             }
         })
         .map_err(|e| format!("Failed to register shortcut '{}': {}", shortcut, e))
+}
+
+fn handle_quickbar_shortcut_event<S, A>(
+    state: ShortcutState,
+    shortcut_display: &str,
+    schedule_on_main_thread: S,
+    action: A,
+) -> Option<Result<(), String>>
+where
+    S: FnOnce(&'static str, MainThreadAction) -> Result<(), String>,
+    A: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    if !matches!(state, ShortcutState::Pressed) {
+        return None;
+    }
+
+    log::info!("Global shortcut triggered: {}", shortcut_display);
+    Some(schedule_on_main_thread(
+        "show_quickbar_from_shortcut",
+        Box::new(action),
+    ))
 }
 
 #[tauri::command]
@@ -820,4 +850,57 @@ pub async fn migrate_data_location(
 
     crate::tray::update_tray_menu(&app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tauri_plugin_global_shortcut::ShortcutState;
+
+    #[test]
+    fn pressed_quickbar_shortcut_uses_main_thread_scheduler() {
+        let scheduled_commands = Arc::new(Mutex::new(Vec::new()));
+        let action_ran = Arc::new(Mutex::new(false));
+
+        let scheduled_commands_for_scheduler = scheduled_commands.clone();
+        let action_ran_for_action = action_ran.clone();
+
+        let result = super::handle_quickbar_shortcut_event(
+            ShortcutState::Pressed,
+            "CommandOrControl+Shift+V",
+            move |command_name, action| {
+                scheduled_commands_for_scheduler
+                    .lock()
+                    .unwrap()
+                    .push(command_name);
+                action()
+            },
+            move || {
+                *action_ran_for_action.lock().unwrap() = true;
+                Ok(())
+            },
+        );
+
+        assert!(matches!(result, Some(Ok(()))));
+        assert_eq!(
+            &*scheduled_commands.lock().unwrap(),
+            &["show_quickbar_from_shortcut"]
+        );
+        assert!(*action_ran.lock().unwrap());
+    }
+
+    #[test]
+    fn released_quickbar_shortcut_does_not_schedule() {
+        let result = super::handle_quickbar_shortcut_event(
+            ShortcutState::Released,
+            "CommandOrControl+Shift+V",
+            |_command_name, _action| panic!("released shortcut should not schedule QuickBar"),
+            || {
+                panic!("released shortcut should not run QuickBar action");
+            },
+        );
+
+        assert!(result.is_none());
+    }
 }

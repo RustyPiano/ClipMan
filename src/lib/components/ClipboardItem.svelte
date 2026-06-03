@@ -19,7 +19,7 @@
   const t = $derived(i18n.t);
   const cardClass = $derived(
     selected
-      ? 'bg-primary/8 ring-1 ring-primary/15 shadow-sm'
+      ? 'border border-primary/15 bg-primary/8 shadow-sm'
       : item.isPinned
         ? 'bg-secondary/40 border border-border/40 shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
         : 'border border-transparent hover:bg-secondary/20'
@@ -146,26 +146,21 @@
   });
 </script>
 
-<div
-  id={`clip-item-${item.id}`}
-  class="group relative transition-all duration-150"
-  role="listitem"
-  onmouseenter={onSelect}
->
+<div id={`clip-item-${item.id}`} class="group relative" role="listitem" onmouseenter={onSelect}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="relative cursor-pointer overflow-hidden rounded-lg transition-all duration-200 ease-out {cardClass}"
+    class="relative cursor-pointer overflow-hidden rounded-lg transition-colors duration-75 ease-out {cardClass}"
     onclick={handleUse}
   >
     <!-- Left Accent Indicator -->
-    {#if selected}
-      <div
-        class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary transition-all duration-300 animate-in fade-in slide-in-from-left-1"
-      ></div>
-    {/if}
+    <div
+      class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary transition-opacity duration-75 {selected
+        ? 'opacity-100'
+        : 'opacity-0'}"
+    ></div>
 
-    <div class="flex gap-2.5 p-2 transition-all duration-200 {selected ? 'pl-3.5' : ''}">
+    <div class="flex gap-2.5 p-2 pl-3.5">
       <div class="flex w-6 flex-none flex-col items-center gap-0.5 pt-0.5 text-muted-foreground">
         {#if slotNumber}
           <kbd

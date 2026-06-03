@@ -74,7 +74,7 @@
   --quickbar-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.02), 0 20px 40px -12px rgba(15, 23, 42, 0.12),
     0 0 0 1px rgba(0, 0, 0, 0.01);
-  --quickbar-bg: rgba(250, 250, 250, 0.85);
+  --quickbar-bg: rgb(250 250 250);
 
   --bg-kbd: hsl(220 13% 92%);
   --border-kbd: hsl(220 13% 86%);
@@ -115,7 +115,7 @@
   --quickbar-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03), 0 24px 60px -15px rgba(0, 0, 0, 0.7),
     0 0 0 1px rgba(255, 255, 255, 0.02);
-  --quickbar-bg: rgba(10, 13, 20, 0.85);
+  --quickbar-bg: rgb(10 13 20);
 
   --bg-kbd: hsl(217 30% 13%);
   --border-kbd: hsl(217 30% 20%);
@@ -158,7 +158,7 @@
   --quickbar-shadow:
     0 0 0 1px rgba(212, 140, 140, 0.05), 0 18px 36px -10px rgba(139, 92, 92, 0.1),
     0 0 0 1px rgba(212, 140, 140, 0.03);
-  --quickbar-bg: rgba(253, 251, 251, 0.85);
+  --quickbar-bg: rgb(253 251 251);
 
   --bg-kbd: hsl(343 30% 93%);
   --border-kbd: hsl(343 25% 88%);
@@ -186,12 +186,11 @@ html.quickbar-window body {
   background: transparent;
 }
 
-/* Custom Floating Panel with advanced shadow, border, and frosted-glass blur */
+/* Custom Floating Panel with shadow and border */
 .quickbar-panel {
   border: 1px solid var(--quickbar-border) !important;
   box-shadow: var(--quickbar-shadow) !important;
   background: var(--quickbar-bg) !important;
-  backdrop-filter: blur(20px) saturate(190%) !important;
 }
 
 /* Flat Minimal Keyboard Keycap style */

@@ -5,6 +5,11 @@ function clampIndex(index: number, itemCount: number) {
   return Math.min(Math.max(index, 0), itemCount - 1);
 }
 
+function wrapIndex(index: number, itemCount: number) {
+  if (itemCount <= 0) return 0;
+  return ((index % itemCount) + itemCount) % itemCount;
+}
+
 class SelectionStore {
   panel = $state<QuickBarPanel>('recent');
   selectedIndex = $state(0);
@@ -31,7 +36,7 @@ class SelectionStore {
   }
 
   move(delta: number, itemCount: number) {
-    this.selectedIndex = clampIndex(this.selectedIndex + delta, itemCount);
+    this.selectedIndex = wrapIndex(this.selectedIndex + delta, itemCount);
   }
 
   selectSlot(slotNumber: number, itemCount: number) {

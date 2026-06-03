@@ -26,7 +26,6 @@
     Loader2,
     Heart,
   } from 'lucide-svelte';
-  import { flip } from 'svelte/animate';
 
   const initialSettingsCheck =
     typeof window !== 'undefined' &&
@@ -164,28 +163,21 @@
 
     const activeElement = document.activeElement;
     const activeTextInput = isTextInput(activeElement);
+    const activeSearchInput =
+      activeElement instanceof HTMLInputElement && activeElement.id === SEARCH_INPUT_ID;
     const hasModifier = event.metaKey || event.ctrlKey;
 
-    if (
-      selectionStore.panel === 'pinned' &&
-      hasModifier &&
-      event.shiftKey &&
-      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
-    ) {
-      event.preventDefault();
-      void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
-      return;
-    }
+    if (activeTextInput && !activeSearchInput) return;
 
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      selectionStore.move(1, displayItems.length);
-      return;
-    }
 
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      selectionStore.move(-1, displayItems.length);
+      if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
+        void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
+      } else {
+        selectionStore.move(event.key === 'ArrowUp' ? -1 : 1, displayItems.length);
+      }
+
       return;
     }
 
@@ -214,9 +206,12 @@
       return;
     }
 
-    if (hasModifier && (event.key === 'Delete' || event.key === 'Backspace')) {
-      event.preventDefault();
-      void deleteSelectedItem();
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (hasModifier) {
+        event.preventDefault();
+        void deleteSelectedItem();
+      }
+
       return;
     }
 
@@ -249,11 +244,9 @@
 
     void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
       selectionStore.reset(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
-      void (async () => {
-        await clipboardStore.clearSearch();
-        await clipboardStore.refreshSettings();
-        focusSearchInput();
-      })();
+      void clipboardStore.clearSearch({ showLoading: false });
+      void clipboardStore.refreshSettings();
+      focusSearchInput();
     }).then((unlisten) => {
       unlistenQuickbarOpened = unlisten;
     });
@@ -261,10 +254,10 @@
     selectionStore.reset('recent');
     void clipboardStore.refreshSettings();
     focusSearchInput();
-    window.addEventListener('keydown', handleQuickBarKeydown);
+    window.addEventListener('keydown', handleQuickBarKeydown, true);
 
     return () => {
-      window.removeEventListener('keydown', handleQuickBarKeydown);
+      window.removeEventListener('keydown', handleQuickBarKeydown, true);
       unlistenQuickbarOpened?.();
       document.documentElement.classList.remove('quickbar-window');
     };
@@ -388,15 +381,13 @@
         {:else}
           <div class="flex-1 space-y-1 overflow-y-auto p-2">
             {#each displayItems as item, index (item.id)}
-              <div animate:flip={{ duration: 200 }}>
-                <ClipboardItem
-                  {item}
-                  selected={index === selectionStore.selectedIndex}
-                  slotNumber={index < 9 ? index + 1 : null}
-                  onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
-                  onUse={() => useItem(item)}
-                />
-              </div>
+              <ClipboardItem
+                {item}
+                selected={index === selectionStore.selectedIndex}
+                slotNumber={index < 9 ? index + 1 : null}
+                onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
+                onUse={() => useItem(item)}
+              />
             {/each}
           </div>
         {/if}

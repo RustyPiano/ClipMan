@@ -7,6 +7,14 @@ import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
 // Re-export type for convenience
 export type { ClipItem } from '$lib/types';
 
+interface LoadHistoryOptions {
+  showLoading?: boolean;
+}
+
+interface ClearSearchOptions extends LoadHistoryOptions {
+  reload?: boolean;
+}
+
 function comparePinOrder(a: ClipItem, b: ClipItem) {
   const aOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
   const bOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
@@ -68,8 +76,12 @@ class ClipboardStore {
     this.unlisten?.();
   }
 
-  async loadHistory() {
-    this.isLoading = true;
+  async loadHistory(options: LoadHistoryOptions = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      this.isLoading = true;
+    }
+
     try {
       const [recent, pinned] = await Promise.all([
         invoke<ClipItem[]>('get_recent_clips', { limit: this.maxHistoryItems }),
@@ -82,7 +94,9 @@ class ClipboardStore {
     } catch (error) {
       console.error('[ERROR] Failed to load clipboard history:', error);
     } finally {
-      this.isLoading = false;
+      if (showLoading) {
+        this.isLoading = false;
+      }
     }
   }
 
@@ -116,10 +130,15 @@ class ClipboardStore {
     }
   }
 
-  async clearSearch() {
+  async clearSearch(options: ClearSearchOptions = {}) {
+    const reload = options.reload ?? true;
+
     this.searchQuery = '';
     this.searchResults = [];
-    await this.loadHistory();
+
+    if (reload) {
+      await this.loadHistory({ showLoading: options.showLoading });
+    }
   }
 
   async clearNonPinned() {
