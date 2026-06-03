@@ -3,7 +3,7 @@
 > 目标读者：项目作者。本文讲清楚「要做成什么样」和「为什么」。技术细节集中在带 🔧 的小节，看不懂可先跳过。
 > 配套文档：实现步骤见 [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)。
 >
-> 当前状态（2026-06-03）：数据层去加密、FTS5、recent/pinned 拆分、缩略图、CopyMarker、QuickBar 窗口与自动粘贴代码已部分落地；Windows/macOS 自动粘贴焦点链路仍需按 Phase 3 平台矩阵做真机验证。下文中“现状”段落记录的是重构启动前的问题背景。
+> 当前状态（2026-06-04）：数据层去加密、FTS5、recent/pinned 拆分、缩略图、CopyMarker、QuickBar 窗口与自动粘贴代码已部分落地；Windows/macOS 自动粘贴焦点链路仍需按 Phase 3 平台矩阵做真机验证。下文中“现状”段落记录的是重构启动前的问题背景。
 
 ---
 
@@ -77,7 +77,7 @@
 | **③ 设置/管理窗口** | 托盘→设置 / 弹窗齿轮 | 管理数据、改配置 | — 不涉及粘贴 | 点条目=复制 |
 
 - **统一开关** `auto_paste`（默认开）：开=入口①自动粘；关=入口①退化为「复制+关窗」。入口②③不受影响，永远仅复制。
-- **临时反转**：弹窗内 `Enter`=默认行为；`Cmd/Ctrl+Enter`=相反行为（默认自动粘时它=仅复制/粘为纯文本）。
+- **临时反转**：弹窗内 `Enter`=默认行为；`Cmd/Ctrl+Enter`=相反行为（默认自动粘时它=仅复制；关闭自动粘贴时它=自动粘）。
 
 ---
 
@@ -109,7 +109,7 @@
 | `↑` / `↓` | 移动选中项，列表自动滚动跟随 |
 | `Tab` | 切换 最近 ↔ 常用 面板 |
 | `Enter` | 对选中项执行**默认行为**（弹窗=自动粘贴） |
-| `Cmd/Ctrl+Enter` | 执行**相反行为**（仅复制 / 粘为纯文本） |
+| `Cmd/Ctrl+Enter` | 执行**相反行为**（自动粘贴 ↔ 仅复制） |
 | `Cmd/Ctrl+1`～`9` | 直接取用当前面板第 N 条；普通数字保留给搜索框输入 |
 | `Cmd/Ctrl+P` | 置顶/取消置顶 当前项（在最近→提拔为常用） |
 | `Cmd/Ctrl+Shift+↑/↓` | （常用面板）调整选中项顺序 |
@@ -217,7 +217,7 @@ clips (
   content      BLOB NOT NULL,     -- 明文原始内容（文本=UTF-8 字节；图片=原图 PNG，2048 上限）
   thumbnail    BLOB,              -- 🆕 图片 256px 缩略图（仅 image 类型；列表/托盘渲染用）
   content_hash TEXT,              -- SHA256，去重 + 自捕获标记用
-  content_type TEXT NOT NULL,     -- text/image/file/html/rtf
+  content_type TEXT NOT NULL,     -- 当前实现：text/image；file/html/rtf 仅为未来扩展，不属于本期
   timestamp    INTEGER NOT NULL,
   is_pinned    INTEGER DEFAULT 0,
   pin_order    INTEGER,           -- 常用稳定排序
@@ -263,7 +263,7 @@ PRAGMA journal_mode = WAL   -- 读写更顺，零成本
 
 ### 9.4 FTS5（写死设计，不留猜测）
 - 表：`clips_fts USING fts5(clip_id UNINDEXED, search_text, label, tokenize='trigram')`，**`rowid` 对齐 `clips.rowid`**，靠 `clip_id` 关回主表。
-- **维护放在 Rust 侧**（不用 SQL 触发器）：`insert`/`delete`/`set_clip_label` 等改动 clips 的方法里同步写/删对应 FTS 行——因为 Rust 手里有解码后的纯文本和 label，可避免在 SQL 触发器里对 BLOB 做 `CAST` 解码的坑。`search_text` 仅对文本/文件名类型填充。
+- **维护放在 Rust 侧**（不用 SQL 触发器）：`insert`/`delete`/`set_clip_label` 等改动 clips 的方法里同步写/删对应 FTS 行——因为 Rust 手里有解码后的纯文本和 label，可避免在 SQL 触发器里对 BLOB 做 `CAST` 解码的坑。`search_text` 当前仅对文本填充；若将来支持文件条目，再扩展为文件名。
 - **查询长度处理**：`query` 的 Unicode 字符数 **≥3** 走 `MATCH`（对输入转义）；**<3 字符（如中文一两个字）回退 `LIKE '%q%'` 扫描**——trigram 不索引短于 3 的串，不回退会搜不到。
 - 命中后用 rowid/clip_id join 回 `clips` 取完整条目。
 - 迁移时 `rebuild` 回填存量。
@@ -288,7 +288,7 @@ PRAGMA journal_mode = WAL   -- 读写更顺，零成本
 | | 内容 | 处理 |
 |---|---|---|
 | ✅ 保留 | 技术栈；事件驱动剪贴板监控；托盘菜单 | 不动 |
-| 🔁 重做 | **前端状态**：现在前端手写镜像后端淘汰规则（`clipboard.svelte.ts:46-84`），前后端各写一遍易错 | 改**后端单一数据源**：数据变了前端重查可见页，前端只展示 |
+| 🔁 收紧 | **前端状态**：当前 store 以后端查询结果为准，但仍保留 incoming 事件合并/replay 用于窗口打开与后台事件响应 | 长期约束是**后端单一数据源**：淘汰、排序、搜索规则留在后端，前端只做展示与轻量响应 |
 | 🔁 重做 | **数据模型**：为常用升级 | 加 `label`，预留 `group_name`；保留 is_pinned/pin_order |
 | 🔁 重做 | **窗口模型** | QuickBar 面板 + Settings 独立窗口 |
 | 🔁 改进 | SQLite 开 **WAL** | 一行 PRAGMA |
@@ -350,7 +350,7 @@ PRAGMA journal_mode = WAL   -- 读写更顺，零成本
 | 常用标签 | 做 |
 | 第二快捷键 | 预留为可选设置，默认不绑 |
 | 分组/文件夹 | 仅预留字段，本期不做 |
-| 前端架构 | 后端单一数据源，前端只展示 |
+| 前端架构 | 后端查询结果为准；前端事件合并/replay 只做响应加速，不复制后端淘汰/排序规则 |
 | 快捷键 | 沿用 `Cmd/Ctrl+Shift+V` |
 | 弹窗尺寸 | 560×420（v1 固定） |
 | `Esc` | 直接关窗（不做两段式） |

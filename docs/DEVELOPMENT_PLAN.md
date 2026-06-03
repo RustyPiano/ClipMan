@@ -4,7 +4,7 @@
 >
 > **v2 修订要点（评审后收紧的硬约束）**：① Windows 焦点模型先 spike，不用 `WS_EX_NOACTIVATE`；② FTS5 表结构写死；③ 自捕获标记是跨文件契约，提到 Phase 0；④ 图片改「始终存原图 + 缩略图列」；⑤ 最近/常用数据契约拆清；⑥ 命令桩用 `Err("not implemented")`，禁止 `todo!()`。
 >
-> **当前状态（2026-06-03）**：Phase 0 的数据层/设置/命令契约和 Phase 1 的 QuickBar、自动粘贴、前端交互、隐私/图片捕获已有实现；不要把本文当成“全部未开始”的清单。平台焦点与自动粘贴链路仍需按 Phase 3 真机矩阵验证后才能宣称完成。
+> **当前状态（2026-06-04）**：Phase 0 的数据层/设置/命令契约和 Phase 1 的 QuickBar、自动粘贴、前端交互、隐私/图片捕获已有实现；不要把本文当成“全部未开始”的清单。本文保留为实施回顾与后续收尾清单，已落地项以当前代码和本段状态说明为准。平台焦点与自动粘贴链路仍需按 Phase 3 真机矩阵验证后才能宣称完成。
 >
 > **并行原则**：并行的 WP 各自拥有不重叠文件；共享文件（`main.rs`/`commands.rs`/`settings.rs`/`Cargo.toml`）的改动集中在 Phase 0 打桩，Phase 1 之后只在各自函数/区域追加。
 
@@ -32,7 +32,7 @@
 | `src-tauri/src/paste.rs`（新增） | WP-1.B |
 | `src-tauri/src/clipboard.rs` | WP-1.D |
 | `src-tauri/src/tray.rs` | WP-1.A（设置窗口入口）；缩略图读取 |
-| `src/lib/stores/*.ts` | WP-1.C |
+| `src/lib/stores/*.svelte.ts` | WP-1.C |
 | `src/routes/+page.svelte`、`ClipboardItem.svelte`、`SearchBar.svelte` | WP-1.C |
 | `src/lib/components/pinned/*`、标签编辑 | WP-2.A |
 | `src/routes/settings/*` | WP-2.B |
@@ -80,7 +80,7 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **负责文件**：临时分支/示例，不动主代码。
 - **依赖**：无。
 - **S1 — Windows 焦点模型**（高风险）：验证「`GetForegroundWindow` 记录原窗口 → QuickBar 正常取焦点供输入 → 隐藏 → `SetForegroundWindow(原窗口)`（必要时 `AttachThreadInput`）→ `enigo` 发 `Ctrl+V`」能稳定把内容粘进原应用。**确认不使用 `WS_EX_NOACTIVATE`**（其顶层窗口不会成前台，与搜索框输入冲突）。测 3 个目标：记事本、浏览器地址栏、VS Code。
-- **S2 — macOS 面板**：验证 `tauri-nspanel` 转出的 non-activating 面板**能成为 key window 接收搜索框输入**，同时 app 不变前台（菜单栏不切到 ClipMan），`Cmd+V` 能粘回原应用。
+- **S2 — macOS 面板**：验证 Tauri v2 窗口句柄配合 `NSWindowStyleMaskNonactivatingPanel` 的 non-activating 面板**能成为 key window 接收搜索框输入**，同时 app 不变前台（菜单栏不切到 ClipMan），`Cmd+V` 能粘回原应用。`tauri-nspanel` 曾是候选方案，当前实现未采用。
 - **验收**：两条路径各有一份「可行/坑点/最终选定 API」记录；若 S1 的「恢复前台」在某些应用失败，记录降级策略（如仅复制提示）。
 - **产出回填**：更新 WP-1.A/1.B 的实现细节。
 
@@ -106,7 +106,7 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **依赖**：WP-0.1。
 - **步骤**：
   1. 建表（**照抄，不要改结构**）：`CREATE VIRTUAL TABLE clips_fts USING fts5(clip_id UNINDEXED, search_text, label, tokenize='trigram');`，约定 `clips_fts.rowid = clips.rowid`。
-  2. **Rust 侧维护**（不用 SQL 触发器）：在 `insert`/`delete`/`set_clip_label`/置顶相关方法里同步写删 FTS 行——Rust 手里有解码后的纯文本与 label，避免对 BLOB 在 SQL 里 `CAST`。`search_text` 仅文本/文件名类型填充（图片/二进制留空）。
+  2. **Rust 侧维护**（不用 SQL 触发器）：在 `insert`/`delete`/`set_clip_label`/置顶相关方法里同步写删 FTS 行——Rust 手里有解码后的纯文本与 label，避免对 BLOB 在 SQL 里 `CAST`。`search_text` 当前仅文本类型填充（图片/二进制留空）；若将来支持文件条目，再扩展为文件名。
   3. **查询**：`query.chars().count() >= 3` 走 `MATCH`（转义用户输入）；`< 3`（含中文一两字）回退 `LIKE '%q%'` 扫描。命中后用 rowid→`clips` 取完整条目，返回带 `is_pinned`。
   4. 迁移时用 Rust 手动回填：清空 `clips_fts`，遍历 `clips`，解码得到 `search_text`，再 `INSERT INTO clips_fts(rowid, clip_id, search_text, label) VALUES (clips.rowid, id, search_text, label)`。不要依赖 `INSERT INTO clips_fts(clips_fts) VALUES('rebuild')`，因为当前设计不是 external-content FTS 表。
 - **验收**：中/英文子串、单字中文、label 都能搜到；空查询回退全量；大数据下明显快于旧实现。
@@ -145,7 +145,7 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **依赖**：WP-0.0（spike 结论）、WP-0.1（main.rs 已清理）、WP-0.3（快捷键设置）。
 - **步骤**：
   1. `tauri.conf.json`：main → `decorations:false`、`alwaysOnTop:true`、`skipTaskbar:true`、`visible:false`、`resizable:false`、560×420。新增 `settings` 窗口（普通、有边框、`visible:false`）。
-  2. **macOS**：`tauri-nspanel` 把 main 转 non-activating NSPanel（floating level + collectionBehavior），封装进 `window.rs::setup_quickbar_macos()`。
+  2. **macOS**：通过 Tauri 窗口句柄直接设置 `NSWindowStyleMaskNonactivatingPanel`、floating level 与 collection behavior，封装进 `window.rs::setup_quickbar_macos()`；`tauri-nspanel` 只保留为后续兼容性备选。
   3. **Windows**（按 S1 结论）：main 为**正常可取焦点**窗口（`WS_EX_TOOLWINDOW` 不进任务栏，**不加 `WS_EX_NOACTIVATE`**）。在唤起前用 `GetForegroundWindow()` 记录原前台窗口（存到一个 `Arc<Mutex<Option<HWND-ish>>>` 状态，供 1.B 取用恢复）。封装 `window.rs::setup_quickbar_windows()` + `remember_foreground()`。
   4. 唤起：全局快捷键 → 活动屏幕中心略偏上定位 → show + 聚焦搜索；macOS 面板成 key、app 不前台；Windows 正常取焦点（原窗口已记录）。
   5. 失焦自动隐藏：监听 blur → `hide`。
@@ -169,13 +169,13 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **负责文件**：`+page.svelte`、`ClipboardItem.svelte`、`SearchBar.svelte`、`clipboard.svelte.ts`、新增 `selection.svelte.ts`。
 - **依赖**：WP-0.4（类型/命令）。与原生流并行。
 - **步骤**：
-  1. **后端单一数据源重构**：删 `clipboard.svelte.ts:46-84` 手写镜像淘汰逻辑；`clipboard-changed`/`history-cleared` 到来时直接重查（最近用 `get_recent_clips`、常用用 `get_pinned_clips`、搜索用 `search_clips`）；前端只持「当前可见列表」。
+  1. **后端单一数据源重构**：`clipboard-changed`/`history-cleared` 到来时以后端查询结果为准（最近用 `get_recent_clips`、常用用 `get_pinned_clips`、搜索用 `search_clips`）。当前 store 仍保留轻量 incoming 合并/replay，用于降低后台事件丢失和窗口唤起延迟；禁止在前端复制后端的淘汰、排序、搜索规则。
   2. `selection.svelte.ts`：`selectedIndex` + 当前面板（recent/pinned）；`↑↓` 移动 + 自动滚动；鼠标悬停同步选中。
   3. 窗口级 keydown：`↑↓`、`Enter`→`paste_clip(default)`、`Cmd/Ctrl+Enter`→相反 mode、`Cmd/Ctrl+1-9`→取第 N（普通数字保留给搜索框输入）、`Tab`→切面板、`Esc`→`hide_quickbar`、`Cmd/Ctrl+P`→`toggle_pin`、`Cmd/Ctrl+Delete`→`delete_clip`。
   4. `ClipboardItem`：整卡 `onclick`=取用；保留悬停的置顶/删除/编辑按钮；选中高亮 + 左侧 1~9 序号。
   5. 双面板：`Tab` 切「最近/常用」，常用读 `get_pinned_clips`。
   6. 搜索框打开自动聚焦；任意打字聚焦搜索。
-- **验收**：全键盘可完成「打开→过滤→选中→取用」；卡片单击即取用；`Tab` 切面板；选中高亮滚动跟随；无前端淘汰逻辑残留。
+- **验收**：全键盘可完成「打开→过滤→选中→取用」；卡片单击即取用；`Tab` 切面板；选中高亮滚动跟随；前端不复制后端淘汰/排序规则。
 - **注意**：真实粘贴效果依赖 1.B，行为联调放 Phase 3。
 
 ### WP-1.D 隐私（跳过密码类）+ 检查 CopyMarker + 图片捕获策略【流D】

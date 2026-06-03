@@ -26,7 +26,7 @@ Status: Deferred runtime validation
 
 Implementation may proceed using the documented design:
 
-- Prefer a Tauri v2-compatible non-activating panel approach, including `tauri-nspanel` if it fits the current dependency stack.
+- Use a Tauri v2-compatible non-activating panel approach. The production implementation currently sets the macOS window style through the Tauri window handle and `objc2`; `tauri-nspanel` remains only a fallback candidate if future compatibility issues justify it.
 - QuickBar should be able to become the key window for search input without making ClipMan the active foreground app.
 - On paste, write the clipboard, hide QuickBar, then send `Cmd+V`.
 

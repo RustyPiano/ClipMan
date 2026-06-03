@@ -35,7 +35,7 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 - **📌 Pin Content** - Pin code snippets, commands, links, etc. permanently
 - **💾 Persistent Storage** - SQLite database, survives restarts, smart deduplication
 - **🔍 Full-Text Search** - SQLite FTS5 + trigram index with real-time Chinese/English search
-- **⌨️ QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, and auto-paste
+- **⌨️ QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, then auto-paste or copy based on settings
 - **🎯 Tray Menu** - Quick access to recent and pinned items
 - **🎨 Multiple Themes** - Light/Dark/Pink themes, follow system
 - **🌐 Multi-Language** - English and Chinese support, auto-detect system language
@@ -69,8 +69,8 @@ Grant Accessibility permission on first run:
 2. All copied content is automatically saved in the history list
 3. Click 📌 icon to pin frequently used content
 4. Use search bar to quickly find history records
-5. Click an item to copy it to clipboard
-6. Click tray icon for quick access
+5. Click an item to run the QuickBar default action: auto-paste by default, or copy only when auto-paste is disabled
+6. Click tray icon for quick access (tray menu actions always copy only)
 
 ## 🛠️ Technology
 
@@ -84,11 +84,11 @@ Grant Accessibility permission on first run:
 - Tailwind CSS 4 - Modern styling solution
 - Vite 8 - Fast build tool
 
-**Performance**
-- ⚡ Startup: < 1s
-- 💾 Memory: 30-50MB
-- 📦 Installer: current macOS DMG is about 3-4MB
-- 🔋 CPU: 0% (idle)
+**Performance Positioning**
+- ⚡ Lightweight popup: QuickBar uses a small hidden window and opens on demand
+- 💾 Local-first storage: SQLite persistence with no background network service
+- 🔍 Indexed search: FTS5 + trigram indexing reduces search latency
+- 📦 Small distribution: exact installer size depends on the current Release artifacts
 
 ## 🔧 Development
 
