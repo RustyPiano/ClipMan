@@ -4,9 +4,9 @@
   import { i18n } from '$lib/i18n';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { Search, X } from 'lucide-svelte';
+  import { Loader2, Search, X } from 'lucide-svelte';
 
-  const SEARCH_DEBOUNCE_MS = 300;
+  const SEARCH_DEBOUNCE_MS = 120;
   const SEARCH_INPUT_ID = 'quickbar-search';
 
   const t = $derived(i18n.t);
@@ -22,13 +22,19 @@
 
   function handleInput(event: Event) {
     const target = event.target as HTMLInputElement;
+    if (!target.value.trim()) {
+      clearTimeout(debounceTimer);
+      void clipboardStore.clearSearch({ showLoading: false });
+      return;
+    }
+
     clipboardStore.setSearchQuery(target.value);
     runSearch(target.value);
   }
 
   function clearSearch() {
     clearTimeout(debounceTimer);
-    void clipboardStore.search('');
+    void clipboardStore.clearSearch({ showLoading: false });
 
     const input = document.getElementById(SEARCH_INPUT_ID);
     if (input instanceof HTMLInputElement) {
@@ -53,7 +59,11 @@
   <div
     class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 transition-colors"
   >
-    <Search class="h-4 w-4 stroke-[2]" />
+    {#if clipboardStore.isSearchPending}
+      <Loader2 class="h-4 w-4 animate-spin stroke-[2]" />
+    {:else}
+      <Search class="h-4 w-4 stroke-[2]" />
+    {/if}
   </div>
 
   <Input

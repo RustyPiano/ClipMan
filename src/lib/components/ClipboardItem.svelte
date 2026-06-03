@@ -72,16 +72,6 @@
     }
   };
 
-  const scrollWhenSelected: Attachment = (element) => {
-    if (!selected || !(element instanceof globalThis.HTMLElement)) return;
-
-    const frame = globalThis.requestAnimationFrame(() => {
-      element.scrollIntoView({ block: 'nearest' });
-    });
-
-    return () => globalThis.cancelAnimationFrame(frame);
-  };
-
   function formatTime(timestamp: number): string {
     const date = new Date(timestamp * 1000);
     const now = new Date();
@@ -167,7 +157,6 @@
 <div
   id={`clip-item-${item.id}`}
   {@attach observeVisibility}
-  {@attach selected && scrollWhenSelected}
   class="group relative"
   style="content-visibility: auto; contain-intrinsic-size: 72px;"
   role="listitem"
@@ -175,13 +164,10 @@
 >
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="relative cursor-pointer overflow-hidden rounded-lg transition-colors duration-75 ease-out {cardClass}"
-    onclick={handleUse}
-  >
+  <div class="relative cursor-pointer overflow-hidden rounded-lg {cardClass}" onclick={handleUse}>
     <!-- Left Accent Indicator -->
     <div
-      class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary transition-opacity duration-75 {selected
+      class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary {selected
         ? 'opacity-100'
         : 'opacity-0'}"
     ></div>

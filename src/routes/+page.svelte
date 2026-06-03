@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { flushSync, onMount } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
@@ -38,8 +38,10 @@
   }
 
   let isSettings = $state(initialSettingsCheck);
+  let resultsScroller: Element | null = $state(null);
 
   const SEARCH_INPUT_ID = 'quickbar-search';
+  const SCROLL_EDGE_PADDING = 6;
   const isMac =
     typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
   const shortcutModifierLabel = isMac ? '⌘' : 'Ctrl';
@@ -80,6 +82,58 @@
     return Math.min(Math.max(index, 0), itemCount - 1);
   }
 
+  function movedIndex(delta: number, itemCount: number) {
+    if (itemCount <= 0) return 0;
+
+    const currentIndex = clampSelectedIndex(selectionStore.selectedIndex, itemCount);
+    return ((currentIndex + delta) % itemCount + itemCount) % itemCount;
+  }
+
+  function scrollItemIntoView(index: number) {
+    const scroller = resultsScroller;
+    const item = displayItems[index];
+    if (!scroller || !item) return;
+    if (!(scroller instanceof globalThis.HTMLElement)) return;
+
+    const element = document.getElementById(`clip-item-${item.id}`);
+    if (!(element instanceof globalThis.HTMLElement)) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const topOverflow = scrollerRect.top + SCROLL_EDGE_PADDING - elementRect.top;
+    const bottomOverflow = elementRect.bottom - (scrollerRect.bottom - SCROLL_EDGE_PADDING);
+
+    if (topOverflow > 0) {
+      scroller.scrollTop -= topOverflow;
+    } else if (bottomOverflow > 0) {
+      scroller.scrollTop += bottomOverflow;
+    }
+  }
+
+  function selectIndexAndReveal(index: number, itemCount: number) {
+    selectionStore.setSelectedIndex(index, itemCount);
+    flushSync();
+    scrollItemIntoView(selectionStore.selectedIndex);
+  }
+
+  function resetPanelAndReveal(panel: QuickBarPanel) {
+    selectionStore.reset(panel);
+    flushSync();
+    scrollItemIntoView(0);
+  }
+
+  const attachResultsScroller: Attachment = (element) => {
+    if (!(element instanceof globalThis.HTMLDivElement)) return;
+
+    resultsScroller = element;
+
+    return () => {
+      if (resultsScroller === element) {
+        resultsScroller = null;
+      }
+    };
+  };
+
   function focusSearchInput() {
     const input = document.getElementById(SEARCH_INPUT_ID);
     if (input instanceof HTMLInputElement) {
@@ -105,7 +159,9 @@
   }
 
   function switchPanel(panel: QuickBarPanel) {
-    selectionStore.selectPanel(panel);
+    if (selectionStore.panel !== panel) {
+      resetPanelAndReveal(panel);
+    }
     focusSearchInput();
   }
 
@@ -119,6 +175,8 @@
 
   async function useItem(item: ClipItem | undefined, mode: PasteMode = modeForDefault()) {
     if (!item) return;
+    if (clipboardStore.isSearchPending) return;
+
     await clipboardStore.useClip(item, mode);
   }
 
@@ -127,10 +185,12 @@
   }
 
   async function useSlot(slotNumber: number) {
+    if (clipboardStore.isSearchPending) return;
+
     const item = displayItems[slotNumber - 1];
     if (!item) return;
 
-    selectionStore.selectSlot(slotNumber, displayItems.length);
+    selectIndexAndReveal(slotNumber - 1, displayItems.length);
     await useItem(item);
   }
 
@@ -158,7 +218,7 @@
       (pinnedItem) => pinnedItem.id === item.id
     );
     if (nextIndex >= 0) {
-      selectionStore.setSelectedIndex(nextIndex, clipboardStore.pinnedDisplayItems.length);
+      selectIndexAndReveal(nextIndex, clipboardStore.pinnedDisplayItems.length);
     }
   }
 
@@ -212,7 +272,8 @@
       if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
         void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
       } else {
-        selectionStore.move(event.key === 'ArrowUp' ? -1 : 1, displayItems.length);
+        const nextIndex = movedIndex(event.key === 'ArrowUp' ? -1 : 1, displayItems.length);
+        selectIndexAndReveal(nextIndex, displayItems.length);
       }
 
       return;
@@ -220,7 +281,7 @@
 
     if (event.key === 'Tab') {
       event.preventDefault();
-      selectionStore.togglePanel();
+      resetPanelAndReveal(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
       focusSearchInput();
       return;
     }
@@ -293,8 +354,10 @@
     let unlistenQuickbarOpened: (() => void) | undefined;
 
     void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
-      selectionStore.reset(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
-      void clipboardStore.clearSearch({ showLoading: false });
+      resetPanelAndReveal(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
+      if (clipboardStore.searchQuery.trim()) {
+        void clipboardStore.clearSearch({ showLoading: false });
+      }
       void clipboardStore.refreshSettings();
       focusSearchInput();
     }).then((unlisten) => {
@@ -393,7 +456,7 @@
             {/if}
           </div>
         {:else}
-          <div class="flex-1 space-y-1 overflow-y-auto p-2">
+          <div {@attach attachResultsScroller} class="flex-1 space-y-1 overflow-y-auto p-2">
             {#each displayItems as item, index (item.id)}
               <ClipboardItem
                 {item}

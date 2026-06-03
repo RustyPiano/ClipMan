@@ -28,7 +28,9 @@ class ClipboardStore {
   pinnedItems = $state.raw<ClipItem[]>([]);
   searchResults = $state.raw<ClipItem[]>([]);
   searchQuery = $state('');
+  activeSearchQuery = $state('');
   isLoading = $state(false);
+  isSearchPending = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
   private unlisten?: () => void;
@@ -38,11 +40,13 @@ class ClipboardStore {
   private incomingEvents: IncomingItemEvent[] = [];
 
   recentDisplayItems = $derived(
-    this.searchQuery.trim() ? this.searchResults.filter((item) => !item.isPinned) : this.recentItems
+    this.activeSearchQuery.trim()
+      ? this.searchResults.filter((item) => !item.isPinned)
+      : this.recentItems
   );
 
   pinnedDisplayItems = $derived(
-    this.searchQuery.trim()
+    this.activeSearchQuery.trim()
       ? this.searchResults.filter((item) => item.isPinned).sort(comparePinOrder)
       : this.pinnedItems
   );
@@ -154,10 +158,12 @@ class ClipboardStore {
     this.searchRequests.next();
     this.searchQuery = query;
     if (!query.trim()) {
+      this.activeSearchQuery = '';
       this.searchResults = [];
+      this.isSearchPending = false;
       this.isLoading = false;
     } else {
-      this.isLoading = hasTauriRuntime();
+      this.isSearchPending = hasTauriRuntime();
     }
   }
 
@@ -170,22 +176,27 @@ class ClipboardStore {
     this.searchQuery = query;
 
     if (!query.trim()) {
+      this.activeSearchQuery = '';
       this.searchResults = [];
-      await this.loadHistory();
+      this.isSearchPending = false;
+      await this.loadHistory({ showLoading: false });
       return;
     }
 
     if (!hasTauriRuntime()) {
+      this.activeSearchQuery = '';
       this.searchResults = [];
+      this.isSearchPending = false;
       this.isLoading = false;
       return;
     }
 
-    this.isLoading = true;
+    this.isSearchPending = true;
     try {
       const results = await invoke<ClipItem[]>('search_clips', { query });
       if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
         this.searchResults = results;
+        this.activeSearchQuery = query;
       }
     } catch (error) {
       if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
@@ -193,7 +204,7 @@ class ClipboardStore {
       }
     } finally {
       if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
-        this.isLoading = false;
+        this.isSearchPending = false;
       }
     }
   }
@@ -203,11 +214,13 @@ class ClipboardStore {
 
     this.searchRequests.next();
     this.searchQuery = '';
+    this.activeSearchQuery = '';
     this.searchResults = [];
+    this.isSearchPending = false;
     this.isLoading = false;
 
     if (reload) {
-      await this.loadHistory({ showLoading: options.showLoading });
+      await this.loadHistory({ showLoading: options.showLoading ?? false });
     } else {
       this.isLoading = false;
     }
