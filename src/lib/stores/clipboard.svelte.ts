@@ -23,6 +23,8 @@ interface IncomingItemEvent {
   item: ClipItem;
 }
 
+const QUICKBAR_HIDDEN_EVENT = 'quickbar-hidden';
+
 class ClipboardStore {
   recentItems = $state.raw<ClipItem[]>([]);
   pinnedItems = $state.raw<ClipItem[]>([]);
@@ -86,9 +88,14 @@ class ClipboardStore {
       await this.reloadFromBackend();
     });
 
+    const unlistenQuickbarHidden = await listen(QUICKBAR_HIDDEN_EVENT, () => {
+      void this.clearSearch({ reload: false });
+    });
+
     this.unlisten = () => {
       unlistenClipboard();
       unlistenHistoryCleared();
+      unlistenQuickbarHidden();
     };
   }
 
@@ -165,6 +172,12 @@ class ClipboardStore {
     } else {
       this.isSearchPending = hasTauriRuntime();
     }
+  }
+
+  setSearchDraft(query: string) {
+    this.searchRequests.next();
+    this.searchQuery = query;
+    this.isSearchPending = false;
   }
 
   async search(query: string) {

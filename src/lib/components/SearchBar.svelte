@@ -12,6 +12,7 @@
   const t = $derived(i18n.t);
 
   let debounceTimer: ReturnType<typeof setTimeout>;
+  let isComposing = false;
 
   function runSearch(query: string) {
     clearTimeout(debounceTimer);
@@ -20,16 +21,36 @@
     }, SEARCH_DEBOUNCE_MS);
   }
 
-  function handleInput(event: Event) {
-    const target = event.target as HTMLInputElement;
-    if (!target.value.trim()) {
+  function applySearchInput(value: string) {
+    if (!value.trim()) {
       clearTimeout(debounceTimer);
       void clipboardStore.clearSearch({ showLoading: false });
       return;
     }
 
-    clipboardStore.setSearchQuery(target.value);
-    runSearch(target.value);
+    clipboardStore.setSearchQuery(value);
+    runSearch(value);
+  }
+
+  function handleInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    if (isComposing) {
+      clearTimeout(debounceTimer);
+      clipboardStore.setSearchDraft(target.value);
+      return;
+    }
+
+    applySearchInput(target.value);
+  }
+
+  function handleCompositionStart() {
+    isComposing = true;
+    clearTimeout(debounceTimer);
+  }
+
+  function handleCompositionEnd(event: Event) {
+    isComposing = false;
+    applySearchInput((event.target as HTMLInputElement).value);
   }
 
   function clearSearch() {
@@ -72,6 +93,8 @@
     placeholder={t.searchPlaceholder}
     value={clipboardStore.searchQuery}
     oninput={handleInput}
+    oncompositionstart={handleCompositionStart}
+    oncompositionend={handleCompositionEnd}
     class="h-10 border-transparent bg-transparent pl-9 pr-10 text-[14px] font-medium placeholder:text-muted-foreground/35 shadow-none transition-colors focus-visible:ring-0 select-none"
   />
 

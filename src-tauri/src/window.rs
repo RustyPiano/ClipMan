@@ -7,6 +7,7 @@ pub const QUICKBAR_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub const QUICKBAR_WIDTH: u32 = 560;
 pub const QUICKBAR_HEIGHT: u32 = 420;
+pub const QUICKBAR_HIDDEN_EVENT: &str = "quickbar-hidden";
 
 pub type ForegroundWindowStore = Arc<Mutex<Option<ForegroundWindow>>>;
 
@@ -115,7 +116,7 @@ pub fn show_quickbar_with_panel(
 
 pub fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
-    quickbar.hide().map_err(to_string)
+    hide_quickbar_window(&quickbar)
 }
 
 pub fn open_settings_window(app: &AppHandle) -> Result<(), String> {
@@ -183,17 +184,23 @@ fn register_quickbar_events(window: &WebviewWindow) {
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            if let Err(e) = window_for_event.hide() {
+            if let Err(e) = hide_quickbar_window(&window_for_event) {
                 log::error!("Failed to hide QuickBar on close: {}", e);
             }
         }
         tauri::WindowEvent::Focused(false) => {
-            if let Err(e) = window_for_event.hide() {
+            if let Err(e) = hide_quickbar_window(&window_for_event) {
                 log::error!("Failed to hide QuickBar on blur: {}", e);
             }
         }
         _ => {}
     });
+}
+
+fn hide_quickbar_window(window: &WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(to_string)?;
+    window.emit(QUICKBAR_HIDDEN_EVENT, ()).map_err(to_string)?;
+    Ok(())
 }
 
 fn register_settings_events(window: &WebviewWindow) {
@@ -477,5 +484,10 @@ mod tests {
             NSStatusWindowLevel,
             super::mac_quickbar_window_policy().level
         );
+    }
+
+    #[test]
+    fn quickbar_hidden_event_name_matches_frontend_listener() {
+        assert_eq!("quickbar-hidden", super::QUICKBAR_HIDDEN_EVENT);
     }
 }
