@@ -3,7 +3,6 @@
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import type { ClipItem } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import Card from './ui/Card.svelte';
   import Button from './ui/Button.svelte';
   import {
     Copy,
@@ -29,10 +28,10 @@
   const t = $derived(i18n.t);
   const cardClass = $derived(
     selected
-      ? 'border-l-primary bg-primary/10 ring-1 ring-primary/30 shadow-sm'
+      ? 'bg-primary/8 ring-1 ring-primary/15 shadow-sm'
       : item.isPinned
-        ? 'border-l-primary bg-primary/5'
-        : 'border-l-transparent hover:border-l-primary/50 hover:bg-muted/30'
+        ? 'bg-secondary/40 border border-border/40 shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
+        : 'border border-transparent hover:bg-secondary/20'
   );
 
   let isCopied = $state(false);
@@ -158,24 +157,33 @@
 
 <div
   id={`clip-item-${item.id}`}
-  class="group relative transition-colors duration-150"
+  class="group relative transition-all duration-150"
   role="listitem"
   onmouseenter={onSelect}
 >
-  <Card
-    class="cursor-pointer overflow-hidden border-l-2 transition-colors duration-150 {cardClass}"
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="relative cursor-pointer overflow-hidden rounded-lg transition-all duration-200 ease-out {cardClass}"
     onclick={handleUse}
   >
-    <div class="flex gap-2.5 p-2">
+    <!-- Left Accent Pill Indicator -->
+    {#if selected}
+      <div
+        class="absolute left-0 top-[20%] bottom-[20%] w-[3px] rounded-r-full bg-gradient-to-b from-primary via-primary/80 to-primary/50 transition-all duration-300 animate-in fade-in slide-in-from-left-1"
+      ></div>
+    {/if}
+
+    <div class="flex gap-2.5 p-2 transition-all duration-200 {selected ? 'pl-3.5' : ''}">
       <div class="flex w-6 flex-none flex-col items-center gap-0.5 pt-0.5 text-muted-foreground">
         {#if slotNumber}
-          <span
-            class="flex h-4 min-w-4 items-center justify-center rounded border px-1 text-[10px] font-semibold {selected
-              ? 'border-primary bg-primary text-primary-foreground'
-              : 'border-border bg-muted text-muted-foreground'}"
+          <kbd
+            class="kbd-keycap min-w-4 text-[9px] h-4 scale-95 {selected
+              ? '!border-primary !border-b-primary !bg-primary !text-primary-foreground shadow-none'
+              : ''}"
           >
             {slotNumber}
-          </span>
+          </kbd>
         {/if}
 
         {#if item.contentType === 'image'}
@@ -232,13 +240,13 @@
           <p
             class={showPinnedLabel
               ? 'mt-0.5 line-clamp-1 break-all text-xs leading-relaxed text-muted-foreground selection:bg-primary/20'
-              : 'line-clamp-2 break-all font-mono text-[13px] leading-snug text-foreground selection:bg-primary/20'}
+              : 'line-clamp-2 break-all font-mono text-[13px] leading-relaxed text-foreground selection:bg-primary/20'}
           >
             {decodedText}
           </p>
         {:else}
           <div
-            class="group/image relative max-h-20 w-fit overflow-hidden rounded-md border border-border bg-muted/50"
+            class="group/image relative max-h-20 w-fit overflow-hidden rounded-lg border border-border bg-muted/40 shadow-sm transition-all duration-200 hover:shadow-md"
           >
             {#if imageDataUrl}
               <img
@@ -256,22 +264,22 @@
         {/if}
 
         <div class="mt-1 flex items-center justify-between">
-          <span class="text-[11px] font-medium text-muted-foreground opacity-70">
+          <span class="text-[11px] font-medium text-muted-foreground/60">
             {formatTime(item.timestamp)}
           </span>
 
           <div
-            class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+            class="flex items-center gap-1 opacity-0 translate-y-0.5 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 ease-out"
           >
             <Button
               variant="ghost"
               size="icon"
-              class="h-6 w-6 hover:bg-primary/10 hover:text-primary"
+              class="h-6 w-6 rounded-md hover:bg-primary/10 hover:text-primary active:scale-90 transition-all duration-150"
               title={t.copy}
               onclick={handleCopy}
             >
               {#if isCopied}
-                <Check class="h-3.5 w-3.5 text-green-500" />
+                <Check class="h-3.5 w-3.5 text-emerald-500 animate-in zoom-in-50 duration-200" />
               {:else}
                 <Copy class="h-3.5 w-3.5" />
               {/if}
@@ -281,7 +289,7 @@
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-6 w-6 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                class="h-6 w-6 rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary active:scale-90 transition-all duration-150"
                 title={t.editLabel}
                 onclick={handleStartLabelEdit}
               >
@@ -292,7 +300,7 @@
             <Button
               variant="ghost"
               size="icon"
-              class="h-6 w-6 {item.isPinned
+              class="h-6 w-6 rounded-md active:scale-90 transition-all duration-150 {item.isPinned
                 ? 'text-primary'
                 : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}"
               title={item.isPinned ? t.unpin : t.pin}
@@ -304,7 +312,7 @@
             <Button
               variant="ghost"
               size="icon"
-              class="h-6 w-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              class="h-6 w-6 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive active:scale-90 transition-all duration-150"
               title={t.delete}
               onclick={handleDelete}
             >
@@ -314,5 +322,6 @@
         </div>
       </div>
     </div>
-  </Card>
+  </div>
 </div>
+

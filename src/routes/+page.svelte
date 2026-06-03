@@ -297,24 +297,32 @@
 {:else}
   <div class="flex h-screen flex-col p-3">
     <div
-      class="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-background text-foreground shadow-[0_6px_18px_-14px_rgb(15_23_42_/_0.45)]"
+      class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl"
     >
       <PermissionCheck />
       <Toast />
 
       <!-- Spotlight-style search row -->
-      <div class="flex flex-none items-center gap-2 border-b border-border/60 px-2.5 py-1.5">
+      <div class="flex flex-none items-center gap-2 border-b border-border/60 px-2.5 py-1.5 bg-background">
         <div class="min-w-0 flex-1">
           <SearchBar />
         </div>
-        <div class="flex flex-none rounded-lg bg-muted p-0.5 text-xs font-medium" role="tablist">
+        
+        <!-- Sliding Capsule Tab Switcher -->
+        <div class="relative flex w-40 flex-none rounded-lg bg-muted/65 p-0.5 text-[11px] font-semibold border border-border/10 select-none" role="tablist">
+          <!-- Sliding pill background -->
+          <div 
+            class="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-background shadow-sm transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            style="width: calc(50% - 2px); transform: translateX({selectionStore.panel === 'pinned' ? '100%' : '0'});"
+          ></div>
+          
           <button
             role="tab"
             aria-selected={selectionStore.panel === 'recent'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'recent' ? 0 : -1}
-            class="rounded-md px-2.5 py-1 transition-all {selectionStore.panel === 'recent'
-              ? 'bg-background text-foreground shadow-sm'
+            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel === 'recent'
+              ? 'text-foreground font-semibold'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('recent')}
           >
@@ -325,8 +333,8 @@
             aria-selected={selectionStore.panel === 'pinned'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'pinned' ? 0 : -1}
-            class="rounded-md px-2.5 py-1 transition-all {selectionStore.panel === 'pinned'
-              ? 'bg-background text-foreground shadow-sm'
+            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel === 'pinned'
+              ? 'text-foreground font-semibold'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('pinned')}
           >
@@ -375,35 +383,23 @@
 
       <!-- Footer: shortcut hints + quick actions -->
       <div
-        class="flex flex-none items-center justify-between gap-2 border-t border-border/60 bg-muted/30 px-2.5 py-1 text-[11px] text-muted-foreground"
+        class="flex flex-none items-center justify-between gap-2 border-t border-border/60 bg-muted/15 px-2.5 py-1.5 text-[11px] text-muted-foreground animate-in fade-in duration-300"
       >
-        <div class="flex min-w-0 items-center gap-2.5 overflow-hidden">
-          <span class="flex flex-none items-center gap-1">
-            <kbd
-              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
-              >↵</kbd
-            >
+        <div class="flex min-w-0 items-center gap-3 overflow-hidden select-none">
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
             {t.paste}
           </span>
-          <span class="flex flex-none items-center gap-1">
-            <kbd
-              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
-              >⌘↵</kbd
-            >
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">⌘↵</kbd>
             {t.copy}
           </span>
-          <span class="flex flex-none items-center gap-1">
-            <kbd
-              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
-              >Tab</kbd
-            >
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
             {t.switchPanel}
           </span>
-          <span class="flex flex-none items-center gap-1">
-            <kbd
-              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
-              >esc</kbd
-            >
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
             {t.close}
           </span>
         </div>
