@@ -105,6 +105,7 @@
       saving = true;
       message = '';
       await invoke('update_settings', { settings: settings });
+      i18n.setLocale(settings.locale);
       message = t.save + ' ✓';
       setTimeout(() => (message = ''), 3000);
     } catch (err) {

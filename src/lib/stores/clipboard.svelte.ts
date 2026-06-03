@@ -3,6 +3,9 @@ import { listen } from '@tauri-apps/api/event';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
 import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
+import { applyClipboardChanged, comparePinOrder } from '$lib/utils/clip-items';
+import { RequestSequencer } from '$lib/utils/request-sequencer';
+import { hasTauriRuntime } from '$lib/utils/tauri';
 
 // Re-export type for convenience
 export type { ClipItem } from '$lib/types';
@@ -15,21 +18,17 @@ interface ClearSearchOptions extends LoadHistoryOptions {
   reload?: boolean;
 }
 
-function comparePinOrder(a: ClipItem, b: ClipItem) {
-  const aOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
-  const bOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
-  return aOrder - bOrder || b.timestamp - a.timestamp;
-}
-
 class ClipboardStore {
-  recentItems = $state<ClipItem[]>([]);
-  pinnedItems = $state<ClipItem[]>([]);
-  searchResults = $state<ClipItem[]>([]);
+  recentItems = $state.raw<ClipItem[]>([]);
+  pinnedItems = $state.raw<ClipItem[]>([]);
+  searchResults = $state.raw<ClipItem[]>([]);
   searchQuery = $state('');
   isLoading = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
   private unlisten?: () => void;
+  private historyRequests = new RequestSequencer();
+  private searchRequests = new RequestSequencer();
 
   recentDisplayItems = $derived(
     this.searchQuery.trim() ? this.searchResults.filter((item) => !item.isPinned) : this.recentItems
@@ -46,6 +45,11 @@ class ClipboardStore {
   }
 
   async initialize() {
+    if (!hasTauriRuntime()) {
+      this.isLoading = false;
+      return;
+    }
+
     try {
       const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
         'get_settings'
@@ -58,8 +62,13 @@ class ClipboardStore {
 
     await this.loadHistory();
 
-    const unlistenClipboard = await listen('clipboard-changed', async () => {
-      await this.reloadFromBackend();
+    const unlistenClipboard = await listen<ClipItem>('clipboard-changed', async (event) => {
+      if (this.searchQuery.trim()) {
+        await this.reloadFromBackend();
+        return;
+      }
+
+      this.applyIncomingItem(event.payload);
     });
 
     const unlistenHistoryCleared = await listen('history-cleared', async () => {
@@ -77,7 +86,14 @@ class ClipboardStore {
   }
 
   async loadHistory(options: LoadHistoryOptions = {}) {
+    if (!hasTauriRuntime()) {
+      this.isLoading = false;
+      return;
+    }
+
     const showLoading = options.showLoading ?? true;
+    const requestId = this.historyRequests.next();
+
     if (showLoading) {
       this.isLoading = true;
     }
@@ -88,19 +104,27 @@ class ClipboardStore {
         invoke<ClipItem[]>('get_pinned_clips'),
       ]);
 
-      this.recentItems = recent;
-      this.pinnedItems = pinned;
-      this.searchResults = [];
+      if (this.historyRequests.isCurrent(requestId)) {
+        this.recentItems = recent;
+        this.pinnedItems = pinned;
+        if (!this.searchQuery.trim()) {
+          this.searchResults = [];
+        }
+      }
     } catch (error) {
-      console.error('[ERROR] Failed to load clipboard history:', error);
+      if (this.historyRequests.isCurrent(requestId)) {
+        console.error('[ERROR] Failed to load clipboard history:', error);
+      }
     } finally {
-      if (showLoading) {
+      if (showLoading && this.historyRequests.isCurrent(requestId) && !this.searchQuery.trim()) {
         this.isLoading = false;
       }
     }
   }
 
   async refreshSettings() {
+    if (!hasTauriRuntime()) return;
+
     try {
       const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
         'get_settings'
@@ -112,21 +136,47 @@ class ClipboardStore {
     }
   }
 
+  setSearchQuery(query: string) {
+    this.searchRequests.next();
+    this.searchQuery = query;
+    if (!query.trim()) {
+      this.searchResults = [];
+      this.isLoading = false;
+    } else {
+      this.isLoading = hasTauriRuntime();
+    }
+  }
+
   async search(query: string) {
+    const requestId = this.searchRequests.next();
     this.searchQuery = query;
 
     if (!query.trim()) {
+      this.searchResults = [];
       await this.loadHistory();
+      return;
+    }
+
+    if (!hasTauriRuntime()) {
+      this.searchResults = [];
+      this.isLoading = false;
       return;
     }
 
     this.isLoading = true;
     try {
-      this.searchResults = await invoke<ClipItem[]>('search_clips', { query });
+      const results = await invoke<ClipItem[]>('search_clips', { query });
+      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+        this.searchResults = results;
+      }
     } catch (error) {
-      console.error('Search failed:', error);
+      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+        console.error('Search failed:', error);
+      }
     } finally {
-      this.isLoading = false;
+      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+        this.isLoading = false;
+      }
     }
   }
 
@@ -137,7 +187,11 @@ class ClipboardStore {
     this.searchResults = [];
 
     if (reload) {
+      this.searchRequests.next();
       await this.loadHistory({ showLoading: options.showLoading });
+    } else {
+      this.searchRequests.next();
+      this.isLoading = false;
     }
   }
 
@@ -239,6 +293,18 @@ class ClipboardStore {
     } else {
       await this.loadHistory();
     }
+  }
+
+  private applyIncomingItem(incoming: ClipItem) {
+    const nextItems = applyClipboardChanged({
+      recentItems: this.recentItems,
+      pinnedItems: this.pinnedItems,
+      incoming,
+      maxHistoryItems: this.maxHistoryItems,
+    });
+
+    this.recentItems = nextItems.recentItems;
+    this.pinnedItems = nextItems.pinnedItems;
   }
 
   private findItem(id: string) {

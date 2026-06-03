@@ -2,6 +2,7 @@
   import Card from '$lib/components/ui/Card.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import { onDestroy } from 'svelte';
   import { Keyboard, X } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
@@ -43,35 +44,47 @@
     },
   ];
 
+  interface ShortcutKey {
+    id: string;
+    label: string;
+  }
+
   // Convert Tauri shortcut to display format
-  function formatShortcut(shortcut: string): string[] {
+  function formatShortcut(shortcut: string): ShortcutKey[] {
     if (!shortcut) return [];
 
     const keys = shortcut.split('+');
-    return keys.map((key) => {
-      switch (key) {
-        case 'CommandOrControl':
-          return isMac ? '⌘' : 'Ctrl';
-        case 'Command':
-          return '⌘';
-        case 'Control':
-          return isMac ? '⌃' : 'Ctrl';
-        case 'Alt':
-          return isMac ? '⌥' : 'Alt';
-        case 'Option':
-          return '⌥';
-        case 'Shift':
-          return isMac ? '⇧' : 'Shift';
-        default:
-          return key;
-      }
-    });
+    return keys.map((key, index) => ({
+      id: `${index}:${key}`,
+      label: formatShortcutKey(key),
+    }));
+  }
+
+  function formatShortcutKey(key: string): string {
+    switch (key) {
+      case 'CommandOrControl':
+        return isMac ? '⌘' : 'Ctrl';
+      case 'Command':
+        return '⌘';
+      case 'Control':
+        return isMac ? '⌃' : 'Ctrl';
+      case 'Alt':
+        return isMac ? '⌥' : 'Alt';
+      case 'Option':
+        return '⌥';
+      case 'Shift':
+        return isMac ? '⇧' : 'Shift';
+      default:
+        return key;
+    }
   }
 
   // Keyboard recording state
   let isRecording = $state(false);
-  let recordedKeys = $state<string[]>([]);
+  let recordedKeys = $state<ShortcutKey[]>([]);
   let recordingWarning = $state('');
+  let recordingTimeout: ReturnType<typeof setTimeout> | undefined;
+  const formattedKeys = $derived(formatShortcut(settings.globalShortcut));
 
   async function startRecording() {
     try {
@@ -87,6 +100,9 @@
   }
 
   async function stopRecording() {
+    clearTimeout(recordingTimeout);
+    recordingTimeout = undefined;
+
     try {
       // Re-enable global shortcut
       if (isRecording) {
@@ -109,7 +125,7 @@
 
     // ESC to cancel
     if (event.key === 'Escape') {
-      stopRecording();
+      void stopRecording();
       return;
     }
 
@@ -146,31 +162,35 @@
       if (shortcut === settings.globalShortcut) {
         recordingWarning = t.alreadyCurrentHotkey;
         // Auto-close warning after 2 seconds
-        setTimeout(() => {
-          stopRecording();
+        recordingTimeout = setTimeout(() => {
+          void stopRecording();
         }, 2000);
       } else {
         // Set the new shortcut
         settings.globalShortcut = shortcut;
-        stopRecording();
+        void stopRecording();
       }
     } else {
       // Just show modifiers while waiting for main key
-      recordedKeys = keys.map((k) => formatShortcut(k + '+X')[0]);
+      recordedKeys = keys.map((key, index) => ({
+        id: `${index}:${key}`,
+        label: formatShortcutKey(key),
+      }));
       recordingWarning = '';
     }
   }
-
-  $effect(() => {
-    formattedKeys = formatShortcut(settings.globalShortcut);
-  });
-
-  let formattedKeys = $state<string[]>(formatShortcut(settings.globalShortcut));
 
   function handlePinnedShortcutInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value.trim();
     settings.pinnedShortcut = value.length > 0 ? value : null;
   }
+
+  onDestroy(() => {
+    clearTimeout(recordingTimeout);
+    if (isRecording) {
+      void invoke('enable_global_shortcut');
+    }
+  });
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -240,14 +260,14 @@
               </div>
             {:else if recordedKeys.length > 0}
               <div class="flex items-center justify-center gap-1.5">
-                {#each recordedKeys as key}
+                {#each recordedKeys as key (key.id)}
                   <kbd
                     class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                                bg-gradient-to-b from-background to-muted
                                                border border-border rounded-md shadow-sm
                                                text-foreground"
                   >
-                    {key}
+                    {key.label}
                   </kbd>
                   <span class="text-muted-foreground text-sm">+</span>
                 {/each}
@@ -263,14 +283,14 @@
           </div>
         {:else}
           <div class="flex items-center gap-1.5">
-            {#each formattedKeys as key, index}
+            {#each formattedKeys as key, index (key.id)}
               <kbd
                 class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                        bg-gradient-to-b from-background to-muted
                                        border border-border rounded-md shadow-sm
                                        text-foreground"
               >
-                {key}
+                {key.label}
               </kbd>
               {#if index < formattedKeys.length - 1}
                 <span class="text-muted-foreground text-sm">+</span>
@@ -283,7 +303,7 @@
       <!-- Preset shortcuts -->
       <div class="flex flex-wrap gap-2 pt-1">
         <span class="text-xs text-muted-foreground self-center">{t.commonHotkeys}</span>
-        {#each shortcutPresets as preset}
+        {#each shortcutPresets as preset (preset.value)}
           <Button
             type="button"
             variant={settings.globalShortcut === preset.value ? 'default' : 'outline'}
@@ -343,7 +363,7 @@
 
       <div class="flex flex-wrap gap-2 pt-1">
         <span class="text-xs text-muted-foreground self-center">{t.commonHotkeys}</span>
-        {#each pinnedShortcutPresets as preset}
+        {#each pinnedShortcutPresets as preset (preset.value)}
           <Button
             type="button"
             variant={settings.pinnedShortcut === preset.value ? 'default' : 'outline'}

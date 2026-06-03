@@ -21,3 +21,11 @@ test('down from the last item wraps to the first item', () => {
 
   expect(selectionStore.selectedIndex).toBe(0);
 });
+
+test('clamp writes a stale selected index back into range', () => {
+  selectionStore.setSelectedIndex(8, 10);
+
+  selectionStore.clamp(3);
+
+  expect(selectionStore.selectedIndex).toBe(2);
+});

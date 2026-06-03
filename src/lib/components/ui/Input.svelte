@@ -1,12 +1,9 @@
 <script lang="ts">
-  type Props = {
+  import type { HTMLInputAttributes } from 'svelte/elements';
+
+  type Props = Omit<HTMLInputAttributes, 'class' | 'value'> & {
     value?: string;
-    placeholder?: string;
     class?: string;
-    type?: string;
-    id?: string;
-    oninput?: (e: Event) => void;
-    onkeydown?: (e: KeyboardEvent) => void;
   };
 
   let {

@@ -35,16 +35,16 @@ class SelectionStore {
     this.selectedIndex = clampIndex(index, itemCount);
   }
 
+  clamp(itemCount: number) {
+    this.selectedIndex = clampIndex(this.selectedIndex, itemCount);
+  }
+
   move(delta: number, itemCount: number) {
-    this.selectedIndex = wrapIndex(this.selectedIndex + delta, itemCount);
+    this.selectedIndex = wrapIndex(clampIndex(this.selectedIndex, itemCount) + delta, itemCount);
   }
 
   selectSlot(slotNumber: number, itemCount: number) {
     this.selectedIndex = clampIndex(slotNumber - 1, itemCount);
-  }
-
-  clamp(itemCount: number) {
-    this.selectedIndex = clampIndex(this.selectedIndex, itemCount);
   }
 }
 

@@ -43,7 +43,7 @@
         role="radiogroup"
         aria-labelledby="theme-label"
       >
-        {#each themes as theme}
+        {#each themes as theme (theme.value)}
           <button
             class="flex flex-col items-center gap-3 p-4 rounded-lg border-2 transition-all hover:bg-muted/50
                         {themeStore.current === theme.value
@@ -70,21 +70,20 @@
     <div class="space-y-3 pt-4 border-t border-border">
       <span class="text-sm font-medium" id="lang-label">{t.language}</span>
       <div class="grid grid-cols-2 gap-4" role="radiogroup" aria-labelledby="lang-label">
-        {#each languages as lang}
+        {#each languages as lang (lang.value)}
           <button
             class="flex items-center gap-3 p-3 rounded-lg border-2 transition-all hover:bg-muted/50
-                        {i18n.locale === lang.value
+                        {settings.locale === lang.value
               ? 'border-primary bg-primary/5'
               : 'border-transparent bg-muted/20'}"
             onclick={() => {
-              i18n.setLocale(lang.value);
               settings.locale = lang.value;
             }}
             role="radio"
-            aria-checked={i18n.locale === lang.value}
+            aria-checked={settings.locale === lang.value}
           >
             <div
-              class="p-2 rounded-full {i18n.locale === lang.value
+              class="p-2 rounded-full {settings.locale === lang.value
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-background text-muted-foreground'}"
             >

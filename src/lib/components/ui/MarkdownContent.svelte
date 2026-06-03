@@ -1,21 +1,198 @@
 <script lang="ts">
-  import { marked } from 'marked';
+  import type { Token, Tokens } from 'marked';
+  import { markdownBlockTokens, safeMarkdownUrl } from '$lib/utils/markdown';
 
   let { content = '' } = $props<{ content: string }>();
 
-  // 配置 marked
-  marked.setOptions({
-    breaks: true, // 支持换行
-    gfm: true, // 启用 GitHub Flavored Markdown
-  });
+  const tokens = $derived(markdownBlockTokens(content));
 
-  // 渲染 Markdown
-  let html = $derived(marked.parse(content) as string);
+  function tokenKey(token: Token, index: number) {
+    return `${index}:${token.type}:${token.raw.slice(0, 32)}`;
+  }
+
+  function isHeadingToken(token: Token): token is Tokens.Heading {
+    return token.type === 'heading' && 'depth' in token;
+  }
+
+  function isListToken(token: Token): token is Tokens.List {
+    return token.type === 'list' && 'items' in token;
+  }
+
+  function isTableToken(token: Token): token is Tokens.Table {
+    return token.type === 'table' && 'header' in token && 'rows' in token;
+  }
+
+  function isLinkToken(token: Token): token is Tokens.Link {
+    return token.type === 'link' && 'href' in token;
+  }
+
+  function isImageToken(token: Token): token is Tokens.Image {
+    return token.type === 'image' && 'href' in token && 'text' in token;
+  }
+
+  function taskLabel(item: Tokens.ListItem) {
+    return item.checked ? 'Checked task' : 'Unchecked task';
+  }
 </script>
 
 <div class="markdown-content">
-  {@html html}
+  {@render blockTokens(tokens)}
 </div>
+
+{#snippet blockTokens(items: Token[])}
+  {#each items as token, index (tokenKey(token, index))}
+    {@render blockToken(token)}
+  {/each}
+{/snippet}
+
+{#snippet blockToken(token: Token)}
+  {#if token.type === 'space' || token.type === 'def' || token.type === 'html'}
+    <!-- Raw HTML and definitions are intentionally ignored. -->
+  {:else if isHeadingToken(token)}
+    {@render headingToken(token)}
+  {:else if token.type === 'paragraph'}
+    <p>{@render inlineTokens(token.tokens ?? [])}</p>
+  {:else if token.type === 'blockquote'}
+    <blockquote>{@render blockTokens(token.tokens ?? [])}</blockquote>
+  {:else if isListToken(token)}
+    {@render listToken(token)}
+  {:else if token.type === 'code'}
+    <pre><code>{token.text}</code></pre>
+  {:else if token.type === 'hr'}
+    <hr />
+  {:else if isTableToken(token)}
+    {@render tableToken(token)}
+  {:else if token.type === 'text'}
+    {#if token.tokens}
+      <p>{@render inlineTokens(token.tokens)}</p>
+    {:else}
+      <p>{token.text}</p>
+    {/if}
+  {:else}
+    <p>{token.raw}</p>
+  {/if}
+{/snippet}
+
+{#snippet headingToken(token: Tokens.Heading)}
+  {#if token.depth === 1}
+    <h1>{@render inlineTokens(token.tokens)}</h1>
+  {:else if token.depth === 2}
+    <h2>{@render inlineTokens(token.tokens)}</h2>
+  {:else if token.depth === 3}
+    <h3>{@render inlineTokens(token.tokens)}</h3>
+  {:else if token.depth === 4}
+    <h4>{@render inlineTokens(token.tokens)}</h4>
+  {:else if token.depth === 5}
+    <h5>{@render inlineTokens(token.tokens)}</h5>
+  {:else}
+    <h6>{@render inlineTokens(token.tokens)}</h6>
+  {/if}
+{/snippet}
+
+{#snippet listToken(token: Tokens.List)}
+  {#if token.ordered}
+    <ol start={typeof token.start === 'number' ? token.start : undefined}>
+      {#each token.items as item, index (tokenKey(item, index))}
+        {@render listItemToken(item)}
+      {/each}
+    </ol>
+  {:else}
+    <ul>
+      {#each token.items as item, index (tokenKey(item, index))}
+        {@render listItemToken(item)}
+      {/each}
+    </ul>
+  {/if}
+{/snippet}
+
+{#snippet listItemToken(item: Tokens.ListItem)}
+  {#if item.task}
+    <li class="task-list-item">
+      <input
+        type="checkbox"
+        checked={item.checked === true}
+        disabled
+        aria-label={taskLabel(item)}
+      />
+      <div class="task-list-content">
+        {@render blockTokens(item.tokens)}
+      </div>
+    </li>
+  {:else}
+    <li>{@render blockTokens(item.tokens)}</li>
+  {/if}
+{/snippet}
+
+{#snippet tableToken(token: Tokens.Table)}
+  <table>
+    <thead>
+      <tr>
+        {#each token.header as cell, index (`header:${index}:${cell.text}`)}
+          <th>{@render inlineTokens(cell.tokens)}</th>
+        {/each}
+      </tr>
+    </thead>
+    <tbody>
+      {#each token.rows as row, rowIndex (rowIndex)}
+        <tr>
+          {#each row as cell, cellIndex (`${rowIndex}:${cellIndex}:${cell.text}`)}
+            <td>{@render inlineTokens(cell.tokens)}</td>
+          {/each}
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+{/snippet}
+
+{#snippet inlineTokens(items: Token[])}
+  {#each items as token, index (tokenKey(token, index))}
+    {@render inlineToken(token)}
+  {/each}
+{/snippet}
+
+{#snippet inlineToken(token: Token)}
+  {#if token.type === 'text' || token.type === 'escape'}
+    {token.text}
+  {:else if token.type === 'strong'}
+    <strong>{@render inlineTokens(token.tokens ?? [])}</strong>
+  {:else if token.type === 'em'}
+    <em>{@render inlineTokens(token.tokens ?? [])}</em>
+  {:else if token.type === 'codespan'}
+    <code>{token.text}</code>
+  {:else if token.type === 'br'}
+    <br />
+  {:else if token.type === 'del'}
+    <del>{@render inlineTokens(token.tokens ?? [])}</del>
+  {:else if isLinkToken(token)}
+    {@render linkToken(token)}
+  {:else if isImageToken(token)}
+    {@render imageToken(token)}
+  {:else if token.type === 'html'}
+    <!-- Raw inline HTML is intentionally ignored. -->
+  {:else}
+    {token.raw}
+  {/if}
+{/snippet}
+
+{#snippet linkToken(token: Tokens.Link)}
+  {@const href = safeMarkdownUrl(token.href, 'href')}
+  {#if href}
+    <a {href} title={token.title ?? undefined} target="_blank" rel="noopener noreferrer">
+      {@render inlineTokens(token.tokens)}
+    </a>
+  {:else}
+    {@render inlineTokens(token.tokens)}
+  {/if}
+{/snippet}
+
+{#snippet imageToken(token: Tokens.Image)}
+  {@const src = safeMarkdownUrl(token.href, 'src')}
+  {#if src}
+    <img {src} alt={token.text} title={token.title ?? undefined} loading="lazy" />
+  {:else}
+    {token.text}
+  {/if}
+{/snippet}
 
 <style>
   .markdown-content :global(h1),
@@ -77,6 +254,32 @@
 
   .markdown-content :global(ol) {
     list-style-type: decimal;
+  }
+
+  .markdown-content :global(.task-list-item) {
+    list-style: none;
+  }
+
+  .task-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5em;
+  }
+
+  .task-list-item input {
+    margin-top: 0.45em;
+  }
+
+  .task-list-content {
+    min-width: 0;
+  }
+
+  .task-list-content :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .task-list-content :global(p:last-child) {
+    margin-bottom: 0;
   }
 
   .markdown-content :global(code) {

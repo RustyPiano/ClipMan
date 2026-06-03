@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import type { ClipItem } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
+  import { decodeClipText } from '$lib/utils/clip-items';
   import Button from './ui/Button.svelte';
   import { Copy, Check, Pin, Trash2, FileText, Image as ImageIcon, Pencil, X } from 'lucide-svelte';
 
@@ -27,32 +29,12 @@
 
   let isCopied = $state(false);
   let isEditingLabel = $state(false);
+  let isVisible = $state(false);
   let draftLabel = $state('');
-  let labelInput = $state<HTMLInputElement | null>(null);
   let copyTimeout: ReturnType<typeof setTimeout>;
 
   const decodedText = $derived.by(() => {
-    if (item.contentType !== 'text') return '';
-
-    const content = item.content;
-    if (!content || (typeof content === 'string' && content.length === 0)) {
-      return t.emptyContent;
-    }
-
-    try {
-      if (typeof content === 'string') {
-        const binaryString = atob(content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return new TextDecoder().decode(bytes);
-      }
-      return t.decodeFailed;
-    } catch (error) {
-      console.error('Failed to decode text content:', error);
-      return t.decodeFailed;
-    }
+    return isVisible ? decodeClipText(item, t.emptyContent, t.decodeFailed) : ' ';
   });
 
   const imageDataUrl = $derived(
@@ -60,6 +42,45 @@
   );
   const trimmedLabel = $derived((item.label ?? '').trim());
   const showPinnedLabel = $derived(item.isPinned && trimmedLabel.length > 0 && !isEditingLabel);
+
+  const observeVisibility: Attachment = (element) => {
+    const IntersectionObserverCtor = globalThis.IntersectionObserver;
+    if (!IntersectionObserverCtor) {
+      isVisible = true;
+      return;
+    }
+
+    const observer = new IntersectionObserverCtor(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          isVisible = true;
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '160px 0px' }
+    );
+
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  };
+
+  const focusLabelInput: Attachment = (element) => {
+    if (element instanceof globalThis.HTMLInputElement) {
+      element.focus();
+      element.select();
+    }
+  };
+
+  const scrollWhenSelected: Attachment = (element) => {
+    if (!selected || !(element instanceof globalThis.HTMLElement)) return;
+
+    const frame = globalThis.requestAnimationFrame(() => {
+      element.scrollIntoView({ block: 'nearest' });
+    });
+
+    return () => globalThis.cancelAnimationFrame(frame);
+  };
 
   function formatTime(timestamp: number): string {
     const date = new Date(timestamp * 1000);
@@ -106,13 +127,10 @@
     await clipboardStore.togglePin(item.id);
   }
 
-  async function handleStartLabelEdit(event: MouseEvent) {
+  function handleStartLabelEdit(event: MouseEvent) {
     event.stopPropagation();
     draftLabel = item.label ?? '';
     isEditingLabel = true;
-    await tick();
-    labelInput?.focus();
-    labelInput?.select();
   }
 
   async function handleLabelSubmit(event: Event) {
@@ -146,7 +164,15 @@
   });
 </script>
 
-<div id={`clip-item-${item.id}`} class="group relative" role="listitem" onmouseenter={onSelect}>
+<div
+  id={`clip-item-${item.id}`}
+  {@attach observeVisibility}
+  {@attach selected && scrollWhenSelected}
+  class="group relative"
+  style="content-visibility: auto; contain-intrinsic-size: 72px;"
+  role="listitem"
+  onmouseenter={onSelect}
+>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -189,7 +215,7 @@
             onclick={(event) => event.stopPropagation()}
           >
             <input
-              bind:this={labelInput}
+              {@attach focusLabelInput}
               bind:value={draftLabel}
               aria-label={t.editLabel}
               class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none ring-primary/30 transition focus:ring-2"

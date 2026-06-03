@@ -41,7 +41,7 @@
 
 <aside class="w-64 border-r border-border bg-muted/30 p-4 flex flex-col">
   <nav class="space-y-1">
-    {#each tabConfig as tab}
+    {#each tabConfig as tab (tab.id)}
       <button
         class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors
                 {activeTab === tab.id

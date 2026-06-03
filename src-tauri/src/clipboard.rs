@@ -309,8 +309,6 @@ impl ClipboardMonitor {
         use crate::tray::update_tray_menu;
         use crate::AppState;
 
-        let mut item_for_emit = FrontendClipItem::from(item.clone());
-
         let state = app_handle.state::<AppState>();
         let max_history_items = state.settings.get().max_history_items;
 
@@ -319,19 +317,28 @@ impl ClipboardMonitor {
                 log::warn!("⚠️ Recovered from poisoned lock in clipboard monitor");
                 poisoned.into_inner()
             });
-            storage.insert(&item, max_history_items)
+
+            storage
+                .insert(&item, max_history_items)
+                .and_then(|existing_id| {
+                    if let Some(id) = existing_id {
+                        log::debug!("Updated existing item {} timestamp", id);
+                        if let Some(existing_item) = storage.get_by_id(&id)? {
+                            return Ok(FrontendClipItem::from(existing_item));
+                        }
+
+                        log::warn!("Duplicate item {} was not found after timestamp update", id);
+                        let mut fallback_item = item.clone();
+                        fallback_item.id = id;
+                        return Ok(FrontendClipItem::from(fallback_item));
+                    }
+
+                    Ok(FrontendClipItem::from(item.clone()))
+                })
         };
 
         match result {
-            Ok(existing_id) => {
-                if let Some(id) = existing_id {
-                    // It was a duplicate, update the emitted item to use the existing ID
-                    // and current timestamp so frontend moves it to top
-                    item_for_emit.id = id;
-                    item_for_emit.timestamp = item.timestamp;
-                    log::debug!("Updated existing item {} timestamp", item_for_emit.id);
-                }
-
+            Ok(item_for_emit) => {
                 app_handle.emit("clipboard-changed", &item_for_emit).ok();
                 log::debug!("Updating tray menu...");
                 update_tray_menu(app_handle);

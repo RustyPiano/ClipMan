@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -8,6 +9,7 @@
   import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
   import { i18n } from '$lib/i18n';
+  import { hasTauriRuntime } from '$lib/utils/tauri';
   import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
@@ -52,6 +54,17 @@
       ? clipboardStore.pinnedDisplayItems
       : clipboardStore.recentDisplayItems
   );
+  const selectedIndex = $derived(
+    clampSelectedIndex(selectionStore.selectedIndex, displayItems.length)
+  );
+  const selectedItem = $derived(displayItems[selectedIndex]);
+
+  $effect(() => {
+    const clampedIndex = selectedIndex;
+    if (clampedIndex !== selectionStore.selectedIndex) {
+      selectionStore.selectedIndex = clampedIndex;
+    }
+  });
 
   function isTextInput(element: Element | null) {
     return (
@@ -60,6 +73,11 @@
       element instanceof HTMLSelectElement ||
       element?.hasAttribute('contenteditable')
     );
+  }
+
+  function clampSelectedIndex(index: number, itemCount: number) {
+    if (itemCount <= 0) return 0;
+    return Math.min(Math.max(index, 0), itemCount - 1);
   }
 
   function focusSearchInput() {
@@ -92,7 +110,7 @@
   }
 
   function getSelectedItem() {
-    return displayItems[selectionStore.selectedIndex];
+    return selectedItem;
   }
 
   function modeForDefault(opposite = false): PasteMode {
@@ -156,6 +174,25 @@
     } catch (error) {
       console.error('[ERROR] Failed to open settings window:', error);
     }
+  }
+
+  function syncTheme(theme: typeof themeStore.current): Attachment {
+    return () => {
+      const root = globalThis.document.documentElement;
+      const isDark =
+        theme === 'dark' ||
+        (theme === 'system' && globalThis.matchMedia('(prefers-color-scheme: dark)').matches);
+
+      root.classList.remove('dark', 'light-pink');
+
+      if (theme === 'light-pink') {
+        root.classList.add('light-pink');
+      } else if (isDark) {
+        root.classList.add('dark');
+      }
+
+      globalThis.localStorage.setItem('theme', theme);
+    };
   }
 
   function handleQuickBarKeydown(event: KeyboardEvent) {
@@ -230,7 +267,9 @@
   }
 
   onMount(() => {
-    if (isSettings || getCurrentWindow().label === 'settings') {
+    const tauriAvailable = hasTauriRuntime();
+
+    if (isSettings || (tauriAvailable && getCurrentWindow().label === 'settings')) {
       isSettings = true;
       router.goToSettings();
       return;
@@ -239,6 +278,17 @@
     // Transparent body so the rounded panel corners + shadow show (main window
     // only). The panel stays opaque — no frosted glass.
     document.documentElement.classList.add('quickbar-window');
+
+    selectionStore.reset('recent');
+    focusSearchInput();
+    window.addEventListener('keydown', handleQuickBarKeydown, true);
+
+    if (!tauriAvailable) {
+      return () => {
+        window.removeEventListener('keydown', handleQuickBarKeydown, true);
+        document.documentElement.classList.remove('quickbar-window');
+      };
+    }
 
     let unlistenQuickbarOpened: (() => void) | undefined;
 
@@ -251,10 +301,7 @@
       unlistenQuickbarOpened = unlisten;
     });
 
-    selectionStore.reset('recent');
     void clipboardStore.refreshSettings();
-    focusSearchInput();
-    window.addEventListener('keydown', handleQuickBarKeydown, true);
 
     return () => {
       window.removeEventListener('keydown', handleQuickBarKeydown, true);
@@ -262,47 +309,14 @@
       document.documentElement.classList.remove('quickbar-window');
     };
   });
-
-  $effect(() => {
-    selectionStore.clamp(displayItems.length);
-  });
-
-  $effect(() => {
-    const selectedItem = getSelectedItem();
-    if (!selectedItem || typeof window === 'undefined') return;
-
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`clip-item-${selectedItem.id}`)?.scrollIntoView({
-        block: 'nearest',
-      });
-    });
-
-    return () => cancelAnimationFrame(frame);
-  });
-
-  $effect(() => {
-    const theme = themeStore.current;
-    const root = document.documentElement;
-    const isDark =
-      theme === 'dark' ||
-      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-
-    root.classList.remove('dark', 'light-pink');
-
-    if (theme === 'light-pink') {
-      root.classList.add('light-pink');
-    } else if (isDark) {
-      root.classList.add('dark');
-    }
-
-    localStorage.setItem('theme', theme);
-  });
 </script>
 
 {#if isSettings || router.currentRoute === 'settings'}
-  <SettingsPage />
+  <div class="contents" {@attach syncTheme(themeStore.current)}>
+    <SettingsPage />
+  </div>
 {:else}
-  <div class="flex h-screen flex-col p-3">
+  <div class="flex h-screen flex-col p-3" {@attach syncTheme(themeStore.current)}>
     <div class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
       <PermissionCheck />
       <Toast />
@@ -383,7 +397,7 @@
             {#each displayItems as item, index (item.id)}
               <ClipboardItem
                 {item}
-                selected={index === selectionStore.selectedIndex}
+                selected={index === selectedIndex}
                 slotNumber={index < 9 ? index + 1 : null}
                 onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
                 onUse={() => useItem(item)}

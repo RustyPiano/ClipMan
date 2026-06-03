@@ -11,7 +11,6 @@
 
   const t = $derived(i18n.t);
 
-  let searchQuery = $state(clipboardStore.searchQuery);
   let debounceTimer: ReturnType<typeof setTimeout>;
 
   function runSearch(query: string) {
@@ -23,12 +22,12 @@
 
   function handleInput(event: Event) {
     const target = event.target as HTMLInputElement;
-    searchQuery = target.value;
-    runSearch(searchQuery);
+    clipboardStore.setSearchQuery(target.value);
+    runSearch(target.value);
   }
 
   function clearSearch() {
-    searchQuery = '';
+    clearTimeout(debounceTimer);
     void clipboardStore.search('');
 
     const input = document.getElementById(SEARCH_INPUT_ID);
@@ -48,12 +47,6 @@
     clearTimeout(debounceTimer);
   });
 
-  $effect(() => {
-    if (clipboardStore.searchQuery === '') {
-      clearTimeout(debounceTimer);
-      searchQuery = '';
-    }
-  });
 </script>
 
 <div class="relative w-full">
@@ -67,12 +60,12 @@
     id={SEARCH_INPUT_ID}
     type="text"
     placeholder={t.searchPlaceholder}
-    value={searchQuery}
+    value={clipboardStore.searchQuery}
     oninput={handleInput}
     class="h-10 border-transparent bg-transparent pl-9 pr-10 text-[14px] font-medium placeholder:text-muted-foreground/35 shadow-none transition-colors focus-visible:ring-0 select-none"
   />
 
-  {#if searchQuery}
+  {#if clipboardStore.searchQuery}
     <Button
       variant="ghost"
       size="icon"

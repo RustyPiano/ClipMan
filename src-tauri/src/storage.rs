@@ -875,6 +875,33 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_insert_preserves_existing_metadata() {
+        let db_path = temp_db_path("duplicate_metadata");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        let mut existing = test_item("pinned", b"same content", 10, true, Some(2));
+        existing.label = Some("favorite".to_string());
+        existing.group_name = Some("snippets".to_string());
+        storage.insert(&existing, 100).unwrap();
+
+        let incoming = test_item("new-id", b"same content", 20, false, None);
+        let duplicate_id = storage.insert(&incoming, 100).unwrap();
+        let stored = storage.get_by_id("pinned").unwrap().unwrap();
+
+        assert_eq!(Some("pinned".to_string()), duplicate_id);
+        assert_eq!("pinned", stored.id);
+        assert_eq!(20, stored.timestamp);
+        assert!(stored.is_pinned);
+        assert_eq!(Some(2), stored.pin_order);
+        assert_eq!(Some("favorite".to_string()), stored.label);
+        assert_eq!(Some("snippets".to_string()), stored.group_name);
+        assert!(storage.get_by_id("new-id").unwrap().is_none());
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
     fn reorder_pinned_swaps_adjacent_items_and_renumbers_slots() {
         let db_path = temp_db_path("reorder_pinned");
         let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();

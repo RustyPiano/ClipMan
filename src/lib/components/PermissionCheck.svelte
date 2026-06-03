@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { hasTauriRuntime } from '$lib/utils/tauri';
   import Button from './ui/Button.svelte';
   import { AlertTriangle, RefreshCw } from 'lucide-svelte';
 
@@ -28,6 +29,11 @@
   }
 
   onMount(() => {
+    if (!hasTauriRuntime()) {
+      isChecking = false;
+      return;
+    }
+
     checkPermission();
 
     // Re-check when window gains focus
