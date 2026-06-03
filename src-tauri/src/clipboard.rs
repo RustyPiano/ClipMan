@@ -1,16 +1,20 @@
 use arboard::{Clipboard, ImageData};
 use chrono::Utc;
 use clipboard_master::{CallbackResult, ClipboardHandler, Master, Shutdown};
-use image::GenericImageView;
+use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    mpsc, Arc, Mutex,
 };
 use std::thread::JoinHandle;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::storage::{ClipItem, ContentType, CopyMarker};
+
+type MonitorReadySender = mpsc::Sender<Result<(), String>>;
+const MONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
@@ -31,12 +35,23 @@ pub struct ClipboardMonitor {
 struct Handler {
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+    running: Arc<AtomicBool>,
     last_text: String,
-    last_image: Option<Vec<u8>>,
+    last_image_marker: Option<CopyMarker>,
+}
+
+struct ProcessedClipboardImage {
+    content_png: Vec<u8>,
+    thumbnail_png: Vec<u8>,
+    marker: CopyMarker,
 }
 
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) -> CallbackResult {
+        if !self.running.load(Ordering::SeqCst) {
+            return CallbackResult::Stop;
+        }
+
         let mut clipboard = match Clipboard::new() {
             Ok(cb) => cb,
             Err(e) => {
@@ -64,15 +79,16 @@ impl ClipboardHandler for Handler {
 
         // Check for image changes
         if let Ok(image) = clipboard.get_image() {
-            let payload = ClipboardMonitor::normalize_image_payload(&image);
-            if self.last_image.as_ref() != Some(&payload) {
+            let marker = ClipboardMonitor::image_marker(&image);
+            if self.last_image_marker.as_ref() != Some(&marker) {
                 ClipboardMonitor::process_image_change(
                     &self.app_handle,
                     &self.last_copied_by_us,
+                    &self.running,
                     &image,
-                    &payload,
+                    &marker,
                 );
-                self.last_image = Some(payload);
+                self.last_image_marker = Some(marker);
             }
         }
 
@@ -96,12 +112,13 @@ impl ClipboardMonitor {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Result<(), String> {
         self.running.store(true, Ordering::SeqCst);
         let app_handle = self.app_handle.clone();
         let last_copied_by_us = self.last_copied_by_us.clone();
         let running = self.running.clone();
         let shutdown_slot = self.shutdown.clone();
+        let (ready_sender, ready_receiver) = mpsc::channel();
 
         // Start event-driven monitoring thread
         let handle = std::thread::spawn(move || {
@@ -110,33 +127,66 @@ impl ClipboardMonitor {
             let handler = Handler {
                 app_handle: app_handle.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
+                running: running.clone(),
                 last_text: String::new(),
-                last_image: None,
+                last_image_marker: None,
             };
 
             // Start the clipboard master - this blocks until the application exits
             match Master::new(handler) {
                 Ok(mut master) => {
-                    // Hand the shutdown channel to the monitor so stop() can end
-                    // run() from another thread. stop() is only ever called once
-                    // the thread is up (during migration), so there is no
-                    // start/stop startup race to guard against here.
+                    // Hand the shutdown channel to the monitor before start()
+                    // returns, so stop() can always signal run() before join().
                     *crate::safe_lock(&shutdown_slot) = Some(master.shutdown_channel());
-                    if let Err(e) = master.run() {
+                    let run_returned = Arc::new(AtomicBool::new(false));
+                    let run_returned_for_ready = run_returned.clone();
+                    let ready_sender_for_event = ready_sender.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(250));
+                        if !run_returned_for_ready.load(Ordering::SeqCst) {
+                            let _ = ready_sender_for_event.send(Ok(()));
+                        }
+                    });
+
+                    let run_result = master.run();
+                    run_returned.store(true, Ordering::SeqCst);
+                    if let Err(e) = run_result {
                         log::error!("Clipboard master failed: {}", e);
                         log::warn!("Falling back to polling mode...");
-                        Self::start_polling(app_handle, last_copied_by_us, running);
+                        Self::start_polling(
+                            app_handle,
+                            last_copied_by_us,
+                            running,
+                            Some(ready_sender),
+                        );
                     }
                 }
                 Err(e) => {
                     log::error!("Failed to create clipboard master: {}", e);
                     log::warn!("Falling back to polling mode...");
-                    Self::start_polling(app_handle, last_copied_by_us, running);
+                    Self::start_polling(app_handle, last_copied_by_us, running, Some(ready_sender));
                 }
             }
         });
 
         self.handle = Some(handle);
+        match ready_receiver.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                self.running.store(false, Ordering::SeqCst);
+                if let Some(handle) = self.handle.take() {
+                    let _ = handle.join();
+                }
+                Err(e)
+            }
+            Err(e) => {
+                self.running.store(false, Ordering::SeqCst);
+                if let Some(handle) = self.handle.take() {
+                    let _ = handle.join();
+                }
+                Err(format!("Clipboard monitor failed to start: {}", e))
+            }
+        }
     }
 
     /// Stop the monitor and wait for its thread to exit.
@@ -146,7 +196,7 @@ impl ClipboardMonitor {
             shutdown.signal();
         }
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_monitor_thread_with_timeout(handle);
         }
     }
 
@@ -155,20 +205,28 @@ impl ClipboardMonitor {
         app_handle: AppHandle,
         last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
         running: Arc<AtomicBool>,
+        ready_sender: Option<MonitorReadySender>,
     ) {
         use std::thread;
-        use std::time::Duration;
 
         let mut clipboard = match Clipboard::new() {
             Ok(cb) => cb,
             Err(e) => {
-                log::error!("Failed to create clipboard instance: {}", e);
+                let message = format!("Failed to create clipboard instance: {}", e);
+                log::error!("{}", message);
+                running.store(false, Ordering::SeqCst);
+                if let Some(ready_sender) = ready_sender {
+                    let _ = ready_sender.send(Err(message));
+                }
                 return;
             }
         };
+        if let Some(ready_sender) = ready_sender {
+            let _ = ready_sender.send(Ok(()));
+        }
 
         let mut last_text = String::new();
-        let mut last_image: Option<Vec<u8>> = None;
+        let mut last_image_marker: Option<CopyMarker> = None;
         let mut last_ignored_concealed = false;
 
         while running.load(Ordering::SeqCst) {
@@ -195,10 +253,16 @@ impl ClipboardMonitor {
 
             // Check for image changes
             if let Ok(image) = clipboard.get_image() {
-                let payload = Self::normalize_image_payload(&image);
-                if last_image.as_ref() != Some(&payload) {
-                    Self::process_image_change(&app_handle, &last_copied_by_us, &image, &payload);
-                    last_image = Some(payload);
+                let marker = Self::image_marker(&image);
+                if last_image_marker.as_ref() != Some(&marker) {
+                    Self::process_image_change(
+                        &app_handle,
+                        &last_copied_by_us,
+                        &running,
+                        &image,
+                        &marker,
+                    );
+                    last_image_marker = Some(marker);
                 }
             }
 
@@ -211,7 +275,8 @@ impl ClipboardMonitor {
         last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
         text: &str,
     ) {
-        if Self::is_self_copied(last_copied_by_us, ContentType::Text, text.as_bytes()) {
+        let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
+        if Self::is_self_copied(last_copied_by_us, &marker) {
             log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
             return;
         }
@@ -234,10 +299,11 @@ impl ClipboardMonitor {
     fn process_image_change(
         app_handle: &AppHandle,
         last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
+        running: &Arc<AtomicBool>,
         image: &ImageData,
-        payload: &[u8],
+        marker: &CopyMarker,
     ) {
-        if Self::is_self_copied(last_copied_by_us, ContentType::Image, payload) {
+        if Self::is_self_copied(last_copied_by_us, marker) {
             log::info!(
                 "⏭️ Skipping self-copied image ({}x{})",
                 image.width,
@@ -246,25 +312,48 @@ impl ClipboardMonitor {
             return;
         }
 
-        let image_bytes = Self::image_to_bytes(image);
-        log::info!("Image clipboard changed: {} bytes", image_bytes.len());
+        let width = image.width;
+        let height = image.height;
+        let rgba_bytes = image.bytes.to_vec();
+        let marker = marker.clone();
+        log::info!(
+            "Image clipboard changed: {}x{}, {} RGBA bytes",
+            width,
+            height,
+            rgba_bytes.len()
+        );
 
         let app_handle = app_handle.clone();
+        let running = running.clone();
         tauri::async_runtime::spawn(async move {
-            let content = Self::process_full_image(&image_bytes);
-            let thumbnail = Some(Self::create_thumbnail(&content));
-            let item = ClipItem {
-                id: Uuid::new_v4().to_string(),
-                content,
-                thumbnail,
-                content_type: ContentType::Image,
-                timestamp: Utc::now().timestamp(),
-                is_pinned: false,
-                pin_order: None,
-                label: None,
-                group_name: None,
-            };
-            Self::save_to_storage(&app_handle, item);
+            let processed = tauri::async_runtime::spawn_blocking(move || {
+                Self::process_clipboard_image(width, height, rgba_bytes, marker)
+            })
+            .await;
+
+            match processed {
+                Ok(Ok(processed)) => {
+                    if !running.load(Ordering::SeqCst) {
+                        log::debug!("Skipping processed image save after monitor stopped");
+                        return;
+                    }
+
+                    let item = ClipItem {
+                        id: Uuid::new_v4().to_string(),
+                        content: processed.content_png,
+                        thumbnail: Some(processed.thumbnail_png),
+                        content_type: processed.marker.content_type,
+                        timestamp: Utc::now().timestamp(),
+                        is_pinned: false,
+                        pin_order: None,
+                        label: None,
+                        group_name: None,
+                    };
+                    Self::save_to_storage(&app_handle, item);
+                }
+                Ok(Err(e)) => log::error!("Failed to process clipboard image: {}", e),
+                Err(e) => log::error!("Image processing task failed: {}", e),
+            }
         });
     }
 
@@ -281,8 +370,7 @@ impl ClipboardMonitor {
 
     fn is_self_copied(
         last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
-        content_type: ContentType,
-        payload: &[u8],
+        expected_marker: &CopyMarker,
     ) -> bool {
         let Ok(last_copied) = last_copied_by_us.lock() else {
             log::warn!("Failed to lock self-copy marker");
@@ -293,19 +381,15 @@ impl ClipboardMonitor {
             return false;
         };
 
-        marker == &CopyMarker::from_payload(content_type, payload)
+        marker == expected_marker
     }
 
-    fn normalize_image_payload(image: &ImageData) -> Vec<u8> {
-        let mut payload = Vec::with_capacity(16 + image.bytes.len());
-        payload.extend_from_slice(&(image.width as u64).to_le_bytes());
-        payload.extend_from_slice(&(image.height as u64).to_le_bytes());
-        payload.extend_from_slice(image.bytes.as_ref());
-        payload
+    fn image_marker(image: &ImageData) -> CopyMarker {
+        CopyMarker::from_normalized_image_parts(image.width, image.height, image.bytes.as_ref())
     }
 
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
-        use crate::storage::FrontendClipItem;
+        use crate::storage::{ClipPreviewItem, FrontendClipItem};
         use crate::tray::update_tray_menu;
         use crate::AppState;
 
@@ -323,17 +407,19 @@ impl ClipboardMonitor {
                 .and_then(|existing_id| {
                     if let Some(id) = existing_id {
                         log::debug!("Updated existing item {} timestamp", id);
-                        if let Some(existing_item) = storage.get_by_id(&id)? {
-                            return Ok(FrontendClipItem::from(existing_item));
+                        if let Some(existing_item) = storage.get_preview_by_id(&id)? {
+                            return Ok(FrontendClipItem::from_preview(existing_item));
                         }
 
                         log::warn!("Duplicate item {} was not found after timestamp update", id);
-                        let mut fallback_item = item.clone();
-                        fallback_item.id = id;
-                        return Ok(FrontendClipItem::from(fallback_item));
+                        return Ok(FrontendClipItem::from_preview(
+                            ClipPreviewItem::from_clip_item_with_id(&item, id),
+                        ));
                     }
 
-                    Ok(FrontendClipItem::from(item.clone()))
+                    Ok(FrontendClipItem::from_preview(
+                        ClipPreviewItem::from_clip_item(&item),
+                    ))
                 })
         };
 
@@ -350,116 +436,68 @@ impl ClipboardMonitor {
         }
     }
 
-    fn image_to_bytes(image: &ImageData) -> Vec<u8> {
-        use image::{ImageBuffer, RgbaImage};
-
-        let img: RgbaImage = match ImageBuffer::from_raw(
-            image.width as u32,
-            image.height as u32,
-            image.bytes.to_vec(),
-        ) {
-            Some(img) => img,
-            None => {
-                log::error!("Failed to create image buffer");
-                return image.bytes.to_vec();
-            }
-        };
-
-        let mut png_bytes = Vec::new();
-        if let Err(e) = img.write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        ) {
-            log::error!("Failed to encode PNG: {}", e);
-            return image.bytes.to_vec();
-        }
-
-        png_bytes
-    }
-
-    fn create_thumbnail(image_bytes: &[u8]) -> Vec<u8> {
+    fn process_clipboard_image(
+        width: usize,
+        height: usize,
+        rgba_bytes: Vec<u8>,
+        marker: CopyMarker,
+    ) -> Result<ProcessedClipboardImage, String> {
         const THUMBNAIL_SIZE: u32 = 256;
 
-        match image::load_from_memory(image_bytes) {
-            Ok(img) => {
-                let thumbnail = img.resize(
-                    THUMBNAIL_SIZE,
-                    THUMBNAIL_SIZE,
-                    image::imageops::FilterType::Lanczos3,
-                );
+        let image: RgbaImage = ImageBuffer::from_raw(width as u32, height as u32, rgba_bytes)
+            .ok_or_else(|| "Invalid clipboard image buffer dimensions".to_string())?;
+        let image = DynamicImage::ImageRgba8(image);
 
-                let mut buffer = Vec::new();
-                if thumbnail
-                    .write_to(
-                        &mut std::io::Cursor::new(&mut buffer),
-                        image::ImageFormat::Png,
-                    )
-                    .is_ok()
-                {
-                    log::info!(
-                        "Created thumbnail: {}x{} -> {}x{}, {} bytes",
-                        img.width(),
-                        img.height(),
-                        thumbnail.width(),
-                        thumbnail.height(),
-                        buffer.len()
-                    );
-                    buffer
-                } else {
-                    log::error!("Failed to encode thumbnail. Returning original bytes.");
-                    image_bytes.to_vec()
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "Failed to decode image for thumbnail: {}. Returning original bytes.",
-                    e
-                );
-                image_bytes.to_vec()
-            }
-        }
+        let thumbnail = image.resize(
+            THUMBNAIL_SIZE,
+            THUMBNAIL_SIZE,
+            image::imageops::FilterType::Lanczos3,
+        );
+        let content_png = Self::encode_png(&image)?;
+        let thumbnail_png = Self::encode_png(&thumbnail)?;
+
+        log::info!(
+            "Processed clipboard image: {}x{} -> {} bytes, thumbnail {} bytes",
+            image.width(),
+            image.height(),
+            content_png.len(),
+            thumbnail_png.len()
+        );
+
+        Ok(ProcessedClipboardImage {
+            content_png,
+            thumbnail_png,
+            marker,
+        })
     }
 
-    fn process_full_image(image_bytes: &[u8]) -> Vec<u8> {
-        const MAX_SIZE: u32 = 2048;
+    fn encode_png(image: &DynamicImage) -> Result<Vec<u8>, String> {
+        let mut buffer = Vec::new();
+        image
+            .write_to(
+                &mut std::io::Cursor::new(&mut buffer),
+                image::ImageFormat::Png,
+            )
+            .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+        Ok(buffer)
+    }
+}
 
-        match image::load_from_memory(image_bytes) {
-            Ok(img) => {
-                let (w, h) = img.dimensions();
+fn join_monitor_thread_with_timeout(handle: JoinHandle<()>) {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = handle.join();
+        let _ = sender.send(result);
+    });
 
-                let final_img = if w > MAX_SIZE || h > MAX_SIZE {
-                    img.resize(MAX_SIZE, MAX_SIZE, image::imageops::FilterType::Lanczos3)
-                } else {
-                    img
-                };
-
-                let mut buffer = Vec::new();
-                if final_img
-                    .write_to(
-                        &mut std::io::Cursor::new(&mut buffer),
-                        image::ImageFormat::Png,
-                    )
-                    .is_ok()
-                {
-                    log::info!(
-                        "Stored high-quality image: {}x{} -> {} bytes",
-                        final_img.width(),
-                        final_img.height(),
-                        buffer.len()
-                    );
-                    buffer
-                } else {
-                    log::error!("Failed to encode high-quality image. Falling back to thumbnail.");
-                    Self::create_thumbnail(image_bytes)
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "Failed to decode image for high-quality storage: {}. Falling back to thumbnail.",
-                    e
-                );
-                Self::create_thumbnail(image_bytes)
-            }
+    match receiver.recv_timeout(MONITOR_STOP_TIMEOUT) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => log::warn!("Clipboard monitoring thread panicked while stopping"),
+        Err(mpsc::RecvTimeoutError::Timeout) => log::warn!(
+            "Timed out waiting for clipboard monitoring thread to stop; continuing shutdown"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            log::warn!("Clipboard monitoring thread join waiter disconnected")
         }
     }
 }
@@ -583,4 +621,37 @@ fn windows_clipboard_dword(format: u32) -> Option<u32> {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn clipboard_has_sensitive_marker() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn processed_clipboard_image_uses_raw_rgba_marker() {
+        let rgba_bytes = vec![255, 0, 0, 255];
+        let marker = CopyMarker::from_normalized_image_parts(1, 1, &rgba_bytes);
+
+        let processed =
+            ClipboardMonitor::process_clipboard_image(1, 1, rgba_bytes, marker.clone()).unwrap();
+
+        assert_eq!(marker, processed.marker);
+        assert!(!processed.content_png.is_empty());
+        assert!(!processed.thumbnail_png.is_empty());
+    }
+
+    #[test]
+    fn processed_clipboard_image_preserves_original_content_dimensions() {
+        let width = 2050;
+        let height = 1;
+        let rgba_bytes = vec![255; width * height * 4];
+        let marker = CopyMarker::from_normalized_image_parts(width, height, &rgba_bytes);
+
+        let processed =
+            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker).unwrap();
+        let content = image::load_from_memory(&processed.content_png).unwrap();
+
+        assert_eq!(width as u32, content.width());
+        assert_eq!(height as u32, content.height());
+    }
 }

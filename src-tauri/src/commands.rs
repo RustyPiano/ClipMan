@@ -44,6 +44,70 @@ where
     run_action_on_main_thread(app, command_name, Box::new(move || action(app_for_action)))
 }
 
+fn restart_clipboard_monitor(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let mut monitor =
+        crate::clipboard::ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
+    match monitor.start() {
+        Ok(()) => {
+            *safe_lock(&state.monitor) = Some(monitor);
+            log::info!("Clipboard monitoring restarted after migration");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!(
+                "Failed to restart clipboard monitoring after migration: {}",
+                e
+            );
+            Err(e)
+        }
+    }
+}
+
+struct ClipboardMonitorPause<'a> {
+    app: AppHandle,
+    state: &'a AppState,
+    restart: bool,
+}
+
+impl<'a> ClipboardMonitorPause<'a> {
+    fn pause(app: AppHandle, state: &'a AppState) -> Self {
+        let restart = if let Some(monitor) = safe_lock(&state.monitor).take() {
+            monitor.stop();
+            log::info!("Clipboard monitoring stopped for migration");
+            true
+        } else {
+            false
+        };
+
+        Self {
+            app,
+            state,
+            restart,
+        }
+    }
+
+    fn restart_if_needed(mut self) -> Result<(), String> {
+        if self.restart {
+            self.restart = false;
+            restart_clipboard_monitor(&self.app, self.state)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ClipboardMonitorPause<'_> {
+    fn drop(&mut self) {
+        if self.restart && safe_lock(&self.state.monitor).is_none() {
+            if let Err(e) = restart_clipboard_monitor(&self.app, self.state) {
+                log::error!(
+                    "Failed to restart clipboard monitoring from drop guard: {}",
+                    e
+                );
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
@@ -53,9 +117,16 @@ pub async fn get_recent_clips(
     let limit = limit.unwrap_or(100);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        let items = storage.get_recent_clips(limit).map_err(|e| e.to_string())?;
-        Ok(items.into_iter().map(FrontendClipItem::from).collect())
+        let items = {
+            let storage = safe_lock(&storage);
+            storage
+                .get_recent_clip_previews(limit)
+                .map_err(|e| e.to_string())?
+        };
+        Ok(items
+            .into_iter()
+            .map(FrontendClipItem::from_preview)
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -66,9 +137,16 @@ pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<Frontend
     let storage = state.storage.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        let items = storage.get_pinned_clips().map_err(|e| e.to_string())?;
-        Ok(items.into_iter().map(FrontendClipItem::from).collect())
+        let items = {
+            let storage = safe_lock(&storage);
+            storage
+                .get_pinned_clip_previews()
+                .map_err(|e| e.to_string())?
+        };
+        Ok(items
+            .into_iter()
+            .map(FrontendClipItem::from_preview)
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -82,9 +160,16 @@ pub async fn search_clips(
     let storage = state.storage.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        let items = storage.search(&query).map_err(|e| e.to_string())?;
-        Ok(items.into_iter().map(FrontendClipItem::from).collect())
+        let items = {
+            let storage = safe_lock(&storage);
+            storage
+                .search_clip_previews(&query)
+                .map_err(|e| e.to_string())?
+        };
+        Ok(items
+            .into_iter()
+            .map(FrontendClipItem::from_preview)
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -454,12 +539,6 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     }
 }
 
-fn normalize_optional_shortcut(shortcut: Option<String>) -> Option<String> {
-    shortcut
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) -> bool {
     match app.global_shortcut().unregister(shortcut) {
         Ok(()) => true,
@@ -585,48 +664,53 @@ fn apply_shortcut_changes(
     Ok(())
 }
 
+fn apply_autostart_setting(app: &AppHandle, enable_autostart: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let result = if enable_autostart {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
+
+    result.map_err(|e| format!("Failed to update autostart: {}", e))
+}
+
 #[tauri::command]
 pub async fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    settings.pinned_shortcut = normalize_optional_shortcut(settings.pinned_shortcut.take());
+    settings = settings.validate_and_normalize()?;
+    let _settings_write_guard = safe_lock(&state.settings_write_lock);
     log::info!("Updating settings: {:?}", settings);
 
     let old_settings = state.settings.get();
     let old_shortcut = old_settings.global_shortcut;
     let old_pinned_shortcut = old_settings.pinned_shortcut;
     let old_tray_text_length = old_settings.tray_text_length;
+    let old_max_pinned_in_tray = old_settings.max_pinned_in_tray;
+    let old_max_recent_in_tray = old_settings.max_recent_in_tray;
     let old_autostart = old_settings.enable_autostart;
     let old_locale = old_settings.locale;
     let new_shortcut = settings.global_shortcut.clone();
     let new_pinned_shortcut = settings.pinned_shortcut.clone();
 
-    if new_pinned_shortcut.as_deref() == Some(new_shortcut.as_str()) {
-        return Err("Pinned shortcut cannot match the main global shortcut".to_string());
-    }
-
     let shortcut_changed = old_shortcut != new_shortcut;
     let pinned_shortcut_changed = old_pinned_shortcut != new_pinned_shortcut;
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
+    let tray_limits_changed = old_max_pinned_in_tray != settings.max_pinned_in_tray
+        || old_max_recent_in_tray != settings.max_recent_in_tray;
     let autostart_changed = old_autostart != settings.enable_autostart;
     let locale_changed = old_locale != settings.locale;
     let quickbar_foreground_window = state.quickbar_foreground_window.clone();
 
     // Update autostart if changed
     if autostart_changed {
-        use tauri_plugin_autostart::ManagerExt;
-
-        let result = if settings.enable_autostart {
-            app.autolaunch().enable()
-        } else {
-            app.autolaunch().disable()
-        };
-
-        if let Err(e) = result {
-            log::error!("Failed to update autostart: {}", e);
-            return Err(format!("Failed to update autostart: {}", e));
+        if let Err(e) = apply_autostart_setting(&app, settings.enable_autostart) {
+            log::error!("{}", e);
+            return Err(e);
         }
 
         log::info!(
@@ -640,21 +724,57 @@ pub async fn update_settings(
     }
 
     if shortcut_changed || pinned_shortcut_changed {
-        apply_shortcut_changes(
+        if let Err(e) = apply_shortcut_changes(
             &app,
-            quickbar_foreground_window,
+            quickbar_foreground_window.clone(),
             old_shortcut.as_str(),
             old_pinned_shortcut.as_deref(),
             new_shortcut.as_str(),
             new_pinned_shortcut.as_deref(),
-        )?;
+        ) {
+            if autostart_changed {
+                if let Err(rollback_error) = apply_autostart_setting(&app, old_autostart) {
+                    log::warn!(
+                        "Failed to roll back autostart after shortcut update failed: {}",
+                        rollback_error
+                    );
+                }
+            }
+            return Err(e);
+        }
     }
 
-    state.settings.set(settings.clone());
-    state.settings.save(&app)?;
+    if let Err(e) = state.settings.save_candidate(&app, &settings) {
+        if shortcut_changed || pinned_shortcut_changed {
+            if let Err(rollback_error) = apply_shortcut_changes(
+                &app,
+                quickbar_foreground_window,
+                new_shortcut.as_str(),
+                new_pinned_shortcut.as_deref(),
+                old_shortcut.as_str(),
+                old_pinned_shortcut.as_deref(),
+            ) {
+                log::warn!(
+                    "Failed to roll back shortcuts after settings save failed: {}",
+                    rollback_error
+                );
+            }
+        }
+        if autostart_changed {
+            if let Err(rollback_error) = apply_autostart_setting(&app, old_autostart) {
+                log::warn!(
+                    "Failed to roll back autostart after settings save failed: {}",
+                    rollback_error
+                );
+            }
+        }
+        return Err(e);
+    }
 
-    // Rebuild tray menu if text length or locale changed
-    if tray_text_changed || locale_changed {
+    state.settings.set(settings);
+
+    // Rebuild tray menu if visible tray settings changed.
+    if tray_text_changed || tray_limits_changed || locale_changed {
         log::info!("Tray settings changed, rebuilding menu...");
         update_tray_menu(&app);
     }
@@ -791,7 +911,6 @@ pub async fn migrate_data_location(
     new_path: String,
     delete_old: bool,
 ) -> Result<(), String> {
-    use crate::clipboard::ClipboardMonitor;
     use crate::storage::ClipStorage;
 
     log::info!(
@@ -800,56 +919,65 @@ pub async fn migrate_data_location(
         delete_old
     );
 
-    // Stop clipboard monitoring so nothing writes during the copy.
-    if let Some(monitor) = safe_lock(&state.monitor).take() {
-        monitor.stop();
-        log::info!("Clipboard monitoring stopped for migration");
-    }
-
     // Resolve old / new paths.
     let default_path = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let _settings_write_guard = safe_lock(&state.settings_write_lock);
     let settings = state.settings.get();
     let old_path = migration::get_data_directory(default_path, settings.custom_data_path.clone());
     let new_path_buf = std::path::PathBuf::from(&new_path);
-
-    // Copy only (deletion happens after we close the old connection).
-    migration::migrate_data(&old_path, &new_path_buf, false)?;
-
-    // Persist the new location.
-    let mut new_settings = settings.clone();
-    new_settings.custom_data_path = Some(new_path.clone());
-    state.settings.set(new_settings);
-    state
-        .settings
-        .save(&app)
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
-
-    // Reopen storage at the new path so subsequent writes go there immediately.
     let new_db_path = new_path_buf.join("clipman.db");
     let new_db_path = new_db_path
         .to_str()
         .ok_or_else(|| "Invalid new database path".to_string())?;
-    let new_storage = ClipStorage::new(new_db_path).map_err(|e| e.to_string())?;
-    *safe_lock(&state.storage) = new_storage;
 
-    // Now it is safe to delete the old files; Windows refuses deleting open DBs.
-    if delete_old {
-        migration::remove_data_files(&old_path);
-    }
+    migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
-    log::info!("Data migration completed successfully");
+    let pause = ClipboardMonitorPause::pause(app.clone(), state.inner());
+    let migration_result = (|| -> Result<(), String> {
+        let mut storage_guard = safe_lock(&state.storage);
+        storage_guard
+            .backup_to_path(std::path::Path::new(new_db_path))
+            .map_err(|e| format!("Failed to back up database: {}", e))?;
+        let new_storage = ClipStorage::new(new_db_path).map_err(|e| e.to_string())?;
 
-    // Restart clipboard monitoring against the new storage.
-    let mut monitor = ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
-    monitor.start();
-    *safe_lock(&state.monitor) = Some(monitor);
-    log::info!("Clipboard monitoring restarted after migration");
+        let mut new_settings = settings.clone();
+        new_settings.custom_data_path = Some(new_path.clone());
+        state
+            .settings
+            .save_candidate(&app, &new_settings)
+            .map_err(|e| format!("Failed to save settings: {}", e))?;
 
+        *storage_guard = new_storage;
+        state.settings.set(new_settings);
+        drop(storage_guard);
+
+        // Now it is safe to delete the old files; Windows refuses deleting open DBs.
+        if delete_old {
+            migration::remove_data_files(&old_path);
+        }
+
+        log::info!("Data migration completed successfully");
+        Ok(())
+    })();
+
+    let restart_result = pause.restart_if_needed();
     crate::tray::update_tray_menu(&app);
-    Ok(())
+
+    match (migration_result, restart_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(e)) => Err(format!(
+            "Data migration completed, but clipboard monitoring failed to restart: {}",
+            e
+        )),
+        (Err(e), Ok(())) => Err(e),
+        (Err(migration_error), Err(restart_error)) => Err(format!(
+            "{}; additionally clipboard monitoring failed to restart: {}",
+            migration_error, restart_error
+        )),
+    }
 }
 
 #[cfg(test)]

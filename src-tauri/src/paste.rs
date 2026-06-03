@@ -109,7 +109,8 @@ pub async fn fetch_clip_and_touch_timestamp(
     .await
     .map_err(|e| e.to_string())??;
 
-    let frontend_item = FrontendClipItem::from(item.clone());
+    let frontend_item =
+        FrontendClipItem::from_preview(crate::storage::ClipPreviewItem::from_clip_item(&item));
     if let Err(e) = app.emit("clipboard-changed", &frontend_item) {
         log::error!("Failed to emit clipboard-changed event: {}", e);
     }
@@ -171,8 +172,8 @@ fn write_image(
         .map_err(|e| format!("Failed to decode image clip {}: {e}", item.id))?;
     let (width, height) = img.dimensions();
     let rgba_bytes = img.to_rgba8().into_raw();
-    let normalized_payload = normalized_image_payload(width as u64, height as u64, &rgba_bytes);
-    let marker = CopyMarker::from_payload(ContentType::Image, &normalized_payload);
+    let marker =
+        CopyMarker::from_normalized_image_parts(width as usize, height as usize, &rgba_bytes);
     set_copy_marker(&marker_state, &marker);
 
     if let Err(e) = clipboard.set_image(ImageData {
@@ -194,14 +195,6 @@ fn write_image(
     Ok(())
 }
 
-fn normalized_image_payload(width: u64, height: u64, rgba_bytes: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(16 + rgba_bytes.len());
-    payload.extend_from_slice(&width.to_le_bytes());
-    payload.extend_from_slice(&height.to_le_bytes());
-    payload.extend_from_slice(rgba_bytes);
-    payload
-}
-
 fn set_copy_marker(marker_state: &Arc<Mutex<Option<CopyMarker>>>, marker: &CopyMarker) {
     let mut last_copied = safe_lock(marker_state);
     *last_copied = Some(marker.clone());
@@ -215,8 +208,8 @@ fn clear_marker_if_current(marker_state: &Arc<Mutex<Option<CopyMarker>>>, marker
 }
 
 fn schedule_marker_clear(marker_state: Arc<Mutex<Option<CopyMarker>>>, marker: CopyMarker) {
-    thread::spawn(move || {
-        thread::sleep(COPY_MARKER_TTL);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(COPY_MARKER_TTL).await;
         let mut last_copied = safe_lock(&marker_state);
         if last_copied.as_ref() == Some(&marker) {
             *last_copied = None;

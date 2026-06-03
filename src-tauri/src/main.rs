@@ -40,6 +40,7 @@ pub struct AppState {
     pub storage: Arc<Mutex<ClipStorage>>,
     pub monitor: Mutex<Option<ClipboardMonitor>>,
     pub settings: Arc<SettingsManager>,
+    pub settings_write_lock: Mutex<()>,
     pub last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
     pub icon_cache: Arc<TrayIconCache>,
     pub quickbar_foreground_window: window::ForegroundWindowStore,
@@ -126,6 +127,7 @@ fn main() {
                 storage: Arc::new(Mutex::new(storage)),
                 monitor: Mutex::new(None),
                 settings: settings_manager.clone(),
+                settings_write_lock: Mutex::new(()),
                 last_copied_by_us: last_copied_by_us.clone(),
                 icon_cache: icon_cache.clone(),
                 quickbar_foreground_window: quickbar_foreground_window.clone(),
@@ -209,10 +211,13 @@ fn main() {
             let state: tauri::State<AppState> = app_handle.state();
 
             let mut monitor = ClipboardMonitor::new(app_handle.clone(), last_copied_by_us.clone());
-            monitor.start();
-
-            *safe_lock(&state.monitor) = Some(monitor);
-            log::info!("Clipboard monitoring started");
+            match monitor.start() {
+                Ok(()) => {
+                    *safe_lock(&state.monitor) = Some(monitor);
+                    log::info!("Clipboard monitoring started");
+                }
+                Err(e) => log::error!("Failed to start clipboard monitoring: {}", e),
+            }
 
             // Register global shortcuts
             let state: tauri::State<AppState> = app_handle.state();

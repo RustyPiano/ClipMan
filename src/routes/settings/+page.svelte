@@ -60,7 +60,7 @@
     await Promise.all([loadSettings(), loadDataPath()]);
   });
 
-  async function loadSettings() {
+  async function loadSettings({ preserveMessage = false }: { preserveMessage?: boolean } = {}) {
     try {
       loading = true;
       const data = await invoke<Settings>('get_settings');
@@ -83,7 +83,9 @@
     } catch (err) {
       console.error('Failed to load settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      message = `${t.loadSettingsFailed}: ${errorMsg}`;
+      if (!preserveMessage) {
+        message = `${t.loadSettingsFailed}: ${errorMsg}`;
+      }
     } finally {
       loading = false;
     }
@@ -201,10 +203,6 @@
         deleteOld: deleteOldData,
       });
 
-      settings.customDataPath = newDataPath;
-      await saveSettings();
-      await loadDataPath();
-
       message = t.migrationSuccess + ' ✓';
       setTimeout(() => (message = ''), 3000);
     } catch (err) {
@@ -212,6 +210,7 @@
       const errorMsg = err instanceof Error ? err.message : String(err);
       message = `${t.migrationFailed}: ${errorMsg}`;
     } finally {
+      await Promise.all([loadSettings({ preserveMessage: true }), loadDataPath()]);
       changingDataPath = false;
     }
   }
@@ -245,11 +244,20 @@
     </div>
 
     <div class="flex items-center gap-2">
-      <Button variant="outline" onclick={resetSettings} disabled={loading || saving} class="gap-2">
+      <Button
+        variant="outline"
+        onclick={resetSettings}
+        disabled={loading || saving || changingDataPath}
+        class="gap-2"
+      >
         <RotateCcw class="h-4 w-4" />
         {t.reset}
       </Button>
-      <Button onclick={saveSettings} disabled={loading || saving} class="gap-2 min-w-[100px]">
+      <Button
+        onclick={saveSettings}
+        disabled={loading || saving || changingDataPath}
+        class="gap-2 min-w-[100px]"
+      >
         {#if saving}
           <Loader2 class="h-4 w-4 animate-spin" />
           {t.saving}
@@ -338,7 +346,7 @@
         <Button variant="outline" onclick={() => (showMigrationDialog = false)}>
           {t.cancel}
         </Button>
-        <Button onclick={confirmMigration}>{t.startMigration}</Button>
+        <Button onclick={confirmMigration} disabled={changingDataPath}>{t.startMigration}</Button>
       </div>
     </div>
   </div>
