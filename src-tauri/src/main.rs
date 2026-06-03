@@ -12,13 +12,12 @@ mod window;
 
 use clipboard::ClipboardMonitor;
 use commands::{
-    check_clipboard_permission, check_for_updates, clear_all_history, clear_non_pinned_history,
+    check_clipboard_permission, check_for_updates, clear_non_pinned_history,
     copy_clip_to_clipboard_internal, copy_to_system_clipboard, delete_clip,
-    disable_global_shortcut, enable_global_shortcut, get_clipboard_history, get_current_data_path,
-    get_pinned_clips, get_recent_clips, get_settings, hide_quickbar, install_update,
-    migrate_data_location, open_folder, open_settings_window, paste_clip,
-    register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, toggle_pin,
-    update_settings,
+    disable_global_shortcut, enable_global_shortcut, get_current_data_path, get_pinned_clips,
+    get_recent_clips, get_settings, hide_quickbar, install_update, migrate_data_location,
+    open_folder, open_settings_window, paste_clip, register_quickbar_shortcut, reorder_pinned,
+    search_clips, set_clip_label, toggle_pin, update_settings,
 };
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};
@@ -209,7 +208,7 @@ fn main() {
             let app_handle = app.handle().clone();
             let state: tauri::State<AppState> = app_handle.state();
 
-            let monitor = ClipboardMonitor::new(app_handle.clone(), last_copied_by_us.clone());
+            let mut monitor = ClipboardMonitor::new(app_handle.clone(), last_copied_by_us.clone());
             monitor.start();
 
             *safe_lock(&state.monitor) = Some(monitor);
@@ -257,7 +256,6 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_clipboard_history,
             get_recent_clips,
             get_pinned_clips,
             search_clips,
@@ -266,7 +264,6 @@ fn main() {
             get_settings,
             update_settings,
             check_clipboard_permission,
-            clear_all_history,
             clear_non_pinned_history,
             copy_to_system_clipboard,
             paste_clip,

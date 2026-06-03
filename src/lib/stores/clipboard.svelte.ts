@@ -23,8 +23,6 @@ class ClipboardStore {
   autoPaste = $state(true);
   private unlisten?: () => void;
 
-  items = $derived([...this.pinnedItems, ...this.recentItems]);
-
   recentDisplayItems = $derived(
     this.searchQuery.trim()
       ? this.searchResults.filter((item) => !item.isPinned)
@@ -36,9 +34,6 @@ class ClipboardStore {
       ? this.searchResults.filter((item) => item.isPinned).sort(comparePinOrder)
       : this.pinnedItems,
   );
-
-  // Compatibility alias for older UI code that still expects filteredItems.
-  filteredItems = $derived(this.recentDisplayItems);
 
   constructor() {
     this.initialize();
@@ -210,8 +205,7 @@ class ClipboardStore {
       console.log('[SUCCESS] Successfully copied to clipboard');
 
       const t = i18n.t;
-      const contentPreview =
-        item.contentType === 'text' ? t.text : item.contentType === 'image' ? t.image : t.file;
+      const contentPreview = item.contentType === 'image' ? t.image : t.text;
       toastStore.add(`${t.copied} ${contentPreview}`, 'success');
     } catch (error) {
       console.error('[ERROR] Failed to copy to clipboard:', error);

@@ -12,7 +12,6 @@
     Trash2,
     FileText,
     Image as ImageIcon,
-    File,
     Pencil,
     X,
   } from 'lucide-svelte';
@@ -179,12 +178,10 @@
           </span>
         {/if}
 
-        {#if item.contentType === 'text'}
-          <FileText class="h-3.5 w-3.5" />
-        {:else if item.contentType === 'image'}
+        {#if item.contentType === 'image'}
           <ImageIcon class="h-3.5 w-3.5" />
         {:else}
-          <File class="h-3.5 w-3.5" />
+          <FileText class="h-3.5 w-3.5" />
         {/if}
       </div>
 
@@ -239,7 +236,7 @@
           >
             {decodedText}
           </p>
-        {:else if item.contentType === 'image'}
+        {:else}
           <div
             class="group/image relative max-h-20 w-fit overflow-hidden rounded-md border border-border bg-muted/50"
           >
@@ -255,13 +252,6 @@
                 {t.loading}
               </div>
             {/if}
-          </div>
-        {:else}
-          <div
-            class="flex items-center gap-2 rounded bg-muted/50 p-2 text-sm text-muted-foreground"
-          >
-            <File class="h-4 w-4" />
-            <span class="italic">{t.binaryFileData}</span>
           </div>
         {/if}
 

@@ -1,8 +1,12 @@
 use arboard::{Clipboard, ImageData};
 use chrono::Utc;
-use clipboard_master::{CallbackResult, ClipboardHandler, Master};
+use clipboard_master::{CallbackResult, ClipboardHandler, Master, Shutdown};
 use image::GenericImageView;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -19,13 +23,16 @@ extern "system" {
 pub struct ClipboardMonitor {
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+    running: Arc<AtomicBool>,
+    shutdown: Arc<Mutex<Option<Shutdown>>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 struct Handler {
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
-    last_text: Arc<Mutex<String>>,
-    last_image: Arc<Mutex<Option<Vec<u8>>>>,
+    last_text: String,
+    last_image: Option<Vec<u8>>,
 }
 
 impl ClipboardHandler for Handler {
@@ -45,81 +52,27 @@ impl ClipboardHandler for Handler {
 
         // Check for text changes
         if let Ok(text) = clipboard.get_text() {
-            let mut last_text = self.last_text.lock().unwrap();
-            if text != *last_text && !text.is_empty() {
-                if ClipboardMonitor::is_self_copied(
+            if text != self.last_text && !text.is_empty() {
+                ClipboardMonitor::process_text_change(
+                    &self.app_handle,
                     &self.last_copied_by_us,
-                    ContentType::Text,
-                    text.as_bytes(),
-                ) {
-                    log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
-                } else {
-                    log::info!("📋 Text clipboard changed: {} chars", text.len());
-
-                    let item = ClipItem {
-                        id: Uuid::new_v4().to_string(),
-                        content: text.clone().into_bytes(),
-                        thumbnail: None,
-                        content_type: ContentType::Text,
-                        timestamp: Utc::now().timestamp(),
-                        is_pinned: false,
-                        pin_order: None,
-                        label: None,
-                        group_name: None,
-                    };
-
-                    ClipboardMonitor::save_to_storage(&self.app_handle, item);
-                }
-
-                *last_text = text;
+                    &text,
+                );
+                self.last_text = text;
             }
         }
 
         // Check for image changes
         if let Ok(image) = clipboard.get_image() {
-            let image_marker_payload = ClipboardMonitor::normalize_image_payload(&image);
-            let image_bytes = ClipboardMonitor::image_to_bytes(&image);
-            let mut last_image = self.last_image.lock().unwrap();
-
-            if last_image.as_ref() != Some(&image_marker_payload) {
-                if ClipboardMonitor::is_self_copied(
+            let payload = ClipboardMonitor::normalize_image_payload(&image);
+            if self.last_image.as_ref() != Some(&payload) {
+                ClipboardMonitor::process_image_change(
+                    &self.app_handle,
                     &self.last_copied_by_us,
-                    ContentType::Image,
-                    &image_marker_payload,
-                ) {
-                    log::info!(
-                        "⏭️ Skipping self-copied image ({}x{})",
-                        image.width,
-                        image.height
-                    );
-                } else {
-                    log::info!("Image clipboard changed: {} bytes", image_bytes.len());
-
-                    // Spawn async task for image processing to avoid blocking
-                    let app_handle = self.app_handle.clone();
-                    let image_bytes_clone = image_bytes.clone();
-
-                    tauri::async_runtime::spawn(async move {
-                        let content = ClipboardMonitor::process_full_image(&image_bytes_clone);
-                        let thumbnail = Some(ClipboardMonitor::create_thumbnail(&content));
-
-                        let item = ClipItem {
-                            id: Uuid::new_v4().to_string(),
-                            content,
-                            thumbnail,
-                            content_type: ContentType::Image,
-                            timestamp: Utc::now().timestamp(),
-                            is_pinned: false,
-                            pin_order: None,
-                            label: None,
-                            group_name: None,
-                        };
-
-                        ClipboardMonitor::save_to_storage(&app_handle, item);
-                    });
-                }
-
-                *last_image = Some(image_marker_payload);
+                    &image,
+                    &payload,
+                );
+                self.last_image = Some(payload);
             }
         }
 
@@ -137,44 +90,72 @@ impl ClipboardMonitor {
         Self {
             app_handle,
             last_copied_by_us,
+            running: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(Mutex::new(None)),
+            handle: None,
         }
     }
 
-    pub fn start(&self) {
+    pub fn start(&mut self) {
+        self.running.store(true, Ordering::SeqCst);
         let app_handle = self.app_handle.clone();
         let last_copied_by_us = self.last_copied_by_us.clone();
+        let running = self.running.clone();
+        let shutdown_slot = self.shutdown.clone();
 
         // Start event-driven monitoring thread
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             log::info!("Clipboard monitoring thread started (event-driven)");
 
             let handler = Handler {
                 app_handle: app_handle.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
-                last_text: Arc::new(Mutex::new(String::new())),
-                last_image: Arc::new(Mutex::new(None)),
+                last_text: String::new(),
+                last_image: None,
             };
 
             // Start the clipboard master - this blocks until the application exits
             match Master::new(handler) {
                 Ok(mut master) => {
+                    // Hand the shutdown channel to the monitor so stop() can end
+                    // run() from another thread. stop() is only ever called once
+                    // the thread is up (during migration), so there is no
+                    // start/stop startup race to guard against here.
+                    *crate::safe_lock(&shutdown_slot) = Some(master.shutdown_channel());
                     if let Err(e) = master.run() {
                         log::error!("Clipboard master failed: {}", e);
                         log::warn!("Falling back to polling mode...");
-                        Self::start_polling(app_handle, last_copied_by_us);
+                        Self::start_polling(app_handle, last_copied_by_us, running);
                     }
                 }
                 Err(e) => {
                     log::error!("Failed to create clipboard master: {}", e);
                     log::warn!("Falling back to polling mode...");
-                    Self::start_polling(app_handle, last_copied_by_us);
+                    Self::start_polling(app_handle, last_copied_by_us, running);
                 }
             }
         });
+
+        self.handle = Some(handle);
+    }
+
+    /// Stop the monitor and wait for its thread to exit.
+    pub fn stop(mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(shutdown) = crate::safe_lock(&self.shutdown).take() {
+            shutdown.signal();
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 
     // Fallback polling implementation
-    fn start_polling(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>) {
+    fn start_polling(
+        app_handle: AppHandle,
+        last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+        running: Arc<AtomicBool>,
+    ) {
         use std::thread;
         use std::time::Duration;
 
@@ -190,7 +171,7 @@ impl ClipboardMonitor {
         let mut last_image: Option<Vec<u8>> = None;
         let mut last_ignored_concealed = false;
 
-        loop {
+        while running.load(Ordering::SeqCst) {
             if Self::should_ignore_current_clipboard(&app_handle) {
                 if !last_ignored_concealed {
                     log::info!(
@@ -207,80 +188,84 @@ impl ClipboardMonitor {
             // Check for text changes
             if let Ok(text) = clipboard.get_text() {
                 if text != last_text && !text.is_empty() {
-                    if Self::is_self_copied(&last_copied_by_us, ContentType::Text, text.as_bytes())
-                    {
-                        log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
-                    } else {
-                        log::info!("📋 Text clipboard changed: {} chars", text.len());
-
-                        let item = ClipItem {
-                            id: Uuid::new_v4().to_string(),
-                            content: text.clone().into_bytes(),
-                            thumbnail: None,
-                            content_type: ContentType::Text,
-                            timestamp: Utc::now().timestamp(),
-                            is_pinned: false,
-                            pin_order: None,
-                            label: None,
-                            group_name: None,
-                        };
-
-                        Self::save_to_storage(&app_handle, item);
-                    }
-
+                    Self::process_text_change(&app_handle, &last_copied_by_us, &text);
                     last_text = text;
                 }
             }
 
             // Check for image changes
             if let Ok(image) = clipboard.get_image() {
-                let image_marker_payload = Self::normalize_image_payload(&image);
-                let image_bytes = Self::image_to_bytes(&image);
-
-                if last_image.as_ref() != Some(&image_marker_payload) {
-                    if Self::is_self_copied(
-                        &last_copied_by_us,
-                        ContentType::Image,
-                        &image_marker_payload,
-                    ) {
-                        log::info!(
-                            "⏭️ Skipping self-copied image ({}x{})",
-                            image.width,
-                            image.height
-                        );
-                    } else {
-                        log::info!("Image clipboard changed: {} bytes", image_bytes.len());
-
-                        // Spawn async task for image processing
-                        let app_handle_clone = app_handle.clone();
-                        let image_bytes_clone = image_bytes.clone();
-
-                        tauri::async_runtime::spawn(async move {
-                            let content = Self::process_full_image(&image_bytes_clone);
-                            let thumbnail = Some(Self::create_thumbnail(&content));
-
-                            let item = ClipItem {
-                                id: Uuid::new_v4().to_string(),
-                                content,
-                                thumbnail,
-                                content_type: ContentType::Image,
-                                timestamp: Utc::now().timestamp(),
-                                is_pinned: false,
-                                pin_order: None,
-                                label: None,
-                                group_name: None,
-                            };
-
-                            Self::save_to_storage(&app_handle_clone, item);
-                        });
-                    }
-
-                    last_image = Some(image_marker_payload);
+                let payload = Self::normalize_image_payload(&image);
+                if last_image.as_ref() != Some(&payload) {
+                    Self::process_image_change(&app_handle, &last_copied_by_us, &image, &payload);
+                    last_image = Some(payload);
                 }
             }
 
             thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    fn process_text_change(
+        app_handle: &AppHandle,
+        last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
+        text: &str,
+    ) {
+        if Self::is_self_copied(last_copied_by_us, ContentType::Text, text.as_bytes()) {
+            log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
+            return;
+        }
+
+        log::info!("📋 Text clipboard changed: {} chars", text.len());
+        let item = ClipItem {
+            id: Uuid::new_v4().to_string(),
+            content: text.as_bytes().to_vec(),
+            thumbnail: None,
+            content_type: ContentType::Text,
+            timestamp: Utc::now().timestamp(),
+            is_pinned: false,
+            pin_order: None,
+            label: None,
+            group_name: None,
+        };
+        Self::save_to_storage(app_handle, item);
+    }
+
+    fn process_image_change(
+        app_handle: &AppHandle,
+        last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
+        image: &ImageData,
+        payload: &[u8],
+    ) {
+        if Self::is_self_copied(last_copied_by_us, ContentType::Image, payload) {
+            log::info!(
+                "⏭️ Skipping self-copied image ({}x{})",
+                image.width,
+                image.height
+            );
+            return;
+        }
+
+        let image_bytes = Self::image_to_bytes(image);
+        log::info!("Image clipboard changed: {} bytes", image_bytes.len());
+
+        let app_handle = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            let content = Self::process_full_image(&image_bytes);
+            let thumbnail = Some(Self::create_thumbnail(&content));
+            let item = ClipItem {
+                id: Uuid::new_v4().to_string(),
+                content,
+                thumbnail,
+                content_type: ContentType::Image,
+                timestamp: Utc::now().timestamp(),
+                is_pinned: false,
+                pin_order: None,
+                label: None,
+                group_name: None,
+            };
+            Self::save_to_storage(&app_handle, item);
+        });
     }
 
     fn should_ignore_current_clipboard(app_handle: &AppHandle) -> bool {

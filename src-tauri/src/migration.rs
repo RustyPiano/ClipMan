@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const DATA_FILES: [&str; 3] = ["clipman.db", "clipman.db-shm", "clipman.db-wal"];
+
 /// Upgrade the clipboard database to the v1 plaintext schema marker.
 pub fn upgrade_clip_database_to_v1(
     conn: &rusqlite::Connection,
@@ -56,15 +58,8 @@ pub fn migrate_data(from: &Path, to: &Path, delete_old: bool) -> Result<(), Stri
         .map_err(|e| format!("Destination directory is not writable: {}", e))?;
     fs::remove_file(&test_file).map_err(|e| format!("Failed to remove test file: {}", e))?;
 
-    // Files to migrate
-    let files_to_migrate = vec![
-        "clipman.db",
-        "clipman.db-shm", // SQLite shared memory (if exists)
-        "clipman.db-wal", // SQLite write-ahead log (if exists)
-    ];
-
     // Copy files
-    for filename in &files_to_migrate {
+    for filename in DATA_FILES {
         let source_file = from.join(filename);
         if source_file.exists() {
             let dest_file = to.join(filename);
@@ -103,21 +98,25 @@ pub fn migrate_data(from: &Path, to: &Path, delete_old: bool) -> Result<(), Stri
     // Delete old files if requested
     if delete_old {
         log::info!("Deleting old data files from {:?}", from);
-        for filename in &files_to_migrate {
-            let old_file = from.join(filename);
-            if old_file.exists() {
-                fs::remove_file(&old_file)
-                    .map_err(|e| format!("Failed to remove old file {}: {}", filename, e))?;
-            }
-        }
-
-        // Try to remove old directory if it's empty
-        if let Err(e) = fs::remove_dir(from) {
-            log::warn!("Could not remove old directory (may not be empty): {}", e);
-        }
+        remove_data_files(from);
     }
 
     Ok(())
+}
+
+/// Remove ClipMan data files (and the directory if it becomes empty).
+pub fn remove_data_files(dir: &Path) {
+    for filename in DATA_FILES {
+        let path = dir.join(filename);
+        if path.exists() {
+            if let Err(e) = fs::remove_file(&path) {
+                log::warn!("Failed to remove old file {}: {}", filename, e);
+            }
+        }
+    }
+    if let Err(e) = fs::remove_dir(dir) {
+        log::warn!("Could not remove old directory (may not be empty): {}", e);
+    }
 }
 
 /// Get the effective data directory based on settings

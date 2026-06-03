@@ -8,9 +8,6 @@ use std::path::{Path, PathBuf};
 pub enum ContentType {
     Text,
     Image,
-    File,
-    Html,
-    Rtf,
 }
 
 impl ContentType {
@@ -18,18 +15,12 @@ impl ContentType {
         match self {
             ContentType::Text => "text",
             ContentType::Image => "image",
-            ContentType::File => "file",
-            ContentType::Html => "html",
-            ContentType::Rtf => "rtf",
         }
     }
 
     fn from_db_value(value: &str) -> Self {
         match value {
             "image" => ContentType::Image,
-            "file" => ContentType::File,
-            "html" => ContentType::Html,
-            "rtf" => ContentType::Rtf,
             _ => ContentType::Text,
         }
     }
@@ -142,7 +133,7 @@ impl ClipStorage {
                 "SELECT id FROM clips
                  WHERE content_hash = ?1 AND content_type = ?2
                  ORDER BY timestamp DESC
-                 LIMIT 100",
+                 LIMIT 1",
                 params![content_hash, item.content_type.as_db_value()],
                 |row| row.get(0),
             )
@@ -206,16 +197,6 @@ impl ClipStorage {
 
         let items = stmt.query_map([], Self::clip_from_row)?;
         items.collect()
-    }
-
-    /// Deprecated compatibility wrapper. New code should call `get_recent_clips`.
-    pub fn get_recent(&self, limit: usize) -> Result<Vec<ClipItem>> {
-        self.get_recent_clips(limit)
-    }
-
-    /// Deprecated compatibility wrapper. New code should call `get_pinned_clips`.
-    pub fn get_pinned(&self) -> Result<Vec<ClipItem>> {
-        self.get_pinned_clips()
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<ClipItem>> {
@@ -481,7 +462,7 @@ impl ClipStorage {
             "SELECT {CLIP_COLUMNS}
              FROM clips
              WHERE (
-                content_type IN ('text', 'file', 'html', 'rtf')
+                content_type = 'text'
                 AND CAST(content AS TEXT) LIKE ?1 ESCAPE '\\'
              )
              OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
@@ -599,9 +580,7 @@ fn hash_bytes(bytes: &[u8]) -> String {
 
 fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
     match content_type {
-        ContentType::Text | ContentType::File | ContentType::Html | ContentType::Rtf => {
-            String::from_utf8_lossy(content).into_owned()
-        }
+        ContentType::Text => String::from_utf8_lossy(content).into_owned(),
         ContentType::Image => String::new(),
     }
 }

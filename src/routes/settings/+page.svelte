@@ -25,7 +25,6 @@
         ignoreConcealed: true,
         pinnedShortcut: null,
         maxHistoryItems: 100,
-        autoCleanup: true,
         trayTextLength: 50,
         maxPinnedInTray: 5,
         maxRecentInTray: 20,
@@ -107,7 +106,6 @@
                 ignoreConcealed: true,
                 pinnedShortcut: null,
                 maxHistoryItems: 100,
-                autoCleanup: true,
                 trayTextLength: 50,
                 maxPinnedInTray: 5,
                 maxRecentInTray: 20,
@@ -134,7 +132,7 @@
             }
         } catch (err) {
             console.error("Check update failed:", err);
-            updateMessage = "检查更新失败";
+            updateMessage = t.checkUpdateFailed;
         } finally {
             checkingUpdate = false;
         }
@@ -145,12 +143,12 @@
 
         try {
             installingUpdate = true;
-            updateMessage = "正在下载并安装更新...";
+            updateMessage = t.downloadingUpdate;
             await invoke("install_update");
-            updateMessage = "更新安装成功，请重启应用";
+            updateMessage = t.updateInstalled;
         } catch (err) {
             console.error("Install update failed:", err);
-            updateMessage = "安装更新失败: " + String(err);
+            updateMessage = `${t.installUpdateFailed}: ${String(err)}`;
         } finally {
             installingUpdate = false;
         }
@@ -161,7 +159,7 @@
             const selected = await open({
                 directory: true,
                 multiple: false,
-                title: "选择新的数据存储位置",
+                title: t.selectDataLocation,
             });
 
             if (selected && typeof selected === "string") {
@@ -170,7 +168,7 @@
             }
         } catch (err) {
             console.error("Failed to select directory:", err);
-            message = "选择目录失败";
+            message = t.selectDirectoryFailed;
         }
     }
 
@@ -188,12 +186,12 @@
             await saveSettings();
             await loadDataPath();
 
-            message = "数据迁移成功！";
+            message = t.migrationSuccess + " ✓";
             setTimeout(() => (message = ""), 3000);
         } catch (err) {
             console.error("Migration failed:", err);
             const errorMsg = err instanceof Error ? err.message : String(err);
-            message = "迁移失败: " + errorMsg;
+            message = `${t.migrationFailed}: ${errorMsg}`;
         } finally {
             changingDataPath = false;
         }

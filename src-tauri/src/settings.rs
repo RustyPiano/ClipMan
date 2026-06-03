@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri_plugin_store::StoreExt;
 use tauri::AppHandle;
+use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,7 +11,6 @@ pub struct Settings {
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
     pub max_history_items: usize,
-    pub auto_cleanup: bool,
     pub tray_text_length: usize,
     pub max_pinned_in_tray: usize,
     pub max_recent_in_tray: usize,
@@ -28,7 +27,6 @@ impl Default for Settings {
             ignore_concealed: true,
             pinned_shortcut: None,
             max_history_items: 100,
-            auto_cleanup: true,
             tray_text_length: 50,
             max_pinned_in_tray: 5,
             max_recent_in_tray: 20,
@@ -51,105 +49,117 @@ impl SettingsManager {
     }
 
     pub fn load(&self, app: &AppHandle) -> Result<(), String> {
-        let store = app.store("settings.json")
+        let store = app
+            .store("settings.json")
             .map_err(|e| format!("Failed to access store: {}", e))?;
+        let mut settings = self.settings.lock().unwrap();
 
-        // 尝试加载设置
-        if let Some(shortcut) = store.get("global_shortcut") {
-            if let Some(s) = shortcut.as_str() {
-                self.settings.lock().unwrap().global_shortcut = s.to_string();
-            }
+        if let Some(v) = store
+            .get("global_shortcut")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            settings.global_shortcut = v;
         }
 
-        if let Some(auto_paste) = store.get("auto_paste") {
-            if let Some(b) = auto_paste.as_bool() {
-                self.settings.lock().unwrap().auto_paste = b;
-            }
+        if let Some(v) = store.get("auto_paste").and_then(|v| v.as_bool()) {
+            settings.auto_paste = v;
         }
 
-        if let Some(ignore_concealed) = store.get("ignore_concealed") {
-            if let Some(b) = ignore_concealed.as_bool() {
-                self.settings.lock().unwrap().ignore_concealed = b;
-            }
+        if let Some(v) = store.get("ignore_concealed").and_then(|v| v.as_bool()) {
+            settings.ignore_concealed = v;
         }
 
-        if let Some(pinned_shortcut) = store.get("pinned_shortcut") {
-            let mut settings = self.settings.lock().unwrap();
-            settings.pinned_shortcut = pinned_shortcut.as_str().map(|s| s.to_string());
+        if let Some(v) = store.get("pinned_shortcut") {
+            settings.pinned_shortcut = v.as_str().map(String::from);
         }
 
-        if let Some(max_items) = store.get("max_history_items") {
-            if let Some(n) = max_items.as_u64() {
-                self.settings.lock().unwrap().max_history_items = n as usize;
-            }
+        if let Some(v) = store.get("max_history_items").and_then(|v| v.as_u64()) {
+            settings.max_history_items = v as usize;
         }
 
-        if let Some(auto_cleanup) = store.get("auto_cleanup") {
-            if let Some(b) = auto_cleanup.as_bool() {
-                self.settings.lock().unwrap().auto_cleanup = b;
-            }
+        if let Some(v) = store.get("tray_text_length").and_then(|v| v.as_u64()) {
+            settings.tray_text_length = v as usize;
         }
 
-        if let Some(tray_text_length) = store.get("tray_text_length") {
-            if let Some(n) = tray_text_length.as_u64() {
-                self.settings.lock().unwrap().tray_text_length = n as usize;
-            }
+        if let Some(v) = store.get("max_pinned_in_tray").and_then(|v| v.as_u64()) {
+            settings.max_pinned_in_tray = v as usize;
         }
 
-        if let Some(max_pinned) = store.get("max_pinned_in_tray") {
-            if let Some(n) = max_pinned.as_u64() {
-                self.settings.lock().unwrap().max_pinned_in_tray = n as usize;
-            }
+        if let Some(v) = store.get("max_recent_in_tray").and_then(|v| v.as_u64()) {
+            settings.max_recent_in_tray = v as usize;
         }
 
-        if let Some(max_recent) = store.get("max_recent_in_tray") {
-            if let Some(n) = max_recent.as_u64() {
-                self.settings.lock().unwrap().max_recent_in_tray = n as usize;
-            }
+        if let Some(v) = store
+            .get("custom_data_path")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            settings.custom_data_path = Some(v);
         }
 
-        if let Some(custom_path) = store.get("custom_data_path") {
-            if let Some(path) = custom_path.as_str() {
-                self.settings.lock().unwrap().custom_data_path = Some(path.to_string());
-            }
+        if let Some(v) = store.get("enable_autostart").and_then(|v| v.as_bool()) {
+            settings.enable_autostart = v;
         }
 
-        if let Some(autostart) = store.get("enable_autostart") {
-            if let Some(enabled) = autostart.as_bool() {
-                self.settings.lock().unwrap().enable_autostart = enabled;
-            }
+        if let Some(v) = store
+            .get("locale")
+            .and_then(|v| v.as_str().map(String::from))
+        {
+            settings.locale = v;
         }
 
-        if let Some(locale) = store.get("locale") {
-            if let Some(l) = locale.as_str() {
-                self.settings.lock().unwrap().locale = l.to_string();
-            }
-        }
-
-        log::info!("Settings loaded: {:?}", self.settings.lock().unwrap());
+        log::info!("Settings loaded: {:?}", *settings);
         Ok(())
     }
 
     pub fn save(&self, app: &AppHandle) -> Result<(), String> {
-        let store = app.store("settings.json")
+        let store = app
+            .store("settings.json")
             .map_err(|e| format!("Failed to access store: {}", e))?;
 
         let settings = self.settings.lock().unwrap();
 
-        store.set("global_shortcut", serde_json::json!(settings.global_shortcut));
+        store.set(
+            "global_shortcut",
+            serde_json::json!(settings.global_shortcut),
+        );
         store.set("auto_paste", serde_json::json!(settings.auto_paste));
-        store.set("ignore_concealed", serde_json::json!(settings.ignore_concealed));
-        store.set("pinned_shortcut", serde_json::json!(settings.pinned_shortcut));
-        store.set("max_history_items", serde_json::json!(settings.max_history_items));
-        store.set("auto_cleanup", serde_json::json!(settings.auto_cleanup));
-        store.set("tray_text_length", serde_json::json!(settings.tray_text_length));
-        store.set("max_pinned_in_tray", serde_json::json!(settings.max_pinned_in_tray));
-        store.set("max_recent_in_tray", serde_json::json!(settings.max_recent_in_tray));
-        store.set("custom_data_path", serde_json::json!(settings.custom_data_path));
-        store.set("enable_autostart", serde_json::json!(settings.enable_autostart));
+        store.set(
+            "ignore_concealed",
+            serde_json::json!(settings.ignore_concealed),
+        );
+        store.set(
+            "pinned_shortcut",
+            serde_json::json!(settings.pinned_shortcut),
+        );
+        store.set(
+            "max_history_items",
+            serde_json::json!(settings.max_history_items),
+        );
+        store.set(
+            "tray_text_length",
+            serde_json::json!(settings.tray_text_length),
+        );
+        store.set(
+            "max_pinned_in_tray",
+            serde_json::json!(settings.max_pinned_in_tray),
+        );
+        store.set(
+            "max_recent_in_tray",
+            serde_json::json!(settings.max_recent_in_tray),
+        );
+        store.set(
+            "custom_data_path",
+            serde_json::json!(settings.custom_data_path),
+        );
+        store.set(
+            "enable_autostart",
+            serde_json::json!(settings.enable_autostart),
+        );
         store.set("locale", serde_json::json!(settings.locale));
 
-        store.save().map_err(|e| format!("Failed to save store: {}", e))?;
+        store
+            .save()
+            .map_err(|e| format!("Failed to save store: {}", e))?;
 
         log::info!("Settings saved: {:?}", *settings);
         Ok(())

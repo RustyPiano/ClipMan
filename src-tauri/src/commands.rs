@@ -4,26 +4,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;
-use crate::storage::{ContentType, CopyMarker, FrontendClipItem};
+use crate::storage::{ContentType, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, safe_lock, AppState};
-
-#[tauri::command]
-pub async fn get_clipboard_history(
-    state: State<'_, AppState>,
-    limit: Option<usize>,
-) -> Result<Vec<FrontendClipItem>, String> {
-    let storage = state.storage.clone();
-    let limit = limit.unwrap_or(100);
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        let items = storage.get_recent_clips(limit).map_err(|e| e.to_string())?;
-        Ok(items.into_iter().map(FrontendClipItem::from).collect())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
 
 #[tauri::command]
 pub async fn get_recent_clips(
@@ -131,28 +114,6 @@ pub async fn check_clipboard_permission() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn clear_all_history(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    log::info!("Clearing all clipboard history (user requested)");
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        storage.clear_all().map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    state.icon_cache.clear();
-    update_tray_menu(&app);
-
-    if let Err(e) = app.emit("history-cleared", ()) {
-        log::error!("Failed to emit history-cleared event: {}", e);
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn clear_non_pinned_history(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -178,232 +139,44 @@ pub async fn clear_non_pinned_history(
     Ok(())
 }
 
-/// Copy a clip item to system clipboard (unified function)
+/// Copy a clip to the system clipboard (used by the tray menu and the in-window
+/// Copy button). Reuses the paste module's clipboard writer so there is a single
+/// implementation of "touch timestamp + emit + write clipboard".
 pub async fn copy_clip_to_clipboard_internal(
     app: &AppHandle,
     clip_id: &str,
     show_notification: bool,
 ) -> Result<(), String> {
-    use crate::storage::FrontendClipItem;
-    use arboard::{Clipboard, ImageData};
-    use chrono::Utc;
-    use image::GenericImageView;
-    use std::borrow::Cow;
-
     let state = app.state::<AppState>();
-    let storage = state.storage.clone();
-    let clip_id_for_fetch = clip_id.to_string();
+    let item =
+        crate::paste::fetch_clip_and_touch_timestamp(app, state.inner(), clip_id.to_string())
+            .await?;
 
-    // Fetch item using get_by_id for efficiency
-    let item = tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        storage.get_by_id(&clip_id_for_fetch)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "Clip not found".to_string())?;
+    crate::paste::write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone())?;
 
-    // Update timestamp to move item to top of recent list
-    let new_timestamp = Utc::now().timestamp();
-    let storage = state.storage.clone();
-    let clip_id_for_update = clip_id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
-        storage.update_timestamp(&clip_id_for_update, new_timestamp)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-
-    // Emit event to notify frontend about the timestamp update
-    let mut updated_item = item.clone();
-    updated_item.timestamp = new_timestamp;
-    let frontend_item = FrontendClipItem::from(updated_item);
-    if let Err(e) = app.emit("clipboard-changed", &frontend_item) {
-        log::error!("Failed to emit clipboard-changed event: {}", e);
-    }
-
-    // Update tray menu to reflect new order
-    update_tray_menu(app);
-
-    // Copy to system clipboard
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-
-    match item.content_type {
-        ContentType::Text => {
-            let text = String::from_utf8_lossy(&item.content).to_string();
-            let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
-
-            // Mark as self-copied to prevent re-capture
-            {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(marker.clone());
-            }
-
-            if let Err(e) = clipboard.set_text(text.clone()) {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                }
-                return Err(e.to_string());
-            }
-            log::info!("✅ Copied text to clipboard: {} chars", text.len());
-
-            if show_notification {
-                #[cfg(not(target_os = "linux"))]
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("已复制")
-                    .body("文本已复制到剪贴板")
-                    .show();
-            }
-
-            // Clear marker after 2 seconds
-            let last_copied_by_us = state.last_copied_by_us.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let mut last_copied = safe_lock(&last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                    log::debug!("🧹 Cleared self-copy marker");
-                }
-            });
-        }
-        ContentType::Image => {
-            let img = image::load_from_memory(&item.content)
-                .map_err(|e| format!("Failed to decode image: {}", e))?;
-
-            let (width, height) = img.dimensions();
-            let rgba_bytes = img.to_rgba8().into_raw();
-            let mut marker_payload = Vec::with_capacity(16 + rgba_bytes.len());
-            marker_payload.extend_from_slice(&(width as u64).to_le_bytes());
-            marker_payload.extend_from_slice(&(height as u64).to_le_bytes());
-            marker_payload.extend_from_slice(&rgba_bytes);
-            let marker = CopyMarker::from_payload(ContentType::Image, &marker_payload);
-
-            {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(marker.clone());
-            }
-
-            let image_data = ImageData {
-                width: width as usize,
-                height: height as usize,
-                bytes: Cow::from(rgba_bytes),
-            };
-
-            if let Err(e) = clipboard.set_image(image_data) {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                }
-                return Err(e.to_string());
-            }
-
-            log::info!("✅ Copied image to clipboard ({}x{})", width, height);
-
-            if show_notification {
-                #[cfg(not(target_os = "linux"))]
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("已复制")
-                    .body("图片已复制到剪贴板")
-                    .show();
-            }
-
-            let last_copied_by_us = state.last_copied_by_us.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let mut last_copied = safe_lock(&last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                    log::debug!("🧹 Cleared self-copy marker");
-                }
-            });
-        }
-        ContentType::File => {
-            let path = String::from_utf8_lossy(&item.content).to_string();
-            let marker = CopyMarker::from_payload(ContentType::Text, path.as_bytes());
-
-            {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(marker.clone());
-            }
-
-            if let Err(e) = clipboard.set_text(path.clone()) {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                }
-                return Err(e.to_string());
-            }
-            log::info!("✅ Copied file path to clipboard: {}", path);
-
-            if show_notification {
-                #[cfg(not(target_os = "linux"))]
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("已复制")
-                    .body("文件路径已复制到剪贴板")
-                    .show();
-            }
-
-            let last_copied_by_us = state.last_copied_by_us.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let mut last_copied = safe_lock(&last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                    log::debug!("🧹 Cleared self-copy marker");
-                }
-            });
-        }
-        ContentType::Html | ContentType::Rtf => {
-            let text = String::from_utf8_lossy(&item.content).to_string();
-            let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
-
-            {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(marker.clone());
-            }
-
-            if let Err(e) = clipboard.set_text(text) {
-                let mut last_copied = safe_lock(&state.last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                }
-                return Err(e.to_string());
-            }
-            log::info!("✅ Copied rich text to clipboard as plain text");
-
-            if show_notification {
-                #[cfg(not(target_os = "linux"))]
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("已复制")
-                    .body("富文本已复制到剪贴板")
-                    .show();
-            }
-
-            let last_copied_by_us = state.last_copied_by_us.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let mut last_copied = safe_lock(&last_copied_by_us);
-                if last_copied.as_ref() == Some(&marker) {
-                    *last_copied = None;
-                    log::debug!("🧹 Cleared self-copy marker");
-                }
-            });
-        }
+    if show_notification {
+        notify_copied(app, &item.content_type);
     }
 
     Ok(())
 }
+
+#[cfg(not(target_os = "linux"))]
+fn notify_copied(app: &AppHandle, content_type: &ContentType) {
+    let body = match content_type {
+        ContentType::Text => "文本已复制到剪贴板",
+        ContentType::Image => "图片已复制到剪贴板",
+    };
+    let _ = app
+        .notification()
+        .builder()
+        .title("已复制")
+        .body(body)
+        .show();
+}
+
+#[cfg(target_os = "linux")]
+fn notify_copied(_app: &AppHandle, _content_type: &ContentType) {}
 
 #[tauri::command]
 pub async fn copy_to_system_clipboard(
@@ -951,6 +724,7 @@ pub async fn migrate_data_location(
     delete_old: bool,
 ) -> Result<(), String> {
     use crate::clipboard::ClipboardMonitor;
+    use crate::storage::ClipStorage;
 
     log::info!(
         "Starting data migration to: {}, delete_old: {}",
@@ -958,46 +732,54 @@ pub async fn migrate_data_location(
         delete_old
     );
 
-    // Stop clipboard monitoring during migration
-    {
-        let mut monitor_guard = state.monitor.lock().unwrap();
-        if let Some(monitor) = monitor_guard.take() {
-            drop(monitor);
-            log::info!("Clipboard monitoring stopped for migration");
-        }
+    // Stop clipboard monitoring so nothing writes during the copy.
+    if let Some(monitor) = safe_lock(&state.monitor).take() {
+        monitor.stop();
+        log::info!("Clipboard monitoring stopped for migration");
     }
 
-    // Get current and new paths
+    // Resolve old / new paths.
     let default_path = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
     let settings = state.settings.get();
-    let custom_path = settings.custom_data_path.clone();
-    let old_path = migration::get_data_directory(default_path.clone(), custom_path);
+    let old_path = migration::get_data_directory(default_path, settings.custom_data_path.clone());
     let new_path_buf = std::path::PathBuf::from(&new_path);
 
-    // Perform migration
-    migration::migrate_data(&old_path, &new_path_buf, delete_old)?;
+    // Copy only (deletion happens after we close the old connection).
+    migration::migrate_data(&old_path, &new_path_buf, false)?;
 
-    // Update settings with new path
+    // Persist the new location.
     let mut new_settings = settings.clone();
     new_settings.custom_data_path = Some(new_path.clone());
-
-    state.settings.set(new_settings.clone());
+    state.settings.set(new_settings);
     state
         .settings
         .save(&app)
         .map_err(|e| format!("Failed to save settings: {}", e))?;
 
+    // Reopen storage at the new path so subsequent writes go there immediately.
+    let new_db_path = new_path_buf.join("clipman.db");
+    let new_db_path = new_db_path
+        .to_str()
+        .ok_or_else(|| "Invalid new database path".to_string())?;
+    let new_storage = ClipStorage::new(new_db_path).map_err(|e| e.to_string())?;
+    *safe_lock(&state.storage) = new_storage;
+
+    // Now it is safe to delete the old files; Windows refuses deleting open DBs.
+    if delete_old {
+        migration::remove_data_files(&old_path);
+    }
+
     log::info!("Data migration completed successfully");
 
-    // Restart clipboard monitoring
-    let monitor = ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
+    // Restart clipboard monitoring against the new storage.
+    let mut monitor = ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
     monitor.start();
-    *state.monitor.lock().unwrap() = Some(monitor);
+    *safe_lock(&state.monitor) = Some(monitor);
     log::info!("Clipboard monitoring restarted after migration");
 
+    crate::tray::update_tray_menu(&app);
     Ok(())
 }

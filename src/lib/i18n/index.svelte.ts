@@ -31,9 +31,6 @@ export interface Translations {
   // Content types
   text: string;
   image: string;
-  file: string;
-  filePath: string;
-  richText: string;
 
   // Time
   justNow: string;
@@ -102,12 +99,16 @@ export interface Translations {
   currentLocation: string;
   changeLocation: string;
   openFolder: string;
+  selectDataLocation: string;
+  selectDirectoryFailed: string;
 
   // Migration dialog
   confirmMigration: string;
   migratingTo: string;
   deleteOldData: string;
   startMigration: string;
+  migrationSuccess: string;
+  migrationFailed: string;
 
   // About
   version: string;
@@ -117,13 +118,10 @@ export interface Translations {
   noUpdateAvailable: string;
   installUpdate: string;
   installing: string;
-
-  // Notifications
-  copiedToClipboard: string;
-  textCopied: string;
-  imageCopied: string;
-  filePathCopied: string;
-  richTextCopied: string;
+  checkUpdateFailed: string;
+  downloadingUpdate: string;
+  updateInstalled: string;
+  installUpdateFailed: string;
 
   // Confirmations
   confirmClearHistory: string;
@@ -147,7 +145,6 @@ export interface Translations {
 
   // Misc
   switchTheme: string;
-  binaryFileData: string;
   decodeFailed: string;
   emptyContent: string;
 
@@ -186,9 +183,6 @@ const zh: Translations = {
   // Content types
   text: '文本',
   image: '图片',
-  file: '文件',
-  filePath: '文件路径',
-  richText: '富文本',
 
   // Time
   justNow: '刚刚',
@@ -257,12 +251,16 @@ const zh: Translations = {
   currentLocation: '当前位置',
   changeLocation: '更改位置',
   openFolder: '打开文件夹',
+  selectDataLocation: '选择新的数据存储位置',
+  selectDirectoryFailed: '选择目录失败',
 
   // Migration dialog
   confirmMigration: '确认迁移数据',
   migratingTo: '即将把数据迁移到:',
   deleteOldData: '迁移后删除原位置数据',
   startMigration: '开始迁移',
+  migrationSuccess: '数据迁移成功！',
+  migrationFailed: '迁移失败',
 
   // About
   version: '版本',
@@ -272,13 +270,10 @@ const zh: Translations = {
   noUpdateAvailable: '当前已是最新版本',
   installUpdate: '安装更新',
   installing: '安装中',
-
-  // Notifications
-  copiedToClipboard: '已复制到剪贴板',
-  textCopied: '文本已复制到剪贴板',
-  imageCopied: '图片已复制到剪贴板',
-  filePathCopied: '文件路径已复制到剪贴板',
-  richTextCopied: '富文本已复制到剪贴板',
+  checkUpdateFailed: '检查更新失败',
+  downloadingUpdate: '正在下载并安装更新...',
+  updateInstalled: '更新安装成功，请重启应用',
+  installUpdateFailed: '安装更新失败',
 
   // Confirmations
   confirmClearHistory: '确定要清除所有非置顶的历史记录吗？',
@@ -302,7 +297,6 @@ const zh: Translations = {
 
   // Misc
   switchTheme: '切换主题',
-  binaryFileData: '[二进制文件数据]',
   decodeFailed: '[解码失败]',
   emptyContent: '[内容为空]',
 
@@ -341,9 +335,6 @@ const en: Translations = {
   // Content types
   text: 'Text',
   image: 'Image',
-  file: 'File',
-  filePath: 'File path',
-  richText: 'Rich text',
 
   // Time
   justNow: 'Just now',
@@ -414,12 +405,16 @@ const en: Translations = {
   currentLocation: 'Current location',
   changeLocation: 'Change location',
   openFolder: 'Open folder',
+  selectDataLocation: 'Select new data location',
+  selectDirectoryFailed: 'Failed to select directory',
 
   // Migration dialog
   confirmMigration: 'Confirm data migration',
   migratingTo: 'Data will be migrated to:',
   deleteOldData: 'Delete data from old location after migration',
   startMigration: 'Start migration',
+  migrationSuccess: 'Data migrated successfully!',
+  migrationFailed: 'Migration failed',
 
   // About
   version: 'Version',
@@ -429,13 +424,10 @@ const en: Translations = {
   noUpdateAvailable: 'You are on the latest version',
   installUpdate: 'Install update',
   installing: 'Installing',
-
-  // Notifications
-  copiedToClipboard: 'Copied to clipboard',
-  textCopied: 'Text copied to clipboard',
-  imageCopied: 'Image copied to clipboard',
-  filePathCopied: 'File path copied to clipboard',
-  richTextCopied: 'Rich text copied to clipboard',
+  checkUpdateFailed: 'Failed to check for updates',
+  downloadingUpdate: 'Downloading and installing update...',
+  updateInstalled: 'Update installed, please restart the app',
+  installUpdateFailed: 'Failed to install update',
 
   // Confirmations
   confirmClearHistory: 'Are you sure you want to clear all non-pinned history?',
@@ -459,7 +451,6 @@ const en: Translations = {
 
   // Misc
   switchTheme: 'Switch theme',
-  binaryFileData: '[Binary file data]',
   decodeFailed: '[Decode failed]',
   emptyContent: '[Empty content]',
 

@@ -207,7 +207,9 @@
       return;
     }
 
-    if (!hasModifier && !event.altKey && /^[1-9]$/.test(event.key)) {
+    // Slot quick-paste lives on the modifier (⌘/Ctrl+1-9) so plain digits stay
+    // available to type into the always-focused search box.
+    if (hasModifier && !event.altKey && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
       void useSlot(Number(event.key));
       return;

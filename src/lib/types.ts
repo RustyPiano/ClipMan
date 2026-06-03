@@ -3,7 +3,7 @@
 /**
  * Clipboard item content types
  */
-export type ContentType = 'text' | 'image' | 'file' | 'html' | 'rtf';
+export type ContentType = 'text' | 'image';
 
 /**
  * Clipboard item from backend
@@ -30,7 +30,6 @@ export interface Settings {
   ignoreConcealed: boolean;
   pinnedShortcut: string | null;
   maxHistoryItems: number;
-  autoCleanup: boolean;
   trayTextLength: number;
   maxPinnedInTray: number;
   maxRecentInTray: number;
