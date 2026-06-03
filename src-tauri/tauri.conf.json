@@ -12,15 +12,32 @@
   "app": {
     "windows": [
       {
-        "title": "ClipMan - Clipboard Manager",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "title": "ClipMan QuickBar",
+        "width": 560,
+        "height": 420,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true
+      },
+      {
+        "label": "settings",
+        "title": "ClipMan Settings",
+        "width": 960,
+        "height": 720,
+        "center": true,
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
         "transparent": false,
         "visible": false,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "alwaysOnTop": false
       }
     ],

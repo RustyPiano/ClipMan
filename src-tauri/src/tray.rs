@@ -178,7 +178,8 @@ fn add_clip_menu_item(
     let preview = truncate_content(&item.content, &item.content_type, max_len, i18n);
     
     if matches!(item.content_type, ContentType::Image) {
-        if let Some(icon) = icon_cache.get_or_create(&item.id, &item.content) {
+        let icon_content = item.thumbnail.as_deref().unwrap_or(&item.content);
+        if let Some(icon) = icon_cache.get_or_create(&item.id, icon_content) {
             let menu_item = IconMenuItemBuilder::with_id(
                 format!("clip:{}", item.id),
                 preview

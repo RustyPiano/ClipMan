@@ -4,12 +4,21 @@
 mod clipboard;
 mod commands;
 mod migration;
+mod paste;
 mod settings;
 mod storage;
 mod tray;
+mod window;
 
 use clipboard::ClipboardMonitor;
-use commands::*;
+use commands::{
+    check_clipboard_permission, check_for_updates, clear_all_history, clear_non_pinned_history,
+    copy_clip_to_clipboard_internal, copy_to_system_clipboard, delete_clip,
+    disable_global_shortcut, enable_global_shortcut, get_clipboard_history, get_current_data_path,
+    get_pinned_clips, get_recent_clips, get_settings, hide_quickbar, install_update,
+    migrate_data_location, open_folder, open_settings_window, paste_clip, reorder_pinned,
+    search_clips, set_clip_label, toggle_pin, update_settings,
+};
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};
 use tray::{build_tray_menu, TrayIconCache};
@@ -48,6 +57,7 @@ pub struct AppState {
     pub settings: Arc<SettingsManager>,
     pub last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
     pub icon_cache: Arc<TrayIconCache>,
+    pub quickbar_foreground_window: window::ForegroundWindowStore,
 }
 
 fn main() {
@@ -121,6 +131,7 @@ fn main() {
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
             let icon_cache = Arc::new(TrayIconCache::new());
+            let quickbar_foreground_window = Arc::new(Mutex::new(None));
 
             let app_state = AppState {
                 storage: Arc::new(Mutex::new(storage)),
@@ -128,9 +139,14 @@ fn main() {
                 settings: settings_manager.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
                 icon_cache: icon_cache.clone(),
+                quickbar_foreground_window: quickbar_foreground_window.clone(),
             };
 
             app.manage(app_state);
+
+            if let Err(e) = window::setup_windows(app.handle()) {
+                log::error!("Failed to set up QuickBar windows: {}", e);
+            }
 
             // Build tray menu
             let menu = build_tray_menu(&app.handle())?;
@@ -161,10 +177,8 @@ fn main() {
                         }
                         "settings" => {
                             log::info!("Settings menu clicked");
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                            if let Err(e) = window::open_settings_window(app) {
+                                log::error!("Failed to open settings window: {}", e);
                             }
                         }
                         id if id.starts_with("clip:") => {
@@ -201,19 +215,6 @@ fn main() {
 
             log::info!("System tray initialized");
 
-            // Setup window close handler
-            if let Some(window) = app.get_webview_window("main") {
-                let window_clone = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = window_clone.hide();
-                        log::debug!("Window hidden instead of closed");
-                    }
-                });
-                log::info!("Window close handler registered");
-            }
-
             // Start clipboard monitoring
             let app_handle = app.handle().clone();
             let state: tauri::State<AppState> = app_handle.state();
@@ -229,15 +230,16 @@ fn main() {
             let current_shortcut = state.settings.get().global_shortcut;
 
             let app_handle_hotkey = app.handle().clone();
+            let quickbar_foreground_hotkey = quickbar_foreground_window.clone();
             let shortcut_display = current_shortcut.clone();
             app.global_shortcut()
                 .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         log::info!("Global shortcut triggered: {}", shortcut_display);
-                        if let Some(window) = app_handle_hotkey.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                        if let Err(e) =
+                            window::show_quickbar(&app_handle_hotkey, &quickbar_foreground_hotkey)
+                        {
+                            log::error!("Failed to show QuickBar: {}", e);
                         }
                     }
                 })

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
   import Input from '$lib/components/ui/Input.svelte';
@@ -7,44 +7,60 @@
   import { Search, X } from 'lucide-svelte';
 
   const SEARCH_DEBOUNCE_MS = 300;
+  const SEARCH_INPUT_ID = 'quickbar-search';
 
   const t = $derived(i18n.t);
 
-  let searchQuery = $state('');
+  let searchQuery = $state(clipboardStore.searchQuery);
   let debounceTimer: ReturnType<typeof setTimeout>;
 
-  function handleInput(e: Event) {
-    const target = e.target as HTMLInputElement;
-    searchQuery = target.value;
-    
+  function runSearch(query: string) {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      clipboardStore.search(searchQuery);
+      void clipboardStore.search(query);
     }, SEARCH_DEBOUNCE_MS);
+  }
+
+  function handleInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    searchQuery = target.value;
+    runSearch(searchQuery);
   }
 
   function clearSearch() {
     searchQuery = '';
-    clipboardStore.search('');
+    void clipboardStore.search('');
+
+    const input = document.getElementById(SEARCH_INPUT_ID);
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+    }
   }
 
-  // Cleanup debounce timer on component destroy
+  onMount(() => {
+    const input = document.getElementById(SEARCH_INPUT_ID);
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+    }
+  });
+
   onDestroy(() => {
     clearTimeout(debounceTimer);
   });
 </script>
 
-<div class="relative w-full max-w-md mx-auto">
-  <div class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
+<div class="relative mx-auto w-full max-w-md">
+  <div class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
     <Search class="h-4 w-4" />
   </div>
-  
+
   <Input
+    id={SEARCH_INPUT_ID}
     type="text"
     placeholder={t.searchPlaceholder}
     value={searchQuery}
     oninput={handleInput}
-    class="pl-9 pr-8 bg-muted/50 border-transparent focus:bg-background focus:border-input transition-all"
+    class="border-transparent bg-muted/50 pl-9 pr-8 transition-all focus:border-input focus:bg-background"
   />
 
   {#if searchQuery}

@@ -2,94 +2,61 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
-import type { ClipItem } from '$lib/types';
+import type { ClipItem, PasteMode } from '$lib/types';
 
 // Re-export type for convenience
 export type { ClipItem } from '$lib/types';
 
 class ClipboardStore {
-  items = $state<ClipItem[]>([]);
+  recentItems = $state<ClipItem[]>([]);
+  pinnedItems = $state<ClipItem[]>([]);
+  searchResults = $state<ClipItem[]>([]);
   searchQuery = $state('');
   isLoading = $state(false);
-  maxHistoryItems = $state(100); // Default limit
+  maxHistoryItems = $state(100);
+  autoPaste = $state(true);
   private unlisten?: () => void;
 
-  // Derived state: pinned items sorted by pin order
-  pinnedItems = $derived(
-    this.items
-      .filter((item) => item.isPinned)
-      .sort((a, b) => (a.pinOrder || 0) - (b.pinOrder || 0))
+  items = $derived([...this.pinnedItems, ...this.recentItems]);
+
+  recentDisplayItems = $derived(
+    this.searchQuery.trim()
+      ? this.searchResults.filter((item) => !item.isPinned)
+      : this.recentItems,
   );
 
+  pinnedDisplayItems = $derived(
+    this.searchQuery.trim()
+      ? this.searchResults.filter((item) => item.isPinned)
+      : this.pinnedItems,
+  );
 
-
-  // Derived state: filtered items based on search
-  filteredItems = $derived(this.items);
+  // Compatibility alias for older UI code that still expects filteredItems.
+  filteredItems = $derived(this.recentDisplayItems);
 
   constructor() {
     this.initialize();
   }
 
   async initialize() {
-    // Load settings first to get maxHistoryItems
     try {
-      const settings = await invoke<{ maxHistoryItems: number }>('get_settings');
+      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>('get_settings');
+      this.autoPaste = settings.autoPaste;
       this.maxHistoryItems = settings.maxHistoryItems;
-    } catch (e) {
-      console.error('Failed to load settings:', e);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
     }
 
-    // Load initial history
     await this.loadHistory();
 
-    // Listen for clipboard changes from Rust backend
-    const unlistenClipboard = await listen<ClipItem>('clipboard-changed', (event) => {
-      // Backend now sends FrontendClipItem which matches our interface directly (Base64 content)
-      const newItem = event.payload;
-
-      // Deduplication: Remove existing item with same ID if present
-      const existingIndex = this.items.findIndex(i => i.id === newItem.id);
-      let currentItems = [...this.items];
-
-      if (existingIndex !== -1) {
-        // Remove existing item so we can add updated one to top
-        currentItems.splice(existingIndex, 1);
-      }
-
-      // Add new item to the beginning
-      currentItems.unshift(newItem);
-
-      // Enforce limit on non-pinned items
-      // We need to be careful not to remove pinned items
-      if (currentItems.length > this.maxHistoryItems) {
-        // Find the last non-pinned item to remove
-        // We iterate from the end
-        for (let i = currentItems.length - 1; i >= 0; i--) {
-          if (!currentItems[i].isPinned) {
-            currentItems.splice(i, 1);
-            // Check if we are within limit now
-            // Note: The backend limit applies to non-pinned items mostly, 
-            // but here we just enforce total list size for simplicity or match backend logic
-            // The backend logic is: keep all pinned + N recent non-pinned.
-            // So we should count non-pinned items.
-            const nonPinnedCount = currentItems.filter(item => !item.isPinned).length;
-            if (nonPinnedCount <= this.maxHistoryItems) {
-              break;
-            }
-          }
-        }
-      }
-
-      this.items = currentItems;
+    const unlistenClipboard = await listen('clipboard-changed', async () => {
+      await this.reloadFromBackend();
     });
 
-    // Listen for history cleared event from menu bar
     const unlistenHistoryCleared = await listen('history-cleared', async () => {
-      console.log('[INFO] History cleared from menu bar, reloading...');
-      await this.loadHistory();
+      await this.reloadFromBackend();
     });
 
-    // Store both unlisten functions
     this.unlisten = () => {
       unlistenClipboard();
       unlistenHistoryCleared();
@@ -97,33 +64,20 @@ class ClipboardStore {
   }
 
   destroy() {
-    // Clean up event listener
     this.unlisten?.();
   }
 
   async loadHistory() {
     this.isLoading = true;
     try {
-      console.log('[INFO] Loading clipboard history...');
-      const history = await invoke<ClipItem[]>('get_clipboard_history', {
-        limit: 100,
-      });
-      console.log(`[SUCCESS] Loaded ${history.length} clipboard items`);
+      const [recent, pinned] = await Promise.all([
+        invoke<ClipItem[]>('get_recent_clips', { limit: this.maxHistoryItems }),
+        invoke<ClipItem[]>('get_pinned_clips'),
+      ]);
 
-      // Debug: log first item details
-      if (history.length > 0) {
-        const first = history[0];
-        console.log('[DEBUG] First item details:', {
-          id: first.id,
-          contentType: first.contentType,
-          contentIsString: typeof first.content === 'string',
-          contentLength: first.content?.length,
-          contentPreview: typeof first.content === 'string' ? first.content.substring(0, 50) : 'NOT STRING',
-          timestamp: first.timestamp
-        });
-      }
-
-      this.items = history;
+      this.recentItems = recent;
+      this.pinnedItems = pinned;
+      this.searchResults = [];
     } catch (error) {
       console.error('[ERROR] Failed to load clipboard history:', error);
     } finally {
@@ -131,20 +85,29 @@ class ClipboardStore {
     }
   }
 
+  async refreshSettings() {
+    try {
+      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
+        'get_settings',
+      );
+      this.autoPaste = settings.autoPaste;
+      this.maxHistoryItems = settings.maxHistoryItems;
+    } catch (error) {
+      console.error('Failed to refresh settings:', error);
+    }
+  }
+
   async search(query: string) {
     this.searchQuery = query;
 
-    // When query is empty, reload full history
-    if (!query) {
+    if (!query.trim()) {
       await this.loadHistory();
       return;
     }
 
-    // Use full-text search for complex queries
     this.isLoading = true;
     try {
-      const results = await invoke<ClipItem[]>('search_clips', { query });
-      this.items = results;
+      this.searchResults = await invoke<ClipItem[]>('search_clips', { query });
     } catch (error) {
       console.error('Search failed:', error);
     } finally {
@@ -155,7 +118,7 @@ class ClipboardStore {
   async clearNonPinned() {
     try {
       await invoke('clear_non_pinned_history');
-      await this.loadHistory();
+      await this.reloadFromBackend();
       console.log('[SUCCESS] Cleared all non-pinned items');
     } catch (error) {
       console.error('[ERROR] Failed to clear non-pinned items:', error);
@@ -164,15 +127,12 @@ class ClipboardStore {
   }
 
   async togglePin(id: string) {
-    const item = this.items.find((i) => i.id === id);
+    const item = this.findItem(id);
     if (!item) return;
 
     try {
       await invoke('toggle_pin', { id, isPinned: !item.isPinned });
-      item.isPinned = !item.isPinned;
-
-      // Reload to get updated pin order
-      await this.loadHistory();
+      await this.reloadFromBackend();
     } catch (error) {
       console.error('Failed to toggle pin:', error);
     }
@@ -181,9 +141,28 @@ class ClipboardStore {
   async deleteItem(id: string) {
     try {
       await invoke('delete_clip', { id });
-      this.items = this.items.filter((item) => item.id !== id);
+      await this.reloadFromBackend();
     } catch (error) {
       console.error('Failed to delete item:', error);
+    }
+  }
+
+  async useClip(item: ClipItem, mode: PasteMode = 'paste') {
+    try {
+      await invoke('paste_clip', { id: item.id, mode });
+    } catch (error) {
+      console.error(`[ERROR] Failed to ${mode} clip:`, error);
+      if (mode === 'copy') {
+        toastStore.add(i18n.t.copyFailed, 'error');
+      }
+    }
+  }
+
+  async hideQuickbar() {
+    try {
+      await invoke('hide_quickbar');
+    } catch (error) {
+      console.error('[ERROR] Failed to hide QuickBar:', error);
     }
   }
 
@@ -193,13 +172,9 @@ class ClipboardStore {
       await invoke('copy_to_system_clipboard', { clipId: item.id });
       console.log('[SUCCESS] Successfully copied to clipboard');
 
-      // Show success toast
       const t = i18n.t;
-      const contentPreview = item.contentType === 'text'
-        ? t.text
-        : item.contentType === 'image'
-          ? t.image
-          : t.file;
+      const contentPreview =
+        item.contentType === 'text' ? t.text : item.contentType === 'image' ? t.image : t.file;
       toastStore.add(`${t.copied} ${contentPreview}`, 'success');
     } catch (error) {
       console.error('[ERROR] Failed to copy to clipboard:', error);
@@ -207,8 +182,22 @@ class ClipboardStore {
       throw error;
     }
   }
+
+  private async reloadFromBackend() {
+    if (this.searchQuery.trim()) {
+      await this.search(this.searchQuery);
+    } else {
+      await this.loadHistory();
+    }
+  }
+
+  private findItem(id: string) {
+    return (
+      this.recentItems.find((item) => item.id === id) ??
+      this.pinnedItems.find((item) => item.id === id) ??
+      this.searchResults.find((item) => item.id === id)
+    );
+  }
 }
 
-// Export a single instance
 export const clipboardStore = new ClipboardStore();
-

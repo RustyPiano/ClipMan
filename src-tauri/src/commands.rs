@@ -1,12 +1,12 @@
 // Tauri commands module
-use tauri::{AppHandle, Manager, State, Emitter};
-use tauri_plugin_notification::NotificationExt;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
-use crate::storage::{FrontendClipItem, ContentType, CopyMarker};
 use crate::settings::Settings;
+use crate::storage::{ContentType, CopyMarker, FrontendClipItem};
 use crate::tray::update_tray_menu;
-use crate::{AppState, safe_lock, migration};
+use crate::{migration, safe_lock, AppState};
 
 #[tauri::command]
 pub async fn get_clipboard_history(
@@ -43,9 +43,7 @@ pub async fn get_recent_clips(
 }
 
 #[tauri::command]
-pub async fn get_pinned_clips(
-    state: State<'_, AppState>,
-) -> Result<Vec<FrontendClipItem>, String> {
+pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<FrontendClipItem>, String> {
     let storage = state.storage.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -63,7 +61,7 @@ pub async fn search_clips(
     query: String,
 ) -> Result<Vec<FrontendClipItem>, String> {
     let storage = state.storage.clone();
-    
+
     tauri::async_runtime::spawn_blocking(move || {
         let storage = safe_lock(&storage);
         let items = storage.search(&query).map_err(|e| e.to_string())?;
@@ -81,10 +79,12 @@ pub async fn toggle_pin(
     is_pinned: bool,
 ) -> Result<(), String> {
     let storage = state.storage.clone();
-    
+
     tauri::async_runtime::spawn_blocking(move || {
         let storage = safe_lock(&storage);
-        storage.update_pin(&id, is_pinned).map_err(|e| e.to_string())
+        storage
+            .update_pin(&id, is_pinned)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -113,9 +113,7 @@ pub async fn delete_clip(
 }
 
 #[tauri::command]
-pub async fn get_settings(
-    state: State<'_, AppState>,
-) -> Result<Settings, String> {
+pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     Ok(state.settings.get())
 }
 
@@ -124,21 +122,16 @@ pub async fn check_clipboard_permission() -> Result<String, String> {
     use arboard::Clipboard;
 
     match Clipboard::new() {
-        Ok(mut clipboard) => {
-            match clipboard.get_text() {
-                Ok(_) => Ok("granted".to_string()),
-                Err(e) => Ok(format!("denied: {}", e)),
-            }
-        }
+        Ok(mut clipboard) => match clipboard.get_text() {
+            Ok(_) => Ok("granted".to_string()),
+            Err(e) => Ok(format!("denied: {}", e)),
+        },
         Err(e) => Err(format!("Failed to create clipboard: {}", e)),
     }
 }
 
 #[tauri::command]
-pub async fn clear_all_history(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn clear_all_history(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     log::info!("Clearing all clipboard history (user requested)");
     let storage = state.storage.clone();
 
@@ -186,11 +179,11 @@ pub async fn copy_clip_to_clipboard_internal(
     clip_id: &str,
     show_notification: bool,
 ) -> Result<(), String> {
+    use crate::storage::FrontendClipItem;
     use arboard::{Clipboard, ImageData};
+    use chrono::Utc;
     use image::GenericImageView;
     use std::borrow::Cow;
-    use chrono::Utc;
-    use crate::storage::FrontendClipItem;
 
     let state = app.state::<AppState>();
     let storage = state.storage.clone();
@@ -235,22 +228,27 @@ pub async fn copy_clip_to_clipboard_internal(
     match item.content_type {
         ContentType::Text => {
             let text = String::from_utf8_lossy(&item.content).to_string();
+            let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
 
             // Mark as self-copied to prevent re-capture
             {
                 let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(CopyMarker::from_payload(
-                    ContentType::Text,
-                    text.as_bytes(),
-                ));
+                *last_copied = Some(marker.clone());
             }
 
-            clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
+            if let Err(e) = clipboard.set_text(text.clone()) {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                }
+                return Err(e.to_string());
+            }
             log::info!("✅ Copied text to clipboard: {} chars", text.len());
 
             if show_notification {
                 #[cfg(not(target_os = "linux"))]
-                let _ = app.notification()
+                let _ = app
+                    .notification()
                     .builder()
                     .title("已复制")
                     .body("文本已复制到剪贴板")
@@ -262,16 +260,28 @@ pub async fn copy_clip_to_clipboard_internal(
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let mut last_copied = safe_lock(&last_copied_by_us);
-                *last_copied = None;
-                log::debug!("🧹 Cleared self-copy marker");
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                    log::debug!("🧹 Cleared self-copy marker");
+                }
             });
         }
         ContentType::Image => {
             let img = image::load_from_memory(&item.content)
                 .map_err(|e| format!("Failed to decode image: {}", e))?;
-            
+
             let (width, height) = img.dimensions();
             let rgba_bytes = img.to_rgba8().into_raw();
+            let mut marker_payload = Vec::with_capacity(16 + rgba_bytes.len());
+            marker_payload.extend_from_slice(&(width as u64).to_le_bytes());
+            marker_payload.extend_from_slice(&(height as u64).to_le_bytes());
+            marker_payload.extend_from_slice(&rgba_bytes);
+            let marker = CopyMarker::from_payload(ContentType::Image, &marker_payload);
+
+            {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                *last_copied = Some(marker.clone());
+            }
 
             let image_data = ImageData {
                 width: width as usize,
@@ -279,26 +289,47 @@ pub async fn copy_clip_to_clipboard_internal(
                 bytes: Cow::from(rgba_bytes),
             };
 
-            clipboard.set_image(image_data).map_err(|e| e.to_string())?;
+            if let Err(e) = clipboard.set_image(image_data) {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                }
+                return Err(e.to_string());
+            }
+
             log::info!("✅ Copied image to clipboard ({}x{})", width, height);
 
             if show_notification {
                 #[cfg(not(target_os = "linux"))]
-                let _ = app.notification()
+                let _ = app
+                    .notification()
                     .builder()
                     .title("已复制")
                     .body("图片已复制到剪贴板")
                     .show();
             }
+
+            let last_copied_by_us = state.last_copied_by_us.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let mut last_copied = safe_lock(&last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                    log::debug!("🧹 Cleared self-copy marker");
+                }
+            });
         }
         ContentType::File => {
             let path = String::from_utf8_lossy(&item.content).to_string();
-            clipboard.set_text(path.clone()).map_err(|e| e.to_string())?;
+            clipboard
+                .set_text(path.clone())
+                .map_err(|e| e.to_string())?;
             log::info!("✅ Copied file path to clipboard: {}", path);
 
             if show_notification {
                 #[cfg(not(target_os = "linux"))]
-                let _ = app.notification()
+                let _ = app
+                    .notification()
                     .builder()
                     .title("已复制")
                     .body("文件路径已复制到剪贴板")
@@ -312,7 +343,8 @@ pub async fn copy_clip_to_clipboard_internal(
 
             if show_notification {
                 #[cfg(not(target_os = "linux"))]
-                let _ = app.notification()
+                let _ = app
+                    .notification()
                     .builder()
                     .title("已复制")
                     .body("富文本已复制到剪贴板")
@@ -340,11 +372,12 @@ pub async fn copy_to_system_clipboard(
 // - The marker is cleared after the existing short self-copy window.
 #[tauri::command]
 pub async fn paste_clip(
-    _state: State<'_, AppState>,
-    _id: String,
-    _mode: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    mode: String,
 ) -> Result<(), String> {
-    Err("not implemented".into())
+    crate::paste::paste_clip(app, state.inner(), id, mode).await
 }
 
 #[tauri::command]
@@ -366,55 +399,53 @@ pub async fn reorder_pinned(
 }
 
 #[tauri::command]
-pub async fn open_settings_window(
-    _app: AppHandle,
-) -> Result<(), String> {
-    Err("not implemented".into())
+pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
+    crate::window::open_settings_window(&app)
 }
 
 #[tauri::command]
-pub async fn hide_quickbar(
-    _app: AppHandle,
-) -> Result<(), String> {
-    Err("not implemented".into())
+pub async fn hide_quickbar(app: AppHandle) -> Result<(), String> {
+    crate::window::hide_quickbar(&app)
 }
 
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, String> {
     use tauri_plugin_updater::UpdaterExt;
-    
+
     log::info!("Checking for updates...");
     let current_version = app.package_info().version.to_string();
 
     match app.updater() {
-        Ok(updater) => {
-            match updater.check().await {
-                Ok(update) => {
-                    if let Some(update_info) = update {
-                        let available_version = update_info.version.clone();
-                        log::info!("Update available: {} -> {}", current_version, available_version);
+        Ok(updater) => match updater.check().await {
+            Ok(update) => {
+                if let Some(update_info) = update {
+                    let available_version = update_info.version.clone();
+                    log::info!(
+                        "Update available: {} -> {}",
+                        current_version,
+                        available_version
+                    );
 
-                        Ok(serde_json::json!({
-                            "available": true,
-                            "current_version": current_version,
-                            "latest_version": available_version,
-                            "body": update_info.body,
-                            "date": update_info.date.map(|d| d.to_string())
-                        }))
-                    } else {
-                        log::info!("No updates available. Current version: {}", current_version);
-                        Ok(serde_json::json!({
-                            "available": false,
-                            "current_version": current_version
-                        }))
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to check for updates: {}", e);
-                    Err(format!("Failed to check for updates: {}", e))
+                    Ok(serde_json::json!({
+                        "available": true,
+                        "current_version": current_version,
+                        "latest_version": available_version,
+                        "body": update_info.body,
+                        "date": update_info.date.map(|d| d.to_string())
+                    }))
+                } else {
+                    log::info!("No updates available. Current version: {}", current_version);
+                    Ok(serde_json::json!({
+                        "available": false,
+                        "current_version": current_version
+                    }))
                 }
             }
-        }
+            Err(e) => {
+                log::error!("Failed to check for updates: {}", e);
+                Err(format!("Failed to check for updates: {}", e))
+            }
+        },
         Err(e) => {
             log::error!("Failed to get updater: {}", e);
             Err(format!("Failed to get updater: {}", e))
@@ -425,43 +456,47 @@ pub async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, Stri
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
-    
+
     log::info!("Installing update...");
 
     match app.updater() {
-        Ok(updater) => {
-            match updater.check().await {
-                Ok(update) => {
-                    if let Some(update_info) = update {
-                        log::info!("Downloading and installing update: {}", update_info.version);
+        Ok(updater) => match updater.check().await {
+            Ok(update) => {
+                if let Some(update_info) = update {
+                    log::info!("Downloading and installing update: {}", update_info.version);
 
-                        match update_info.download_and_install(|chunk_length, content_length| {
-                            if let Some(total) = content_length {
-                                let progress = (chunk_length as f64 / total as f64) * 100.0;
-                                log::debug!("Download progress: {:.2}%", progress);
-                            }
-                        }, || {
-                            log::info!("Download complete, installing...");
-                        }).await {
-                            Ok(_) => {
-                                log::info!("Update installed successfully. Restarting app...");
-                                app.restart();
-                            }
-                            Err(e) => {
-                                log::error!("Failed to download/install update: {}", e);
-                                Err(format!("Failed to download/install update: {}", e))
-                            }
+                    match update_info
+                        .download_and_install(
+                            |chunk_length, content_length| {
+                                if let Some(total) = content_length {
+                                    let progress = (chunk_length as f64 / total as f64) * 100.0;
+                                    log::debug!("Download progress: {:.2}%", progress);
+                                }
+                            },
+                            || {
+                                log::info!("Download complete, installing...");
+                            },
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            log::info!("Update installed successfully. Restarting app...");
+                            app.restart();
                         }
-                    } else {
-                        Err("No update available".to_string())
+                        Err(e) => {
+                            log::error!("Failed to download/install update: {}", e);
+                            Err(format!("Failed to download/install update: {}", e))
+                        }
                     }
-                }
-                Err(e) => {
-                    log::error!("Failed to check for updates: {}", e);
-                    Err(format!("Failed to check for updates: {}", e))
+                } else {
+                    Err("No update available".to_string())
                 }
             }
-        }
+            Err(e) => {
+                log::error!("Failed to check for updates: {}", e);
+                Err(format!("Failed to check for updates: {}", e))
+            }
+        },
         Err(e) => {
             log::error!("Failed to get updater: {}", e);
             Err(format!("Failed to get updater: {}", e))
@@ -486,6 +521,7 @@ pub async fn update_settings(
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
     let autostart_changed = old_autostart != settings.enable_autostart;
     let locale_changed = old_locale != settings.locale;
+    let quickbar_foreground_window = state.quickbar_foreground_window.clone();
 
     state.settings.set(settings.clone());
     state.settings.save(&app)?;
@@ -493,39 +529,53 @@ pub async fn update_settings(
     // Update autostart if changed
     if autostart_changed {
         use tauri_plugin_autostart::ManagerExt;
-        
+
         let result = if settings.enable_autostart {
             app.autolaunch().enable()
         } else {
             app.autolaunch().disable()
         };
-        
+
         if let Err(e) = result {
             log::error!("Failed to update autostart: {}", e);
             return Err(format!("Failed to update autostart: {}", e));
         }
-        
-        log::info!("Autostart {} successfully", 
-            if settings.enable_autostart { "enabled" } else { "disabled" });
+
+        log::info!(
+            "Autostart {} successfully",
+            if settings.enable_autostart {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
     }
 
     // Re-register hotkey if changed
     if shortcut_changed {
-        log::info!("Hotkey changed from '{}' to '{}', re-registering...", old_shortcut, new_shortcut);
+        log::info!(
+            "Hotkey changed from '{}' to '{}', re-registering...",
+            old_shortcut,
+            new_shortcut
+        );
 
         if let Err(e) = app.global_shortcut().unregister(old_shortcut.as_str()) {
-            log::warn!("Failed to unregister old shortcut '{}': {}", old_shortcut, e);
+            log::warn!(
+                "Failed to unregister old shortcut '{}': {}",
+                old_shortcut,
+                e
+            );
         }
 
         let app_clone = app.clone();
+        let foreground_store = quickbar_foreground_window.clone();
         let new_shortcut_clone = new_shortcut.clone();
         app.global_shortcut()
             .on_shortcut(new_shortcut.as_str(), move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
                     log::info!("Global shortcut triggered: {}", new_shortcut_clone);
-                    if let Some(window) = app_clone.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                    if let Err(e) = crate::window::show_quickbar(&app_clone, &foreground_store) {
+                        log::error!("Failed to show QuickBar: {}", e);
                     }
                 }
             })
@@ -548,16 +598,16 @@ pub async fn get_current_data_path(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let default_path = app.path().app_data_dir()
+    let default_path = app
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
+
     let settings = state.settings.get();
-    let data_dir = migration::get_data_directory(
-        default_path,
-        settings.custom_data_path
-    );
-    
-    data_dir.to_str()
+    let data_dir = migration::get_data_directory(default_path, settings.custom_data_path);
+
+    data_dir
+        .to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "Invalid data path".to_string())
 }
@@ -568,13 +618,20 @@ pub async fn disable_global_shortcut(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let current_shortcut = state.settings.get().global_shortcut;
-    
+
     if let Err(e) = app.global_shortcut().unregister(current_shortcut.as_str()) {
-        log::warn!("Failed to disable global shortcut '{}': {}", current_shortcut, e);
+        log::warn!(
+            "Failed to disable global shortcut '{}': {}",
+            current_shortcut,
+            e
+        );
         return Err(format!("Failed to disable shortcut: {}", e));
     }
-    
-    log::info!("Global shortcut '{}' temporarily disabled", current_shortcut);
+
+    log::info!(
+        "Global shortcut '{}' temporarily disabled",
+        current_shortcut
+    );
     Ok(())
 }
 
@@ -586,19 +643,19 @@ pub async fn enable_global_shortcut(
     let current_shortcut = state.settings.get().global_shortcut;
     let app_clone = app.clone();
     let shortcut_clone = current_shortcut.clone();
-    
+    let foreground_store = state.quickbar_foreground_window.clone();
+
     app.global_shortcut()
         .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 log::info!("Global shortcut triggered: {}", shortcut_clone);
-                if let Some(window) = app_clone.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                if let Err(e) = crate::window::show_quickbar(&app_clone, &foreground_store) {
+                    log::error!("Failed to show QuickBar: {}", e);
                 }
             }
         })
         .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
-    
+
     log::info!("Global shortcut '{}' re-enabled", current_shortcut);
     Ok(())
 }
@@ -606,7 +663,7 @@ pub async fn enable_global_shortcut(
 #[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
     use std::process::Command;
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -614,7 +671,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
@@ -622,7 +679,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Command::new("xdg-open")
@@ -630,7 +687,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     Ok(())
 }
 
@@ -642,9 +699,13 @@ pub async fn migrate_data_location(
     delete_old: bool,
 ) -> Result<(), String> {
     use crate::clipboard::ClipboardMonitor;
-    
-    log::info!("Starting data migration to: {}, delete_old: {}", new_path, delete_old);
-    
+
+    log::info!(
+        "Starting data migration to: {}, delete_old: {}",
+        new_path,
+        delete_old
+    );
+
     // Stop clipboard monitoring during migration
     {
         let mut monitor_guard = state.monitor.lock().unwrap();
@@ -653,34 +714,38 @@ pub async fn migrate_data_location(
             log::info!("Clipboard monitoring stopped for migration");
         }
     }
-    
+
     // Get current and new paths
-    let default_path = app.path().app_data_dir()
+    let default_path = app
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
+
     let settings = state.settings.get();
     let custom_path = settings.custom_data_path.clone();
     let old_path = migration::get_data_directory(default_path.clone(), custom_path);
     let new_path_buf = std::path::PathBuf::from(&new_path);
-    
+
     // Perform migration
     migration::migrate_data(&old_path, &new_path_buf, delete_old)?;
-    
+
     // Update settings with new path
     let mut new_settings = settings.clone();
     new_settings.custom_data_path = Some(new_path.clone());
-    
+
     state.settings.set(new_settings.clone());
-    state.settings.save(&app)
+    state
+        .settings
+        .save(&app)
         .map_err(|e| format!("Failed to save settings: {}", e))?;
-    
+
     log::info!("Data migration completed successfully");
-    
+
     // Restart clipboard monitoring
     let monitor = ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
     monitor.start();
     *state.monitor.lock().unwrap() = Some(monitor);
     log::info!("Clipboard monitoring restarted after migration");
-    
+
     Ok(())
 }
