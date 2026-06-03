@@ -5,12 +5,12 @@ export type Locale = 'zh-CN' | 'en';
 export interface Translations {
   // App
   appName: string;
-  
+
   // Navigation
   history: string;
   pinned: string;
   settings: string;
-  
+
   // Actions
   copy: string;
   copied: string;
@@ -27,30 +27,30 @@ export interface Translations {
   cancel: string;
   confirm: string;
   quit: string;
-  
+
   // Content types
   text: string;
   image: string;
   file: string;
   filePath: string;
   richText: string;
-  
+
   // Time
   justNow: string;
   minutesAgo: string;
   hoursAgo: string;
-  
+
   // Empty states
   noPinnedItems: string;
   noPinnedItemsHint: string;
   noClipboardHistory: string;
   noClipboardHistoryHint: string;
-  
+
   // Search
   searchPlaceholder: string;
   showing: string;
   items: string;
-  
+
   // Settings sections
   settingsGeneral: string;
   settingsClipboard: string;
@@ -58,7 +58,7 @@ export interface Translations {
   settingsTray: string;
   settingsStorage: string;
   settingsAbout: string;
-  
+
   // General settings
   autostart: string;
   autostartDesc: string;
@@ -71,7 +71,7 @@ export interface Translations {
   advancedManualInput: string;
   pinnedShortcut: string;
   pinnedShortcutDesc: string;
-  
+
   // Clipboard settings
   maxHistoryItems: string;
   maxHistoryItemsDesc: string;
@@ -79,7 +79,7 @@ export interface Translations {
   autoPasteDesc: string;
   ignoreConcealed: string;
   ignoreConcealedDesc: string;
-  
+
   // Appearance settings
   themeMode: string;
   themeLight: string;
@@ -87,7 +87,7 @@ export interface Translations {
   themePink: string;
   themeSystem: string;
   language: string;
-  
+
   // Tray settings
   trayTextLength: string;
   trayTextLengthDesc: string;
@@ -95,20 +95,20 @@ export interface Translations {
   maxPinnedInTrayDesc: string;
   maxRecentInTray: string;
   maxRecentInTrayDesc: string;
-  
+
   // Storage settings
   dataLocation: string;
   dataLocationDesc: string;
   currentLocation: string;
   changeLocation: string;
   openFolder: string;
-  
+
   // Migration dialog
   confirmMigration: string;
   migratingTo: string;
   deleteOldData: string;
   startMigration: string;
-  
+
   // About
   version: string;
   checkUpdate: string;
@@ -117,50 +117,55 @@ export interface Translations {
   noUpdateAvailable: string;
   installUpdate: string;
   installing: string;
-  
+
   // Notifications
   copiedToClipboard: string;
   textCopied: string;
   imageCopied: string;
   filePathCopied: string;
   richTextCopied: string;
-  
+
   // Confirmations
   confirmClearHistory: string;
   confirmResetSettings: string;
-  
+
   // Errors
   loadSettingsFailed: string;
   saveSettingsFailed: string;
   copyFailed: string;
-  
+
   // Statistics
   statistics: string;
   total: string;
-  
+
   // Tray menu
   trayPinnedHeader: string;
   trayRecentHeader: string;
-  
+
   // Loading
   loading: string;
-  
+
   // Misc
   switchTheme: string;
   binaryFileData: string;
   decodeFailed: string;
   emptyContent: string;
+
+  // QuickBar footer hints
+  paste: string;
+  switchPanel: string;
+  close: string;
 }
 
 const zh: Translations = {
   // App
   appName: 'ClipMan',
-  
+
   // Navigation
   history: '历史记录',
   pinned: '置顶',
   settings: '设置',
-  
+
   // Actions
   copy: '复制',
   copied: '已复制',
@@ -177,30 +182,30 @@ const zh: Translations = {
   cancel: '取消',
   confirm: '确认',
   quit: '退出',
-  
+
   // Content types
   text: '文本',
   image: '图片',
   file: '文件',
   filePath: '文件路径',
   richText: '富文本',
-  
+
   // Time
   justNow: '刚刚',
   minutesAgo: '{n}分钟前',
   hoursAgo: '{n}小时前',
-  
+
   // Empty states
   noPinnedItems: '暂无置顶项目',
   noPinnedItemsHint: '点击置顶图标收藏常用内容',
   noClipboardHistory: '暂无剪切板历史',
   noClipboardHistoryHint: '复制内容后会自动出现在这里',
-  
+
   // Search
   searchPlaceholder: '搜索剪切板内容...',
   showing: '显示',
   items: '项',
-  
+
   // Settings sections
   settingsGeneral: '常规',
   settingsClipboard: '剪切板',
@@ -208,7 +213,7 @@ const zh: Translations = {
   settingsTray: '托盘',
   settingsStorage: '存储',
   settingsAbout: '关于',
-  
+
   // General settings
   autostart: '开机自启动',
   autostartDesc: '系统启动时自动运行 ClipMan',
@@ -221,7 +226,7 @@ const zh: Translations = {
   advancedManualInput: '高级：手动输入...',
   pinnedShortcut: '常用快捷键',
   pinnedShortcutDesc: '可选。设置后直接打开常用面板；留空则不绑定。',
-  
+
   // Clipboard settings
   maxHistoryItems: '历史记录数量',
   maxHistoryItemsDesc: '保留的最大历史记录数量',
@@ -229,7 +234,7 @@ const zh: Translations = {
   autoPasteDesc: '从 QuickBar 取用时自动粘回当前应用；关闭后只复制。',
   ignoreConcealed: '忽略密码类剪贴板',
   ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
-  
+
   // Appearance settings
   themeMode: '主题模式',
   themeLight: '浅色',
@@ -237,7 +242,7 @@ const zh: Translations = {
   themePink: '粉色',
   themeSystem: '跟随系统',
   language: '语言',
-  
+
   // Tray settings
   trayTextLength: '托盘文本长度',
   trayTextLengthDesc: '托盘菜单中显示的文本最大长度',
@@ -245,20 +250,20 @@ const zh: Translations = {
   maxPinnedInTrayDesc: '托盘菜单中显示的置顶项数量',
   maxRecentInTray: '托盘最近数量',
   maxRecentInTrayDesc: '托盘菜单中显示的最近项数量',
-  
+
   // Storage settings
   dataLocation: '数据存储位置',
   dataLocationDesc: '选择 ClipMan 数据的存储位置',
   currentLocation: '当前位置',
   changeLocation: '更改位置',
   openFolder: '打开文件夹',
-  
+
   // Migration dialog
   confirmMigration: '确认迁移数据',
   migratingTo: '即将把数据迁移到:',
   deleteOldData: '迁移后删除原位置数据',
   startMigration: '开始迁移',
-  
+
   // About
   version: '版本',
   checkUpdate: '检查更新',
@@ -267,50 +272,55 @@ const zh: Translations = {
   noUpdateAvailable: '当前已是最新版本',
   installUpdate: '安装更新',
   installing: '安装中',
-  
+
   // Notifications
   copiedToClipboard: '已复制到剪贴板',
   textCopied: '文本已复制到剪贴板',
   imageCopied: '图片已复制到剪贴板',
   filePathCopied: '文件路径已复制到剪贴板',
   richTextCopied: '富文本已复制到剪贴板',
-  
+
   // Confirmations
   confirmClearHistory: '确定要清除所有非置顶的历史记录吗？',
   confirmResetSettings: '确定要重置所有设置吗？这将恢复默认配置。',
-  
+
   // Errors
   loadSettingsFailed: '加载设置失败',
   saveSettingsFailed: '保存失败',
   copyFailed: '复制失败',
-  
+
   // Statistics
   statistics: '统计信息',
   total: '总计',
-  
+
   // Tray menu
   trayPinnedHeader: '置顶项',
   trayRecentHeader: '最近复制',
-  
+
   // Loading
   loading: '加载中...',
-  
+
   // Misc
   switchTheme: '切换主题',
   binaryFileData: '[二进制文件数据]',
   decodeFailed: '[解码失败]',
   emptyContent: '[内容为空]',
+
+  // QuickBar footer hints
+  paste: '粘贴',
+  switchPanel: '切换',
+  close: '关闭',
 };
 
 const en: Translations = {
   // App
   appName: 'ClipMan',
-  
+
   // Navigation
   history: 'History',
   pinned: 'Pinned',
   settings: 'Settings',
-  
+
   // Actions
   copy: 'Copy',
   copied: 'Copied',
@@ -327,30 +337,30 @@ const en: Translations = {
   cancel: 'Cancel',
   confirm: 'Confirm',
   quit: 'Quit',
-  
+
   // Content types
   text: 'Text',
   image: 'Image',
   file: 'File',
   filePath: 'File path',
   richText: 'Rich text',
-  
+
   // Time
   justNow: 'Just now',
   minutesAgo: '{n}m ago',
   hoursAgo: '{n}h ago',
-  
+
   // Empty states
   noPinnedItems: 'No pinned items',
   noPinnedItemsHint: 'Click the pin icon to save frequently used content',
   noClipboardHistory: 'No clipboard history',
   noClipboardHistoryHint: 'Copied content will appear here',
-  
+
   // Search
   searchPlaceholder: 'Search clipboard...',
   showing: 'Showing',
   items: 'items',
-  
+
   // Settings sections
   settingsGeneral: 'General',
   settingsClipboard: 'Clipboard',
@@ -358,7 +368,7 @@ const en: Translations = {
   settingsTray: 'Tray',
   settingsStorage: 'Storage',
   settingsAbout: 'About',
-  
+
   // General settings
   autostart: 'Launch at startup',
   autostartDesc: 'Automatically start ClipMan when system boots',
@@ -370,16 +380,18 @@ const en: Translations = {
   commonHotkeys: 'Common hotkeys:',
   advancedManualInput: 'Advanced: Manual input...',
   pinnedShortcut: 'Pinned shortcut',
-  pinnedShortcutDesc: 'Optional. Opens QuickBar directly on the pinned panel; leave empty to disable.',
-  
+  pinnedShortcutDesc:
+    'Optional. Opens QuickBar directly on the pinned panel; leave empty to disable.',
+
   // Clipboard settings
   maxHistoryItems: 'History limit',
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
   autoPaste: 'Auto-paste',
   autoPasteDesc: 'Paste selected QuickBar items back into the current app; off means copy only.',
   ignoreConcealed: 'Ignore concealed clipboard content',
-  ignoreConcealedDesc: 'Skip clipboard payloads marked as passwords, transient, or excluded from history.',
-  
+  ignoreConcealedDesc:
+    'Skip clipboard payloads marked as passwords, transient, or excluded from history.',
+
   // Appearance settings
   themeMode: 'Theme',
   themeLight: 'Light',
@@ -387,7 +399,7 @@ const en: Translations = {
   themePink: 'Pink',
   themeSystem: 'System',
   language: 'Language',
-  
+
   // Tray settings
   trayTextLength: 'Tray text length',
   trayTextLengthDesc: 'Maximum text length in tray menu',
@@ -395,20 +407,20 @@ const en: Translations = {
   maxPinnedInTrayDesc: 'Number of pinned items shown in tray menu',
   maxRecentInTray: 'Recent in tray',
   maxRecentInTrayDesc: 'Number of recent items shown in tray menu',
-  
+
   // Storage settings
   dataLocation: 'Data location',
   dataLocationDesc: 'Choose where ClipMan stores its data',
   currentLocation: 'Current location',
   changeLocation: 'Change location',
   openFolder: 'Open folder',
-  
+
   // Migration dialog
   confirmMigration: 'Confirm data migration',
   migratingTo: 'Data will be migrated to:',
   deleteOldData: 'Delete data from old location after migration',
   startMigration: 'Start migration',
-  
+
   // About
   version: 'Version',
   checkUpdate: 'Check for updates',
@@ -417,46 +429,51 @@ const en: Translations = {
   noUpdateAvailable: 'You are on the latest version',
   installUpdate: 'Install update',
   installing: 'Installing',
-  
+
   // Notifications
   copiedToClipboard: 'Copied to clipboard',
   textCopied: 'Text copied to clipboard',
   imageCopied: 'Image copied to clipboard',
   filePathCopied: 'File path copied to clipboard',
   richTextCopied: 'Rich text copied to clipboard',
-  
+
   // Confirmations
   confirmClearHistory: 'Are you sure you want to clear all non-pinned history?',
   confirmResetSettings: 'Are you sure you want to reset all settings to defaults?',
-  
+
   // Errors
   loadSettingsFailed: 'Failed to load settings',
   saveSettingsFailed: 'Failed to save',
   copyFailed: 'Copy failed',
-  
+
   // Statistics
   statistics: 'Statistics',
   total: 'Total',
-  
+
   // Tray menu
   trayPinnedHeader: 'Pinned',
   trayRecentHeader: 'Recent',
-  
+
   // Loading
   loading: 'Loading...',
-  
+
   // Misc
   switchTheme: 'Switch theme',
   binaryFileData: '[Binary file data]',
   decodeFailed: '[Decode failed]',
   emptyContent: '[Empty content]',
+
+  // QuickBar footer hints
+  paste: 'Paste',
+  switchPanel: 'Switch',
+  close: 'Close',
 };
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };
 
 class I18n {
   private _locale = $state<Locale>('zh-CN');
-  
+
   constructor() {
     // Detect system locale
     if (typeof navigator !== 'undefined') {
@@ -466,7 +483,7 @@ class I18n {
       } else {
         this._locale = 'en';
       }
-      
+
       // Load saved preference
       const saved = localStorage.getItem('locale') as Locale | null;
       if (saved && (saved === 'zh-CN' || saved === 'en')) {
@@ -474,15 +491,15 @@ class I18n {
       }
     }
   }
-  
+
   get locale() {
     return this._locale;
   }
-  
+
   get t(): Translations {
     return translations[this._locale];
   }
-  
+
   setLocale(locale: Locale) {
     this._locale = locale;
     if (typeof localStorage !== 'undefined') {
@@ -491,13 +508,13 @@ class I18n {
     // Notify backend to update tray menu
     this.syncToBackend(locale);
   }
-  
+
   // Sync locale to backend for tray menu i18n
   private async syncToBackend(locale: Locale) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       // Get current settings
-      const settings = await invoke('get_settings') as Record<string, unknown>;
+      const settings = (await invoke('get_settings')) as Record<string, unknown>;
       // Update locale
       settings.locale = locale;
       // Save back
@@ -506,7 +523,7 @@ class I18n {
       console.warn('Failed to sync locale to backend:', e);
     }
   }
-  
+
   // Helper for interpolation: t.minutesAgo with {n} -> "5分钟前"
   format(template: string, params: Record<string, string | number>): string {
     let result = template;

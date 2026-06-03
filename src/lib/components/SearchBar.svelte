@@ -56,8 +56,8 @@
   });
 </script>
 
-<div class="relative mx-auto w-full max-w-md">
-  <div class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+<div class="relative w-full">
+  <div class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground">
     <Search class="h-4 w-4" />
   </div>
 
@@ -67,7 +67,7 @@
     placeholder={t.searchPlaceholder}
     value={searchQuery}
     oninput={handleInput}
-    class="border-transparent bg-muted/50 pl-9 pr-8 transition-all focus:border-input focus:bg-background"
+    class="h-10 border-transparent bg-transparent pl-8 pr-8 text-base shadow-none transition-colors focus-visible:ring-0"
   />
 
   {#if searchQuery}

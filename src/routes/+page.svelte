@@ -23,8 +23,6 @@
     Trash2,
     Pin,
     ClipboardList,
-    FileText,
-    Image as ImageIcon,
     Loader2,
     Heart,
   } from 'lucide-svelte';
@@ -40,7 +38,7 @@
   const displayItems = $derived(
     selectionStore.panel === 'pinned'
       ? clipboardStore.pinnedDisplayItems
-      : clipboardStore.recentDisplayItems,
+      : clipboardStore.recentDisplayItems
   );
 
   function isTextInput(element: Element | null) {
@@ -127,7 +125,7 @@
     await clipboardStore.reorderPinned(item.id, direction);
 
     const nextIndex = clipboardStore.pinnedDisplayItems.findIndex(
-      (pinnedItem) => pinnedItem.id === item.id,
+      (pinnedItem) => pinnedItem.id === item.id
     );
     if (nextIndex >= 0) {
       selectionStore.setSelectedIndex(nextIndex, clipboardStore.pinnedDisplayItems.length);
@@ -227,6 +225,10 @@
       return;
     }
 
+    // Mark this window so app.css can make the body transparent, letting the
+    // rounded floating panel + shadow show. Settings window never gets this.
+    document.documentElement.classList.add('quickbar-window');
+
     let unlistenQuickbarOpened: (() => void) | undefined;
 
     void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
@@ -248,6 +250,7 @@
     return () => {
       window.removeEventListener('keydown', handleQuickBarKeydown);
       unlistenQuickbarOpened?.();
+      document.documentElement.classList.remove('quickbar-window');
     };
   });
 
@@ -290,50 +293,25 @@
 {#if router.currentRoute === 'settings'}
   <SettingsPage />
 {:else}
-  <div class="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-    <PermissionCheck />
-    <Toast />
+  <div class="flex h-screen flex-col p-2 text-foreground">
+    <div
+      class="flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/95 shadow-2xl backdrop-blur-xl"
+    >
+      <PermissionCheck />
+      <Toast />
 
-    <header class="sticky top-0 z-10 flex-none border-b border-border bg-muted/30 p-4 backdrop-blur-sm">
-      <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-2xl font-bold tracking-tight">{t.appName}</h1>
-        <div class="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onclick={() => themeStore.toggle()}
-            title={t.switchTheme}
-          >
-            {#if themeStore.current === 'light'}
-              <Sun class="h-4 w-4" />
-            {:else if themeStore.current === 'dark'}
-              <Moon class="h-4 w-4" />
-            {:else if themeStore.current === 'light-pink'}
-              <Heart class="h-4 w-4" />
-            {:else}
-              <Monitor class="h-4 w-4" />
-            {/if}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title={t.settings}
-            onclick={() => void openSettingsWindow()}
-          >
-            <Settings class="h-4 w-4" />
-          </Button>
+      <!-- Spotlight-style search row -->
+      <div class="flex flex-none items-center gap-2 border-b border-border/60 px-2.5 py-1.5">
+        <div class="min-w-0 flex-1">
+          <SearchBar />
         </div>
-      </div>
-
-      <div class="mb-4 flex items-center gap-2">
-        <div class="flex rounded-lg bg-muted p-1" role="tablist">
+        <div class="flex flex-none rounded-lg bg-muted p-0.5 text-xs font-medium" role="tablist">
           <button
             role="tab"
             aria-selected={selectionStore.panel === 'recent'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'recent' ? 0 : -1}
-            class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {selectionStore.panel ===
-            'recent'
+            class="rounded-md px-2.5 py-1 transition-all {selectionStore.panel === 'recent'
               ? 'bg-background text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('recent')}
@@ -345,96 +323,128 @@
             aria-selected={selectionStore.panel === 'pinned'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'pinned' ? 0 : -1}
-            class="rounded-md px-4 py-1.5 text-sm font-medium transition-all {selectionStore.panel ===
-            'pinned'
+            class="rounded-md px-2.5 py-1 transition-all {selectionStore.panel === 'pinned'
               ? 'bg-background text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('pinned')}
           >
-            {t.pinned}
-            <span class="ml-1 text-xs opacity-70">({clipboardStore.pinnedItems.length})</span>
+            {t.pinned}<span class="ml-1 opacity-60">{clipboardStore.pinnedItems.length}</span>
           </button>
-        </div>
-
-        <div class="ml-auto">
-          <Button
-            variant="ghost"
-            size="icon"
-            title={t.clearNonPinned}
-            onclick={clearHistory}
-            class="text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 class="h-4 w-4" />
-          </Button>
         </div>
       </div>
 
-      <SearchBar />
-    </header>
-
-    <main id="clipboard-content" class="flex flex-1 flex-col overflow-hidden bg-background">
-      {#if clipboardStore.isLoading}
-        <div class="flex h-full flex-col items-center justify-center text-muted-foreground">
-          <Loader2 class="mb-2 h-8 w-8 animate-spin" />
-          <p>{t.loading}</p>
-        </div>
-      {:else if displayItems.length === 0}
-        <div class="flex h-full flex-col items-center justify-center p-4 text-center text-muted-foreground">
-          {#if selectionStore.panel === 'pinned'}
-            <Pin class="mb-4 h-12 w-12 opacity-20" />
-            <p class="font-medium">{t.noPinnedItems}</p>
-            <p class="mt-1 text-sm opacity-70">{t.noPinnedItemsHint}</p>
-          {:else}
-            <ClipboardList class="mb-4 h-12 w-12 opacity-20" />
-            <p class="font-medium">{t.noClipboardHistory}</p>
-            <p class="mt-1 text-sm opacity-70">{t.noClipboardHistoryHint}</p>
-            <div class="mx-auto mt-8 max-w-xs space-y-1 rounded-lg bg-muted/50 p-4 text-left text-xs">
-              <p class="mb-2 font-semibold opacity-70">{t.statistics}</p>
-              <div class="flex justify-between">
-                <span>{t.total}:</span> <span>{clipboardStore.items.length}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>{t.text}:</span>
-                <span>{clipboardStore.items.filter((i) => i.contentType === 'text').length}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>{t.image}:</span>
-                <span>{clipboardStore.items.filter((i) => i.contentType === 'image').length}</span>
-              </div>
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <div
-          class="z-10 flex flex-none items-center justify-between border-b border-border/50 bg-background/95 px-4 py-2 text-xs text-muted-foreground backdrop-blur"
-        >
-          <span>{t.showing} {displayItems.length} {t.items}</span>
-          <div class="flex items-center gap-2">
-            <span class="flex items-center gap-1">
-              <FileText class="h-3 w-3" />
-              {displayItems.filter((i) => i.contentType === 'text').length}
-            </span>
-            <span class="flex items-center gap-1">
-              <ImageIcon class="h-3 w-3" />
-              {displayItems.filter((i) => i.contentType === 'image').length}
-            </span>
+      <!-- Results -->
+      <main id="clipboard-content" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {#if clipboardStore.isLoading}
+          <div class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 class="h-6 w-6 animate-spin" />
+            <p class="text-sm">{t.loading}</p>
           </div>
+        {:else if displayItems.length === 0}
+          <div
+            class="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-muted-foreground"
+          >
+            {#if selectionStore.panel === 'pinned'}
+              <Pin class="h-8 w-8 opacity-20" />
+              <p class="text-sm font-medium">{t.noPinnedItems}</p>
+              <p class="text-xs opacity-70">{t.noPinnedItemsHint}</p>
+            {:else}
+              <ClipboardList class="h-8 w-8 opacity-20" />
+              <p class="text-sm font-medium">{t.noClipboardHistory}</p>
+              <p class="text-xs opacity-70">{t.noClipboardHistoryHint}</p>
+            {/if}
+          </div>
+        {:else}
+          <div class="flex-1 space-y-1 overflow-y-auto p-2">
+            {#each displayItems as item, index (item.id)}
+              <div animate:flip={{ duration: 200 }}>
+                <ClipboardItem
+                  {item}
+                  selected={index === selectionStore.selectedIndex}
+                  slotNumber={index < 9 ? index + 1 : null}
+                  onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
+                  onUse={() => useItem(item)}
+                />
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </main>
+
+      <!-- Footer: shortcut hints + quick actions -->
+      <div
+        class="flex flex-none items-center justify-between gap-2 border-t border-border/60 bg-muted/30 px-2.5 py-1 text-[11px] text-muted-foreground"
+      >
+        <div class="flex min-w-0 items-center gap-2.5 overflow-hidden">
+          <span class="flex flex-none items-center gap-1">
+            <kbd
+              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
+              >↵</kbd
+            >
+            {t.paste}
+          </span>
+          <span class="flex flex-none items-center gap-1">
+            <kbd
+              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
+              >⌘↵</kbd
+            >
+            {t.copy}
+          </span>
+          <span class="flex flex-none items-center gap-1">
+            <kbd
+              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
+              >Tab</kbd
+            >
+            {t.switchPanel}
+          </span>
+          <span class="flex flex-none items-center gap-1">
+            <kbd
+              class="rounded border border-border bg-background px-1 font-sans text-[10px] leading-4"
+              >esc</kbd
+            >
+            {t.close}
+          </span>
         </div>
 
-        <div class="flex-1 space-y-2 overflow-y-auto p-4 pb-8">
-          {#each displayItems as item, index (item.id)}
-            <div animate:flip={{ duration: 300 }}>
-              <ClipboardItem
-                {item}
-                selected={index === selectionStore.selectedIndex}
-                slotNumber={index < 9 ? index + 1 : null}
-                onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
-                onUse={() => useItem(item)}
-              />
-            </div>
-          {/each}
+        <div class="flex flex-none items-center gap-0.5">
+          <span class="mr-1 tabular-nums opacity-70">{displayItems.length}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6 text-muted-foreground hover:text-destructive"
+            title={t.clearNonPinned}
+            onclick={clearHistory}
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6 text-muted-foreground hover:text-foreground"
+            title={t.switchTheme}
+            onclick={() => themeStore.toggle()}
+          >
+            {#if themeStore.current === 'light'}
+              <Sun class="h-3.5 w-3.5" />
+            {:else if themeStore.current === 'dark'}
+              <Moon class="h-3.5 w-3.5" />
+            {:else if themeStore.current === 'light-pink'}
+              <Heart class="h-3.5 w-3.5" />
+            {:else}
+              <Monitor class="h-3.5 w-3.5" />
+            {/if}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6 text-muted-foreground hover:text-foreground"
+            title={t.settings}
+            onclick={() => void openSettingsWindow()}
+          >
+            <Settings class="h-3.5 w-3.5" />
+          </Button>
         </div>
-      {/if}
-    </main>
+      </div>
+    </div>
   </div>
 {/if}

@@ -145,6 +145,14 @@
   }
 }
 
+/* QuickBar window only: transparent so the rounded floating panel + shadow show.
+   Scoped via a class added on <html> in the main window, so the Settings window
+   (which shares this stylesheet) keeps its opaque background. */
+html.quickbar-window,
+html.quickbar-window body {
+  background: transparent;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
