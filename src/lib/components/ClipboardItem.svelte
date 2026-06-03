@@ -4,16 +4,7 @@
   import type { ClipItem } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
   import Button from './ui/Button.svelte';
-  import {
-    Copy,
-    Check,
-    Pin,
-    Trash2,
-    FileText,
-    Image as ImageIcon,
-    Pencil,
-    X,
-  } from 'lucide-svelte';
+  import { Copy, Check, Pin, Trash2, FileText, Image as ImageIcon, Pencil, X } from 'lucide-svelte';
 
   interface Props {
     item: ClipItem;
@@ -324,4 +315,3 @@
     </div>
   </div>
 </div>
-

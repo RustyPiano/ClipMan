@@ -51,6 +51,12 @@ pub struct TrayIconCache {
     cache: Mutex<LruCache<String, tauri::image::Image<'static>>>,
 }
 
+impl Default for TrayIconCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrayIconCache {
     pub fn new() -> Self {
         Self {

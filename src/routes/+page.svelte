@@ -28,7 +28,8 @@
   } from 'lucide-svelte';
   import { flip } from 'svelte/animate';
 
-  const initialSettingsCheck = typeof window !== 'undefined' && 
+  const initialSettingsCheck =
+    typeof window !== 'undefined' &&
     (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'settings';
 
   if (initialSettingsCheck) {
@@ -306,32 +307,38 @@
   <SettingsPage />
 {:else}
   <div class="flex h-screen flex-col p-3">
-    <div
-      class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl"
-    >
+    <div class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
       <PermissionCheck />
       <Toast />
 
       <!-- Spotlight-style search row -->
-      <div class="flex flex-none items-center gap-2 border-b border-border/60 px-4 py-2.5 bg-transparent">
+      <div
+        class="flex flex-none items-center gap-2 border-b border-border/60 px-4 py-2.5 bg-transparent"
+      >
         <div class="min-w-0 flex-1">
           <SearchBar />
         </div>
-        
+
         <!-- Sliding Capsule Tab Switcher -->
-        <div class="relative flex w-40 flex-none rounded-lg bg-muted/65 p-0.5 text-[11px] font-semibold border border-border/10 select-none" role="tablist">
+        <div
+          class="relative flex w-40 flex-none rounded-lg bg-muted/65 p-0.5 text-[11px] font-semibold border border-border/10 select-none"
+          role="tablist"
+        >
           <!-- Sliding pill background -->
-          <div 
+          <div
             class="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-background shadow-sm transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style="width: calc(50% - 2px); transform: translateX({selectionStore.panel === 'pinned' ? '100%' : '0'});"
+            style="width: calc(50% - 2px); transform: translateX({selectionStore.panel === 'pinned'
+              ? '100%'
+              : '0'});"
           ></div>
-          
+
           <button
             role="tab"
             aria-selected={selectionStore.panel === 'recent'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'recent' ? 0 : -1}
-            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel === 'recent'
+            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel ===
+            'recent'
               ? 'text-foreground font-semibold'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('recent')}
@@ -343,7 +350,8 @@
             aria-selected={selectionStore.panel === 'pinned'}
             aria-controls="clipboard-content"
             tabindex={selectionStore.panel === 'pinned' ? 0 : -1}
-            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel === 'pinned'
+            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel ===
+            'pinned'
               ? 'text-foreground font-semibold'
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('pinned')}

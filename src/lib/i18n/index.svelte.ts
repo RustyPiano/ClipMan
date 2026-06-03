@@ -1,5 +1,7 @@
 // Internationalization (i18n) module for ClipMan
 
+import { invoke } from '@tauri-apps/api/core';
+
 export type Locale = 'zh-CN' | 'en';
 
 export interface Translations {
@@ -503,7 +505,6 @@ class I18n {
   // Sync locale to backend for tray menu i18n
   private async syncToBackend(locale: Locale) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       // Get current settings
       const settings = (await invoke('get_settings')) as Record<string, unknown>;
       // Update locale

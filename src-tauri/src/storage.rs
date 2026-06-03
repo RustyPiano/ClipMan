@@ -610,10 +610,7 @@ fn data_dir_for_db_path(db_path: &str) -> PathBuf {
 }
 
 fn string_to_rusqlite_error(error: String) -> rusqlite::Error {
-    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        error,
-    )))
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(error)))
 }
 
 #[cfg(test)]

@@ -93,7 +93,7 @@ fn main() {
 
             // Initialize settings first
             let settings_manager = Arc::new(SettingsManager::new());
-            if let Err(e) = settings_manager.load(&app.handle()) {
+            if let Err(e) = settings_manager.load(app.handle()) {
                 log::warn!("Failed to load settings, using defaults: {}", e);
             }
 
@@ -138,7 +138,7 @@ fn main() {
             }
 
             // Build tray menu
-            let menu = build_tray_menu(&app.handle())?;
+            let menu = build_tray_menu(app.handle())?;
 
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -237,17 +237,15 @@ fn main() {
                         "Skipping pinned shortcut '{}' because it matches the main shortcut",
                         pinned_shortcut
                     );
+                } else if let Err(e) = register_quickbar_shortcut(
+                    app.handle(),
+                    pinned_shortcut.as_str(),
+                    quickbar_foreground_window.clone(),
+                    window::QuickBarPanel::Pinned,
+                ) {
+                    log::warn!("{}", e);
                 } else {
-                    if let Err(e) = register_quickbar_shortcut(
-                        app.handle(),
-                        pinned_shortcut.as_str(),
-                        quickbar_foreground_window.clone(),
-                        window::QuickBarPanel::Pinned,
-                    ) {
-                        log::warn!("{}", e);
-                    } else {
-                        log::info!("Pinned shortcut registered: {}", pinned_shortcut);
-                    }
+                    log::info!("Pinned shortcut registered: {}", pinned_shortcut);
                 }
             }
 

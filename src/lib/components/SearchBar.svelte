@@ -57,7 +57,9 @@
 </script>
 
 <div class="relative w-full">
-  <div class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 transition-colors">
+  <div
+    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 transition-colors"
+  >
     <Search class="h-4 w-4 stroke-[2]" />
   </div>
 

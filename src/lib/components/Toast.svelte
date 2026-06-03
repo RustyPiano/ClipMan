@@ -1,10 +1,12 @@
 <script lang="ts">
-import { toastStore } from '$lib/stores/toast.svelte';
-import { fly } from 'svelte/transition';
-import { CheckCircle, AlertCircle } from 'lucide-svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import { fly } from 'svelte/transition';
+  import { CheckCircle, AlertCircle } from 'lucide-svelte';
 </script>
 
-<div class="fixed bottom-8 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-[9999] pointer-events-none">
+<div
+  class="fixed bottom-8 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-[9999] pointer-events-none"
+>
   {#each toastStore.toasts as toast (toast.id)}
     <div
       class="px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2 justify-center

@@ -4,19 +4,19 @@ export type { Route } from '$lib/types';
 // Simple client-side router using Svelte 5 runes
 
 class Router {
-    currentRoute = $state<Route>('home');
+  currentRoute = $state<Route>('home');
 
-    navigate(route: Route) {
-        this.currentRoute = route;
-    }
+  navigate(route: Route) {
+    this.currentRoute = route;
+  }
 
-    goHome() {
-        this.navigate('home');
-    }
+  goHome() {
+    this.navigate('home');
+  }
 
-    goToSettings() {
-        this.navigate('settings');
-    }
+  goToSettings() {
+    this.navigate('settings');
+  }
 }
 
 export const router = new Router();

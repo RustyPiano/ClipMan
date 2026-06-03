@@ -341,9 +341,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &Webview
             return;
         }
 
-        *crate::safe_lock(store) = Some(ForegroundWindow {
-            raw: pid as isize,
-        });
+        *crate::safe_lock(store) = Some(ForegroundWindow { raw: pid as isize });
         log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
     }
 }

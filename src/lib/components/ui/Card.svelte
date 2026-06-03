@@ -7,12 +7,7 @@
     onclick?: (e: MouseEvent) => void;
   };
 
-  let {
-    class: className = '',
-    children,
-    onclick,
-    ...rest
-  }: Props = $props();
+  let { class: className = '', children, onclick, ...rest }: Props = $props();
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->

@@ -24,15 +24,13 @@ class ClipboardStore {
   private unlisten?: () => void;
 
   recentDisplayItems = $derived(
-    this.searchQuery.trim()
-      ? this.searchResults.filter((item) => !item.isPinned)
-      : this.recentItems,
+    this.searchQuery.trim() ? this.searchResults.filter((item) => !item.isPinned) : this.recentItems
   );
 
   pinnedDisplayItems = $derived(
     this.searchQuery.trim()
       ? this.searchResults.filter((item) => item.isPinned).sort(comparePinOrder)
-      : this.pinnedItems,
+      : this.pinnedItems
   );
 
   constructor() {
@@ -41,7 +39,9 @@ class ClipboardStore {
 
   async initialize() {
     try {
-      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>('get_settings');
+      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
+        'get_settings'
+      );
       this.autoPaste = settings.autoPaste;
       this.maxHistoryItems = settings.maxHistoryItems;
     } catch (error) {
@@ -89,7 +89,7 @@ class ClipboardStore {
   async refreshSettings() {
     try {
       const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
-        'get_settings',
+        'get_settings'
       );
       this.autoPaste = settings.autoPaste;
       this.maxHistoryItems = settings.maxHistoryItems;

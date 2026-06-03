@@ -41,6 +41,12 @@ pub struct SettingsManager {
     settings: Arc<Mutex<Settings>>,
 }
 
+impl Default for SettingsManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SettingsManager {
     pub fn new() -> Self {
         Self {
