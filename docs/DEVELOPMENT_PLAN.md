@@ -4,6 +4,8 @@
 >
 > **v2 修订要点（评审后收紧的硬约束）**：① Windows 焦点模型先 spike，不用 `WS_EX_NOACTIVATE`；② FTS5 表结构写死；③ 自捕获标记是跨文件契约，提到 Phase 0；④ 图片改「始终存原图 + 缩略图列」；⑤ 最近/常用数据契约拆清；⑥ 命令桩用 `Err("not implemented")`，禁止 `todo!()`。
 >
+> **当前状态（2026-06-03）**：Phase 0 的数据层/设置/命令契约和 Phase 1 的 QuickBar、自动粘贴、前端交互、隐私/图片捕获已有实现；不要把本文当成“全部未开始”的清单。平台焦点与自动粘贴链路仍需按 Phase 3 真机矩阵验证后才能宣称完成。
+>
 > **并行原则**：并行的 WP 各自拥有不重叠文件；共享文件（`main.rs`/`commands.rs`/`settings.rs`/`Cargo.toml`）的改动集中在 Phase 0 打桩，Phase 1 之后只在各自函数/区域追加。
 
 ---
@@ -169,7 +171,7 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **步骤**：
   1. **后端单一数据源重构**：删 `clipboard.svelte.ts:46-84` 手写镜像淘汰逻辑；`clipboard-changed`/`history-cleared` 到来时直接重查（最近用 `get_recent_clips`、常用用 `get_pinned_clips`、搜索用 `search_clips`）；前端只持「当前可见列表」。
   2. `selection.svelte.ts`：`selectedIndex` + 当前面板（recent/pinned）；`↑↓` 移动 + 自动滚动；鼠标悬停同步选中。
-  3. 窗口级 keydown：`↑↓`、`Enter`→`paste_clip(paste)`、`Cmd/Ctrl+Enter`→相反 mode、`1-9`→取第 N、`Tab`→切面板、`Esc`→`hide_quickbar`、`Cmd/Ctrl+P`→`toggle_pin`、`Cmd/Ctrl+Delete`→`delete_clip`。
+  3. 窗口级 keydown：`↑↓`、`Enter`→`paste_clip(default)`、`Cmd/Ctrl+Enter`→相反 mode、`Cmd/Ctrl+1-9`→取第 N（普通数字保留给搜索框输入）、`Tab`→切面板、`Esc`→`hide_quickbar`、`Cmd/Ctrl+P`→`toggle_pin`、`Cmd/Ctrl+Delete`→`delete_clip`。
   4. `ClipboardItem`：整卡 `onclick`=取用；保留悬停的置顶/删除/编辑按钮；选中高亮 + 左侧 1~9 序号。
   5. 双面板：`Tab` 切「最近/常用」，常用读 `get_pinned_clips`。
   6. 搜索框打开自动聚焦；任意打字聚焦搜索。

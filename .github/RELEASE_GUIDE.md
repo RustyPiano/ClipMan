@@ -32,7 +32,7 @@ git push origin v1.0.0
 
 ### 3. 等待构建完成
 
-1. 访问 GitHub Actions: `https://github.com/YOUR_USERNAME/ClipMan/actions`
+1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipMan/actions`
 2. 查看 "Release" workflow 运行状态
 3. 等待所有平台构建完成 (约 10-20 分钟)
 
@@ -46,14 +46,13 @@ git push origin v1.0.0
 
 构建完成后:
 
-1. 进入 Releases: `https://github.com/YOUR_USERNAME/ClipMan/releases`
+1. 进入 Releases: `https://github.com/RustyPiano/ClipMan/releases`
 2. 找到自动创建的 Draft release (v1.0.0)
 3. 点击 "Edit draft"
-4. 复制 `.github/RELEASE_NOTES.md` 的内容到 Release 描述框
-5. 修改其中的 `YOUR_USERNAME` 为你的 GitHub 用户名
-6. 可选: 添加截图或演示 GIF
-7. 取消勾选 "Set as a pre-release" (如果这是正式版本)
-8. 点击 "Publish release"
+4. 检查自动填入的 `release_notes_<版本号>.md` 内容是否正确
+5. 可选: 添加截图或演示 GIF
+6. 取消勾选 "Set as a pre-release" (如果这是正式版本)
+7. 点击 "Publish release"
 
 ### 5. 验证发布
 
@@ -62,7 +61,7 @@ git push origin v1.0.0
 ```bash
 # 下载并测试安装包
 # macOS
-curl -L https://github.com/YOUR_USERNAME/ClipMan/releases/download/v1.0.0/ClipMan_aarch64.dmg -o ClipMan.dmg
+curl -L https://github.com/RustyPiano/ClipMan/releases/download/v1.0.0/ClipMan_1.0.0_aarch64.dmg -o ClipMan.dmg
 
 # 验证签名 (如果已配置代码签名)
 spctl --assess --verbose ClipMan.app
@@ -100,7 +99,7 @@ git tag -a v2.0.0 -m "Breaking: 升级到 Tauri 3.0"
 
 ### 简短版 (GitHub Release)
 
-参考 `.github/RELEASE_NOTES.md`
+创建或更新仓库根目录的 `release_notes_<版本号>.md`，例如 `release_notes_1.10.0.md`。Release workflow 会按 tag 自动读取该文件。
 
 ### 详细版 (博客/公告)
 
@@ -118,6 +117,23 @@ git tag -a v2.0.0 -m "Breaking: 升级到 Tauri 3.0"
 - [ ] 文档中的示例代码已测试
 - [ ] 安装包在所有平台上测试通过
 
+### 本地发布构建
+
+`bun tauri build` 会生成 updater artifact。因为 `src-tauri/tauri.conf.json` 配置了 updater 公钥，本地完整发布构建需要设置：
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="..."
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="..."
+bun tauri build
+```
+
+如果只验证代码是否能编译，使用：
+
+```bash
+bun run build
+cd src-tauri && cargo build
+```
+
 ### 常见问题
 
 **Q: Workflow 构建失败怎么办?**
@@ -126,6 +142,7 @@ A: 检查 Actions 日志,常见原因:
 - Rust 依赖问题: 更新 `Cargo.toml`
 - Node/Bun 依赖: 运行 `bun install`
 - 平台特定问题: 检查对应平台的构建日志
+- Updater 签名问题: 确认 `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 已配置为 GitHub Secrets
 
 **Q: 如何删除错误的 Release?**
 
@@ -147,7 +164,7 @@ A:
 - **Windows**: 需要 Code Signing 证书
 - **Linux**: 通常不需要
 
-参考: https://tauri.app/v1/guides/distribution/sign-macos
+参考: https://tauri.app/distribute/
 
 ## 🚀 自动化发布 (可选)
 

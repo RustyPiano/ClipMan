@@ -152,6 +152,7 @@ export interface Translations {
 
   // QuickBar footer hints
   paste: string;
+  slot: string;
   switchPanel: string;
   close: string;
 }
@@ -304,6 +305,7 @@ const zh: Translations = {
 
   // QuickBar footer hints
   paste: '粘贴',
+  slot: '槽位',
   switchPanel: '切换',
   close: '关闭',
 };
@@ -458,6 +460,7 @@ const en: Translations = {
 
   // QuickBar footer hints
   paste: 'Paste',
+  slot: 'Slot',
   switchPanel: 'Switch',
   close: 'Close',
 };

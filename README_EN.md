@@ -18,13 +18,13 @@
 
 ## Introduction
 
-ClipMan is a **lightweight** (< 5MB), **high-performance** (< 50MB memory) modern clipboard manager built with Rust + Svelte 5, focusing on essential and practical features.
+ClipMan is a **lightweight**, **high-performance** modern clipboard manager built with Rust + Svelte 5, focusing on essential and practical features.
 
 **Why ClipMan?**
 
 - ✅ **Persistent Storage** - History remains available after system restart
 - ✅ **Pin Feature** - Pin frequently used content with one click, access anytime
-- ✅ **Lightweight & Fast** - < 5MB installer, < 1s startup
+- ✅ **Lightweight & Fast** - Small installers and fast startup
 - ✅ **Modern UI** - Clean interface with multiple themes
 - ✅ **Open Source** - MIT license, fully open source
 
@@ -34,15 +34,15 @@ ClipMan is a **lightweight** (< 5MB), **high-performance** (< 50MB memory) moder
 
 - **📌 Pin Content** - Pin code snippets, commands, links, etc. permanently
 - **💾 Persistent Storage** - SQLite database, survives restarts, smart deduplication
-- **🔍 Full-Text Search** - FTS5 engine with real-time Chinese/English search
-- **⌨️ Global Hotkey** - Smart input system, quick access from any app (default `Cmd/Ctrl+Shift+V`)
+- **🔍 Full-Text Search** - SQLite FTS5 + trigram index with real-time Chinese/English search
+- **⌨️ QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, and auto-paste
 - **🎯 Tray Menu** - Quick access to recent and pinned items
 - **🎨 Multiple Themes** - Light/Dark/Pink themes, follow system
 - **🌐 Multi-Language** - English and Chinese support, auto-detect system language
 
 ### Additional Features
 
-- 🔒 AES-256-GCM encryption (optional)
+- 🛡️ Skip password-like clipboard contents (optional)
 - 🔄 Auto-update
 - 🚀 Launch at startup
 - 📁 Custom storage location
@@ -75,27 +75,27 @@ Grant Accessibility permission on first run:
 ## 🛠️ Technology
 
 **Backend**
-- Tauri 2.0 - Lightweight desktop framework
+- Tauri 2.11 - Lightweight desktop framework
 - SQLite + FTS5 - High-performance database
 - Rust - Memory-safe, high performance
 
 **Frontend**
 - Svelte 5 - Modern reactive framework
 - Tailwind CSS 4 - Modern styling solution
-- Vite 6 - Fast build tool
+- Vite 8 - Fast build tool
 
 **Performance**
 - ⚡ Startup: < 1s
 - 💾 Memory: 30-50MB
-- 📦 Installer: < 5MB
+- 📦 Installer: current macOS DMG is about 3-4MB
 - 🔋 CPU: 0% (idle)
 
 ## 🔧 Development
 
 ### Requirements
 
-- Bun or Node.js 18+
-- Rust 1.82+
+- Bun 1.3+ or Node.js 20.19+
+- Rust 1.96.0 (pinned by `rust-toolchain.toml`)
 - System: Windows 10+ / macOS 10.13+ / Linux
 
 ### Quick Start
@@ -123,14 +123,15 @@ ClipMan/
 │   ├── lib/
 │   │   ├── components/   # UI components
 │   │   ├── stores/       # State management
-│   │   └── utils/        # Utilities
+│   │   └── i18n/         # Internationalization
 │   └── routes/           # Page routes
 ├── src-tauri/        # Rust backend
 │   └── src/
 │       ├── main.rs       # Entry point, tray
 │       ├── clipboard.rs  # Clipboard monitoring
 │       ├── storage.rs    # Database
-│       ├── crypto.rs     # Encryption
+│       ├── paste.rs      # Copy / auto-paste
+│       ├── window.rs     # QuickBar / settings windows
 │       └── settings.rs   # Settings management
 └── package.json
 ```
@@ -141,11 +142,12 @@ ClipMan/
 - [x] Clipboard monitoring and history
 - [x] Pin feature
 - [x] Full-text search
+- [x] QuickBar auto-paste
 - [x] Global hotkey
 - [x] System tray
 - [x] Auto-update
 - [x] Multiple themes
-- [x] AES-256 encryption
+- [x] Skip password-like clipboard contents
 - [x] Custom storage location
 - [x] Launch at startup
 
@@ -159,7 +161,7 @@ ClipMan/
 
 ## 🤝 Contributing
 
-Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
+Contributions are welcome through issues and pull requests.
 
 - 🐛 [Report Bug](https://github.com/RustyPiano/ClipMan/issues)
 - ✨ [Feature Request](https://github.com/RustyPiano/ClipMan/issues)
@@ -175,7 +177,6 @@ Contributions welcome! See [Contributing Guide](CONTRIBUTING.md).
 - [Svelte](https://svelte.dev/) - Frontend framework
 - [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite bindings
 - [arboard](https://github.com/1Password/arboard) - Clipboard library
-- [ring](https://github.com/briansmith/ring) - Cryptography library
 
 ---
 

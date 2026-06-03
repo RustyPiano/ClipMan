@@ -18,7 +18,7 @@ A v2.0.0 UX redesign is in progress. **Read these first; parts of the current co
 - [`docs/REDESIGN_SPEC.md`](docs/REDESIGN_SPEC.md) — what we're building (QuickBar popup, entry-based auto-paste, pinned/常用 as first-class snippets, **encryption removal**, FTS5, backend single source of truth).
 - [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — parallel-friendly work packages with **file ownership**, dependencies, and acceptance criteria. Follow the file-ownership table to avoid collisions when multiple agents work concurrently.
 
-Known to-be-changed in current code: the AES layer (`crypto.rs`) is slated for removal; `storage.rs::get_recent()` mixes pinned+recent and will be split; the single 800×600 window becomes a borderless popup. Don't "fix" these toward the old design without checking the plan.
+Current redesign status: the AES layer has been removed, `crypto.rs` is gone, FTS5 search is implemented, recent/pinned storage queries are split, images now store original content plus thumbnails, and `last_copied_by_us` uses a `CopyMarker` for text and images. QuickBar/window auto-paste code exists, but the platform runtime matrix is not fully verified yet; see [`docs/WP_0_0_SPIKE_RESULTS.md`](docs/WP_0_0_SPIKE_RESULTS.md) before claiming macOS/Windows focus behavior is proven.
 
 ## Setup Commands
 
@@ -50,7 +50,7 @@ Release is automated via `.github/workflows/release.yml` on pushing a `vX.Y.Z` t
 
 ## Testing
 
-There is **no JS/E2E test framework**. Backend has inline Rust unit tests (`#[cfg(test)]`, e.g. in `crypto.rs`, `migration.rs`, `tray.rs`).
+There is **no JS/E2E test framework**. Backend has inline Rust unit tests (`#[cfg(test)]`, e.g. in `storage.rs`, `migration.rs`, `paste.rs`, `tray.rs`).
 
 ```bash
 cd src-tauri && cargo test     # run Rust unit tests
@@ -116,7 +116,7 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 
 ## Gotchas
 
-- Self-copy guard: when ClipMan writes to the clipboard it marks `last_copied_by_us` so the monitor skips re-capturing. Today this only covers **text**; image copies aren't marked (see the redesign plan for the hash-based fix).
+- Self-copy guard: when ClipMan writes to the clipboard it marks `last_copied_by_us` with a normalized `CopyMarker` so the monitor skips re-capturing text and image copies.
 - Tray menu is rebuilt from the DB on every clipboard change — keep that path cheap.
-- Image storage currently depends on the `store_original_image` setting (thumbnail vs full); the redesign changes this to "always store original + derived thumbnail."
-- The README advertises FTS5 search, but `storage.rs` currently does in-memory substring matching — real FTS5 is part of the redesign.
+- Image storage is now "always store original + derived thumbnail"; do not reintroduce `store_original_image`.
+- Search uses SQLite FTS5 with a short-query LIKE fallback; keep FTS index maintenance in the storage layer.

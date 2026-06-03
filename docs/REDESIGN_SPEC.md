@@ -2,6 +2,8 @@
 
 > 目标读者：项目作者。本文讲清楚「要做成什么样」和「为什么」。技术细节集中在带 🔧 的小节，看不懂可先跳过。
 > 配套文档：实现步骤见 [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md)。
+>
+> 当前状态（2026-06-03）：数据层去加密、FTS5、recent/pinned 拆分、缩略图、CopyMarker、QuickBar 窗口与自动粘贴代码已部分落地；Windows/macOS 自动粘贴焦点链路仍需按 Phase 3 平台矩阵做真机验证。下文中“现状”段落记录的是重构启动前的问题背景。
 
 ---
 
@@ -108,7 +110,7 @@
 | `Tab` | 切换 最近 ↔ 常用 面板 |
 | `Enter` | 对选中项执行**默认行为**（弹窗=自动粘贴） |
 | `Cmd/Ctrl+Enter` | 执行**相反行为**（仅复制 / 粘为纯文本） |
-| `1`～`9` | 直接取用当前面板第 N 条 |
+| `Cmd/Ctrl+1`～`9` | 直接取用当前面板第 N 条；普通数字保留给搜索框输入 |
 | `Cmd/Ctrl+P` | 置顶/取消置顶 当前项（在最近→提拔为常用） |
 | `Cmd/Ctrl+Shift+↑/↓` | （常用面板）调整选中项顺序 |
 | `Cmd/Ctrl+Delete` | 删除当前项 |
@@ -131,7 +133,7 @@
 
 ### 6.1 macOS（非激活面板）
 - 把弹窗变成 **non-activating NSPanel**（`NSWindowStyleMaskNonactivatingPanel` + floating level + 合适 `collectionBehavior`）：能收键盘输入，但**不让 ClipMan 变前台**，原应用始终保持前台。Raycast/Alfred 同款。
-- 借助社区插件 **`tauri-nspanel`** 把 Tauri 窗口转成 NSPanel，免手写大量 ObjC。
+- 当前实现用 Tauri 窗口句柄直接设置 macOS `NSWindowStyleMaskNonactivatingPanel` 等属性；如后续版本兼容性需要，可再评估 **`tauri-nspanel`**。
 - 取用：①写剪贴板 → ②`enigo`/CGEvent 发 `Cmd+V` → ③隐藏面板。原应用一直前台，粘贴直接落它。
 - 权限：模拟按键需「辅助功能」，而读剪贴板本来就需要，无新增授权负担。未授权时检测并明确引导。
 

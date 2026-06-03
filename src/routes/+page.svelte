@@ -39,6 +39,9 @@
   let isSettings = $state(initialSettingsCheck);
 
   const SEARCH_INPUT_ID = 'quickbar-search';
+  const isMac =
+    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
+  const shortcutModifierLabel = isMac ? '⌘' : 'Ctrl';
 
   interface QuickBarOpenedPayload {
     panel?: QuickBarPanel;
@@ -406,11 +409,16 @@
         <div class="flex min-w-0 items-center gap-3 overflow-hidden select-none">
           <span class="flex flex-none items-center gap-1.5">
             <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
-            {t.paste}
+            {clipboardStore.autoPaste ? t.paste : t.copy}
           </span>
           <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">⌘↵</kbd>
-            {t.copy}
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}↵</kbd>
+            {clipboardStore.autoPaste ? t.copy : t.paste}
+          </span>
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-10 h-4 scale-95">{shortcutModifierLabel}1-9</kbd
+            >
+            {t.slot}
           </span>
           <span class="flex flex-none items-center gap-1.5">
             <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
