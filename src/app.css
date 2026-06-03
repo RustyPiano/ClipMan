@@ -36,7 +36,7 @@
 }
 
 :root {
-  /* Light Mode Variables - Elegant warm paper-white & dark slate */
+  /* Light Mode Variables - Elegant warm paper-white & high-contrast deep charcoal */
   --background: hsl(210 20% 98%);
   --foreground: hsl(224 71.4% 4.1%);
 
@@ -46,7 +46,7 @@
   --popover: hsl(0 0% 100%);
   --popover-foreground: hsl(224 71.4% 4.1%);
 
-  --primary: hsl(250 85% 62%);
+  --primary: hsl(224 71.4% 4.1%);
   --primary-foreground: hsl(0 0% 100%);
 
   --secondary: hsl(220 13% 93%);
@@ -63,18 +63,17 @@
 
   --border: hsl(220 13% 89%);
   --input: hsl(220 13% 89%);
-  --ring: hsl(250 85% 62%);
+  --ring: hsl(224 71.4% 4.1%);
 
   --radius: 0.6rem;
 
   /* Custom Floating Panel & Keycaps Styles for Light Mode */
-  --quickbar-border: rgba(15, 23, 42, 0.06);
+  --quickbar-border: rgba(15, 23, 42, 0.08);
   --quickbar-shadow: 0 0 0 1px rgba(0, 0, 0, 0.02), 0 20px 40px -12px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.01);
-  --quickbar-bg: hsl(0 0% 100%);
+  --quickbar-bg: rgba(250, 250, 250, 0.85);
 
-  --bg-kbd: hsl(0 0% 99%);
+  --bg-kbd: hsl(220 13% 92%);
   --border-kbd: hsl(220 13% 86%);
-  --border-kbd-bottom: hsl(220 13% 76%);
 }
 
 .dark {
@@ -88,8 +87,8 @@
   --popover: hsl(222 47% 6%);
   --popover-foreground: hsl(210 40% 98%);
 
-  --primary: hsl(250 85% 65%);
-  --primary-foreground: hsl(0 0% 100%);
+  --primary: hsl(0 0% 100%);
+  --primary-foreground: hsl(222 47% 6%);
 
   --secondary: hsl(217 30% 14%);
   --secondary-foreground: hsl(210 40% 98%);
@@ -105,16 +104,15 @@
 
   --border: hsla(217, 30%, 18%, 0.6);
   --input: hsla(217, 30%, 18%, 0.6);
-  --ring: hsl(250 85% 65%);
+  --ring: hsl(0 0% 100%);
 
   /* Custom Floating Panel & Keycaps Styles for Dark Mode */
   --quickbar-border: rgba(255, 255, 255, 0.08);
   --quickbar-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 24px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.02);
-  --quickbar-bg: hsl(222 47% 6%);
+  --quickbar-bg: rgba(10, 13, 20, 0.85);
 
-  --bg-kbd: hsl(217 30% 11%);
+  --bg-kbd: hsl(217 30% 13%);
   --border-kbd: hsl(217 30% 20%);
-  --border-kbd-bottom: hsl(217 30% 14%);
 }
 
 .light-pink {
@@ -128,7 +126,7 @@
   --popover: hsl(343 33% 98%);
   --popover-foreground: hsl(343 40% 15%);
 
-  --primary: hsl(343 55% 65%);
+  --primary: hsl(343 55% 45%);
   --primary-foreground: hsl(343 20% 99%);
 
   --secondary: hsl(343 30% 94%);
@@ -145,18 +143,17 @@
 
   --border: hsl(343 25% 90%);
   --input: hsl(343 25% 90%);
-  --ring: hsl(343 55% 65%);
+  --ring: hsl(343 55% 45%);
 
   --radius: 0.6rem;
 
   /* Custom Floating Panel & Keycaps Styles for Light Pink Mode */
   --quickbar-border: rgba(212, 140, 140, 0.15);
   --quickbar-shadow: 0 0 0 1px rgba(212, 140, 140, 0.05), 0 18px 36px -10px rgba(139, 92, 92, 0.1), 0 0 0 1px rgba(212, 140, 140, 0.03);
-  --quickbar-bg: hsl(343 33% 98%);
+  --quickbar-bg: rgba(253, 251, 251, 0.85);
 
-  --bg-kbd: hsl(343 30% 96%);
+  --bg-kbd: hsl(343 30% 93%);
   --border-kbd: hsl(343 25% 88%);
-  --border-kbd-bottom: hsl(343 25% 80%);
 }
 
 @layer base {
@@ -179,29 +176,28 @@ html.quickbar-window body {
   background: transparent;
 }
 
-/* Custom Floating Panel with advanced shadow & border */
+/* Custom Floating Panel with advanced shadow, border, and frosted-glass blur */
 .quickbar-panel {
   border: 1px solid var(--quickbar-border) !important;
   box-shadow: var(--quickbar-shadow) !important;
   background: var(--quickbar-bg) !important;
+  backdrop-filter: blur(20px) saturate(190%) !important;
 }
 
-/* 3D Physical Keyboard Keycap style */
+/* Flat Minimal Keyboard Keycap style */
 .kbd-keycap {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-sans);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   padding: 0.15rem 0.35rem;
   border-radius: 4px;
   background: var(--bg-kbd);
   color: var(--muted-foreground);
   border: 1px solid var(--border-kbd);
-  border-bottom: 2px solid var(--border-kbd-bottom);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
 }
 
 /* Custom Scrollbar - Slimmer and cleaner */

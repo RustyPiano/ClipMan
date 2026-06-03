@@ -167,10 +167,10 @@
     class="relative cursor-pointer overflow-hidden rounded-lg transition-all duration-200 ease-out {cardClass}"
     onclick={handleUse}
   >
-    <!-- Left Accent Pill Indicator -->
+    <!-- Left Accent Indicator -->
     {#if selected}
       <div
-        class="absolute left-0 top-[20%] bottom-[20%] w-[3px] rounded-r-full bg-gradient-to-b from-primary via-primary/80 to-primary/50 transition-all duration-300 animate-in fade-in slide-in-from-left-1"
+        class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary transition-all duration-300 animate-in fade-in slide-in-from-left-1"
       ></div>
     {/if}
 
