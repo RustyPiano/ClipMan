@@ -25,6 +25,8 @@ const COPY_MARKER_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteMode {
+    Default,
+    Opposite,
     Paste,
     Copy,
 }
@@ -34,10 +36,12 @@ impl TryFrom<&str> for PasteMode {
 
     fn try_from(mode: &str) -> Result<Self, Self::Error> {
         match mode {
+            "default" => Ok(Self::Default),
+            "opposite" => Ok(Self::Opposite),
             "paste" => Ok(Self::Paste),
             "copy" => Ok(Self::Copy),
             _ => Err(format!(
-                "Invalid paste mode '{mode}'. Expected 'paste' or 'copy'."
+                "Invalid paste mode '{mode}'. Expected 'default', 'opposite', 'paste', or 'copy'."
             )),
         }
     }
@@ -58,11 +62,12 @@ pub async fn paste_clip(
 ) -> Result<(), String> {
     let mode = PasteMode::try_from(mode.as_str())?;
     let item = fetch_clip_and_touch_timestamp(&app, state, id).await?;
+    let auto_paste = state.settings.get().auto_paste;
 
     write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone())?;
     hide_quickbar(&app)?;
 
-    if mode == PasteMode::Paste {
+    if should_simulate_paste(mode, auto_paste) {
         match simulate_paste(state)? {
             PasteSimulation::Pasted => log::info!("Pasted clip {}", item.id),
             PasteSimulation::CopiedOnly => {
@@ -113,6 +118,14 @@ async fn fetch_clip_and_touch_timestamp(
     Ok(item)
 }
 
+fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
+    match mode {
+        PasteMode::Default | PasteMode::Paste => auto_paste,
+        PasteMode::Opposite => !auto_paste,
+        PasteMode::Copy => false,
+    }
+}
+
 fn write_clip_to_system_clipboard(
     item: &ClipItem,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
@@ -122,13 +135,13 @@ fn write_clip_to_system_clipboard(
         ContentType::Text => write_text(&mut clipboard, item, marker_state)?,
         ContentType::Image => write_image(&mut clipboard, item, marker_state)?,
         ContentType::File => {
-            write_file_path_as_text(&mut clipboard, item)?;
+            write_file_path_as_text(&mut clipboard, item, marker_state)?;
         }
         ContentType::Html => {
-            write_html(&mut clipboard, item)?;
+            write_html(&mut clipboard, item, marker_state)?;
         }
         ContentType::Rtf => {
-            write_rtf_as_text(&mut clipboard, item)?;
+            write_rtf_as_text(&mut clipboard, item, marker_state)?;
         }
     };
 
@@ -190,48 +203,82 @@ fn write_image(
     Ok(())
 }
 
-fn write_file_path_as_text(clipboard: &mut Clipboard, item: &ClipItem) -> Result<(), String> {
+fn write_file_path_as_text(
+    clipboard: &mut Clipboard,
+    item: &ClipItem,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) -> Result<(), String> {
     let path = String::from_utf8_lossy(&item.content).into_owned();
-    clipboard
-        .set_text(path.clone())
-        .map_err(|e| format!("Failed to write file path clipboard: {e}"))?;
+    let marker = text_copy_marker(&path);
+    set_copy_marker(&marker_state, &marker);
+
+    if let Err(e) = clipboard.set_text(path.clone()) {
+        clear_marker_if_current(&marker_state, &marker);
+        return Err(format!("Failed to write file path clipboard: {e}"));
+    }
+
     log::warn!(
         "Copied file clip {} as plain path text; native file-list clipboard format is not wired",
         item.id
     );
+    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
-fn write_html(clipboard: &mut Clipboard, item: &ClipItem) -> Result<(), String> {
+fn write_html(
+    clipboard: &mut Clipboard,
+    item: &ClipItem,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) -> Result<(), String> {
     let html = String::from_utf8_lossy(&item.content).into_owned();
+    let marker = text_copy_marker(&html);
+    set_copy_marker(&marker_state, &marker);
+
     if let Err(e) = clipboard.set_html(html.clone(), Some(html.clone())) {
         log::warn!(
             "HTML clipboard write failed for clip {}; falling back to plain text: {}",
             item.id,
             e
         );
-        clipboard
-            .set_text(html)
-            .map_err(|e| format!("Failed to write HTML fallback clipboard: {e}"))?;
+        if let Err(e) = clipboard.set_text(html) {
+            clear_marker_if_current(&marker_state, &marker);
+            return Err(format!("Failed to write HTML fallback clipboard: {e}"));
+        }
     } else {
         log::info!(
             "Copied HTML clip {} using native HTML clipboard format",
             item.id
         );
     }
+
+    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
-fn write_rtf_as_text(clipboard: &mut Clipboard, item: &ClipItem) -> Result<(), String> {
+fn write_rtf_as_text(
+    clipboard: &mut Clipboard,
+    item: &ClipItem,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) -> Result<(), String> {
     let rtf = String::from_utf8_lossy(&item.content).into_owned();
-    clipboard
-        .set_text(rtf)
-        .map_err(|e| format!("Failed to write RTF fallback clipboard: {e}"))?;
+    let marker = text_copy_marker(&rtf);
+    set_copy_marker(&marker_state, &marker);
+
+    if let Err(e) = clipboard.set_text(rtf) {
+        clear_marker_if_current(&marker_state, &marker);
+        return Err(format!("Failed to write RTF fallback clipboard: {e}"));
+    }
+
     log::warn!(
         "Copied RTF clip {} as plain text; native RTF clipboard format is not available via arboard",
         item.id
     );
+    schedule_marker_clear(marker_state, marker);
     Ok(())
+}
+
+fn text_copy_marker(text: &str) -> CopyMarker {
+    CopyMarker::from_payload(ContentType::Text, text.as_bytes())
 }
 
 fn normalized_image_payload(width: u64, height: u64, rgba_bytes: &[u8]) -> Vec<u8> {
@@ -318,4 +365,32 @@ fn send_paste_shortcut(modifier: Key) -> Result<(), String> {
 
     click_result?;
     release_result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paste_mode_resolution_uses_backend_auto_paste_setting() {
+        assert!(should_simulate_paste(PasteMode::Default, true));
+        assert!(!should_simulate_paste(PasteMode::Default, false));
+        assert!(should_simulate_paste(PasteMode::Paste, true));
+        assert!(!should_simulate_paste(PasteMode::Paste, false));
+        assert!(!should_simulate_paste(PasteMode::Copy, true));
+        assert!(!should_simulate_paste(PasteMode::Copy, false));
+        assert!(!should_simulate_paste(PasteMode::Opposite, true));
+        assert!(should_simulate_paste(PasteMode::Opposite, false));
+    }
+
+    #[test]
+    fn text_like_clipboard_writes_use_text_copy_marker() {
+        let marker = text_copy_marker("plain fallback");
+
+        assert_eq!(ContentType::Text, marker.content_type);
+        assert_eq!(
+            CopyMarker::from_payload(ContentType::Text, b"plain fallback"),
+            marker
+        );
+    }
 }

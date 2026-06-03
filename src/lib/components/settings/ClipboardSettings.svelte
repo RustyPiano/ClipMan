@@ -14,7 +14,7 @@
 
     let clearing = $state(false);
 
-    async function clearAllHistory() {
+    async function clearNonPinnedHistory() {
         if (
             !confirm(t.confirmClearHistory)
         ) {
@@ -23,9 +23,9 @@
 
         try {
             clearing = true;
-            await invoke("clear_all_history");
+            await invoke("clear_non_pinned_history");
         } catch (err) {
-            console.error("Failed to clear all history:", err);
+            console.error("Failed to clear non-pinned history:", err);
             alert(t.copyFailed + ": " + String(err));
         } finally {
             clearing = false;
@@ -70,23 +70,48 @@
         <div class="flex items-center justify-between">
             <div class="space-y-0.5">
                 <label
-                    for="store-original-image"
+                    for="auto-paste"
                     class="text-sm font-medium cursor-pointer"
                 >
-                    {t.storeOriginalImage}
+                    {t.autoPaste}
                 </label>
                 <p class="text-xs text-muted-foreground">
-                    {t.storeOriginalImageDesc}
+                    {t.autoPasteDesc}
                 </p>
             </div>
             <input
-                id="store-original-image"
+                id="auto-paste"
                 type="checkbox"
-                bind:checked={settings.storeOriginalImage}
+                bind:checked={settings.autoPaste}
                 class="w-11 h-6 appearance-none rounded-full relative cursor-pointer transition-colors
                        before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white checked:before:bg-primary-foreground before:rounded-full before:transition-transform
                        checked:before:translate-x-5"
-                style:background-color={settings.storeOriginalImage
+                style:background-color={settings.autoPaste
+                    ? "var(--primary)"
+                    : "var(--muted)"}
+            />
+        </div>
+
+        <div class="flex items-center justify-between">
+            <div class="space-y-0.5">
+                <label
+                    for="ignore-concealed"
+                    class="text-sm font-medium cursor-pointer"
+                >
+                    {t.ignoreConcealed}
+                </label>
+                <p class="text-xs text-muted-foreground">
+                    {t.ignoreConcealedDesc}
+                </p>
+            </div>
+            <input
+                id="ignore-concealed"
+                type="checkbox"
+                bind:checked={settings.ignoreConcealed}
+                class="w-11 h-6 appearance-none rounded-full relative cursor-pointer transition-colors
+                       before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white checked:before:bg-primary-foreground before:rounded-full before:transition-transform
+                       checked:before:translate-x-5"
+                style:background-color={settings.ignoreConcealed
                     ? "var(--primary)"
                     : "var(--muted)"}
             />
@@ -103,7 +128,7 @@
                 <Button
                     type="button"
                     variant="destructive"
-                    onclick={clearAllHistory}
+                    onclick={clearNonPinnedHistory}
                     disabled={clearing}
                     class="gap-2"
                 >

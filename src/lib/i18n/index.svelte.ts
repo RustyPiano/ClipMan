@@ -16,6 +16,8 @@ export interface Translations {
   copied: string;
   pin: string;
   unpin: string;
+  editLabel: string;
+  labelPlaceholder: string;
   delete: string;
   clear: string;
   clearNonPinned: string;
@@ -67,12 +69,16 @@ export interface Translations {
   alreadyCurrentHotkey: string;
   commonHotkeys: string;
   advancedManualInput: string;
+  pinnedShortcut: string;
+  pinnedShortcutDesc: string;
   
   // Clipboard settings
   maxHistoryItems: string;
   maxHistoryItemsDesc: string;
-  storeOriginalImage: string;
-  storeOriginalImageDesc: string;
+  autoPaste: string;
+  autoPasteDesc: string;
+  ignoreConcealed: string;
+  ignoreConcealedDesc: string;
   
   // Appearance settings
   themeMode: string;
@@ -160,6 +166,8 @@ const zh: Translations = {
   copied: '已复制',
   pin: '置顶',
   unpin: '取消置顶',
+  editLabel: '编辑标签',
+  labelPlaceholder: '输入常用项标签',
   delete: '删除',
   clear: '清除',
   clearNonPinned: '清除非置顶',
@@ -211,12 +219,16 @@ const zh: Translations = {
   alreadyCurrentHotkey: '这已经是当前快捷键了',
   commonHotkeys: '常用快捷键:',
   advancedManualInput: '高级：手动输入...',
+  pinnedShortcut: '常用快捷键',
+  pinnedShortcutDesc: '可选。设置后直接打开常用面板；留空则不绑定。',
   
   // Clipboard settings
   maxHistoryItems: '历史记录数量',
   maxHistoryItemsDesc: '保留的最大历史记录数量',
-  storeOriginalImage: '存储原图',
-  storeOriginalImageDesc: '保存原始图片而非缩略图（占用更多空间）',
+  autoPaste: '自动粘贴',
+  autoPasteDesc: '从 QuickBar 取用时自动粘回当前应用；关闭后只复制。',
+  ignoreConcealed: '忽略密码类剪贴板',
+  ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
   
   // Appearance settings
   themeMode: '主题模式',
@@ -304,6 +316,8 @@ const en: Translations = {
   copied: 'Copied',
   pin: 'Pin',
   unpin: 'Unpin',
+  editLabel: 'Edit label',
+  labelPlaceholder: 'Enter pinned label',
   delete: 'Delete',
   clear: 'Clear',
   clearNonPinned: 'Clear Non-pinned',
@@ -355,12 +369,16 @@ const en: Translations = {
   alreadyCurrentHotkey: 'This is already the current hotkey',
   commonHotkeys: 'Common hotkeys:',
   advancedManualInput: 'Advanced: Manual input...',
+  pinnedShortcut: 'Pinned shortcut',
+  pinnedShortcutDesc: 'Optional. Opens QuickBar directly on the pinned panel; leave empty to disable.',
   
   // Clipboard settings
   maxHistoryItems: 'History limit',
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
-  storeOriginalImage: 'Store original images',
-  storeOriginalImageDesc: 'Save original images instead of thumbnails (uses more space)',
+  autoPaste: 'Auto-paste',
+  autoPasteDesc: 'Paste selected QuickBar items back into the current app; off means copy only.',
+  ignoreConcealed: 'Ignore concealed clipboard content',
+  ignoreConcealedDesc: 'Skip clipboard payloads marked as passwords, transient, or excluded from history.',
   
   // Appearance settings
   themeMode: 'Theme',

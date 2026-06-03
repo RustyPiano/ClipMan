@@ -8,7 +8,7 @@
   import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
   import { i18n } from '$lib/i18n';
-  import type { ClipItem, PasteMode } from '$lib/types';
+  import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
   import SettingsPage from './settings/+page.svelte';
@@ -31,6 +31,10 @@
   import { flip } from 'svelte/animate';
 
   const SEARCH_INPUT_ID = 'quickbar-search';
+
+  interface QuickBarOpenedPayload {
+    panel?: QuickBarPanel;
+  }
 
   const t = $derived(i18n.t);
   const displayItems = $derived(
@@ -82,9 +86,7 @@
   }
 
   function modeForDefault(opposite = false): PasteMode {
-    const defaultMode: PasteMode = clipboardStore.autoPaste ? 'paste' : 'copy';
-    if (!opposite) return defaultMode;
-    return defaultMode === 'paste' ? 'copy' : 'paste';
+    return opposite ? 'opposite' : 'default';
   }
 
   async function useItem(item: ClipItem | undefined, mode: PasteMode = modeForDefault()) {
@@ -116,6 +118,22 @@
     await clipboardStore.deleteItem(item.id);
   }
 
+  async function reorderSelectedPinned(direction: ReorderDirection) {
+    if (selectionStore.panel !== 'pinned') return;
+
+    const item = getSelectedItem();
+    if (!item?.isPinned) return;
+
+    await clipboardStore.reorderPinned(item.id, direction);
+
+    const nextIndex = clipboardStore.pinnedDisplayItems.findIndex(
+      (pinnedItem) => pinnedItem.id === item.id,
+    );
+    if (nextIndex >= 0) {
+      selectionStore.setSelectedIndex(nextIndex, clipboardStore.pinnedDisplayItems.length);
+    }
+  }
+
   async function clearHistory() {
     if (confirm(t.confirmClearHistory)) {
       await clipboardStore.clearNonPinned();
@@ -136,6 +154,17 @@
     const activeElement = document.activeElement;
     const activeTextInput = isTextInput(activeElement);
     const hasModifier = event.metaKey || event.ctrlKey;
+
+    if (
+      selectionStore.panel === 'pinned' &&
+      hasModifier &&
+      event.shiftKey &&
+      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
+    ) {
+      event.preventDefault();
+      void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
+      return;
+    }
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -200,10 +229,13 @@
 
     let unlistenQuickbarOpened: (() => void) | undefined;
 
-    void listen('quickbar-opened', () => {
-      selectionStore.reset('recent');
-      void clipboardStore.refreshSettings();
-      focusSearchInput();
+    void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
+      selectionStore.reset(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
+      void (async () => {
+        await clipboardStore.clearSearch();
+        await clipboardStore.refreshSettings();
+        focusSearchInput();
+      })();
     }).then((unlisten) => {
       unlistenQuickbarOpened = unlisten;
     });

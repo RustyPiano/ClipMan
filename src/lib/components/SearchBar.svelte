@@ -47,6 +47,13 @@
   onDestroy(() => {
     clearTimeout(debounceTimer);
   });
+
+  $effect(() => {
+    if (clipboardStore.searchQuery === '') {
+      clearTimeout(debounceTimer);
+      searchQuery = '';
+    }
+  });
 </script>
 
 <div class="relative mx-auto w-full max-w-md">

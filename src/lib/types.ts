@@ -32,8 +32,6 @@ export interface Settings {
   maxHistoryItems: number;
   autoCleanup: boolean;
   trayTextLength: number;
-  /** @deprecated Removed from backend in v2; settings UI removal lands in WP-2.B. */
-  storeOriginalImage?: boolean;
   maxPinnedInTray: number;
   maxRecentInTray: number;
   customDataPath: string | null;
@@ -41,7 +39,7 @@ export interface Settings {
   locale: string;
 }
 
-export type PasteMode = 'paste' | 'copy';
+export type PasteMode = 'default' | 'opposite' | 'paste' | 'copy';
 
 export type ReorderDirection = 'up' | 'down';
 

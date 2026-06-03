@@ -16,8 +16,9 @@ use commands::{
     copy_clip_to_clipboard_internal, copy_to_system_clipboard, delete_clip,
     disable_global_shortcut, enable_global_shortcut, get_clipboard_history, get_current_data_path,
     get_pinned_clips, get_recent_clips, get_settings, hide_quickbar, install_update,
-    migrate_data_location, open_folder, open_settings_window, paste_clip, reorder_pinned,
-    search_clips, set_clip_label, toggle_pin, update_settings,
+    migrate_data_location, open_folder, open_settings_window, paste_clip,
+    register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, toggle_pin,
+    update_settings,
 };
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};
@@ -26,7 +27,6 @@ use tray::{build_tray_menu, TrayIconCache};
 use std::sync::{Arc, Mutex};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(target_os = "macos")]
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
@@ -227,30 +227,40 @@ fn main() {
 
             // Register global shortcuts
             let state: tauri::State<AppState> = app_handle.state();
-            let current_shortcut = state.settings.get().global_shortcut;
+            let settings = state.settings.get();
+            let current_shortcut = settings.global_shortcut;
+            let pinned_shortcut = settings.pinned_shortcut;
 
-            let app_handle_hotkey = app.handle().clone();
-            let quickbar_foreground_hotkey = quickbar_foreground_window.clone();
-            let shortcut_display = current_shortcut.clone();
-            app.global_shortcut()
-                .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        log::info!("Global shortcut triggered: {}", shortcut_display);
-                        if let Err(e) =
-                            window::show_quickbar(&app_handle_hotkey, &quickbar_foreground_hotkey)
-                        {
-                            log::error!("Failed to show QuickBar: {}", e);
-                        }
-                    }
-                })
-                .map_err(|e| {
-                    log::error!(
-                        "Failed to register global shortcut '{}': {}",
-                        current_shortcut,
-                        e
+            let main_shortcut_registered = register_quickbar_shortcut(
+                app.handle(),
+                current_shortcut.as_str(),
+                quickbar_foreground_window.clone(),
+                window::QuickBarPanel::Recent,
+            );
+
+            if let Err(e) = main_shortcut_registered {
+                log::error!("{}", e);
+            }
+
+            if let Some(pinned_shortcut) = pinned_shortcut {
+                if pinned_shortcut == current_shortcut {
+                    log::warn!(
+                        "Skipping pinned shortcut '{}' because it matches the main shortcut",
+                        pinned_shortcut
                     );
-                    e
-                })?;
+                } else {
+                    if let Err(e) = register_quickbar_shortcut(
+                        app.handle(),
+                        pinned_shortcut.as_str(),
+                        quickbar_foreground_window.clone(),
+                        window::QuickBarPanel::Pinned,
+                    ) {
+                        log::warn!("{}", e);
+                    } else {
+                        log::info!("Pinned shortcut registered: {}", pinned_shortcut);
+                    }
+                }
+            }
 
             log::info!("Global shortcuts registered: {}", current_shortcut);
 

@@ -144,6 +144,11 @@ pub async fn clear_all_history(app: AppHandle, state: State<'_, AppState>) -> Re
 
     state.icon_cache.clear();
     update_tray_menu(&app);
+
+    if let Err(e) = app.emit("history-cleared", ()) {
+        log::error!("Failed to emit history-cleared event: {}", e);
+    }
+
     Ok(())
 }
 
@@ -321,9 +326,20 @@ pub async fn copy_clip_to_clipboard_internal(
         }
         ContentType::File => {
             let path = String::from_utf8_lossy(&item.content).to_string();
-            clipboard
-                .set_text(path.clone())
-                .map_err(|e| e.to_string())?;
+            let marker = CopyMarker::from_payload(ContentType::Text, path.as_bytes());
+
+            {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                *last_copied = Some(marker.clone());
+            }
+
+            if let Err(e) = clipboard.set_text(path.clone()) {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                }
+                return Err(e.to_string());
+            }
             log::info!("✅ Copied file path to clipboard: {}", path);
 
             if show_notification {
@@ -335,10 +351,33 @@ pub async fn copy_clip_to_clipboard_internal(
                     .body("文件路径已复制到剪贴板")
                     .show();
             }
+
+            let last_copied_by_us = state.last_copied_by_us.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let mut last_copied = safe_lock(&last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                    log::debug!("🧹 Cleared self-copy marker");
+                }
+            });
         }
         ContentType::Html | ContentType::Rtf => {
             let text = String::from_utf8_lossy(&item.content).to_string();
-            clipboard.set_text(text).map_err(|e| e.to_string())?;
+            let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
+
+            {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                *last_copied = Some(marker.clone());
+            }
+
+            if let Err(e) = clipboard.set_text(text) {
+                let mut last_copied = safe_lock(&state.last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                }
+                return Err(e.to_string());
+            }
             log::info!("✅ Copied rich text to clipboard as plain text");
 
             if show_notification {
@@ -350,6 +389,16 @@ pub async fn copy_clip_to_clipboard_internal(
                     .body("富文本已复制到剪贴板")
                     .show();
             }
+
+            let last_copied_by_us = state.last_copied_by_us.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let mut last_copied = safe_lock(&last_copied_by_us);
+                if last_copied.as_ref() == Some(&marker) {
+                    *last_copied = None;
+                    log::debug!("🧹 Cleared self-copy marker");
+                }
+            });
         }
     }
 
@@ -380,22 +429,82 @@ pub async fn paste_clip(
     crate::paste::paste_clip(app, state.inner(), id, mode).await
 }
 
+pub fn register_quickbar_shortcut(
+    app: &AppHandle,
+    shortcut: &str,
+    foreground_store: crate::window::ForegroundWindowStore,
+    panel: crate::window::QuickBarPanel,
+) -> Result<(), String> {
+    let app_clone = app.clone();
+    let shortcut_display = shortcut.to_string();
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::info!("Global shortcut triggered: {}", shortcut_display);
+                let result = match panel {
+                    crate::window::QuickBarPanel::Recent => {
+                        crate::window::show_quickbar(&app_clone, &foreground_store)
+                    }
+                    crate::window::QuickBarPanel::Pinned => {
+                        crate::window::show_quickbar_with_panel(
+                            &app_clone,
+                            &foreground_store,
+                            panel,
+                        )
+                    }
+                };
+
+                if let Err(e) = result {
+                    log::error!("Failed to show QuickBar: {}", e);
+                }
+            }
+        })
+        .map_err(|e| format!("Failed to register shortcut '{}': {}", shortcut, e))
+}
+
 #[tauri::command]
 pub async fn set_clip_label(
-    _state: State<'_, AppState>,
-    _id: String,
-    _label: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    label: Option<String>,
 ) -> Result<(), String> {
-    Err("not implemented".into())
+    let storage = state.storage.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage
+            .set_clip_label(&id, label)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    update_tray_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn reorder_pinned(
-    _state: State<'_, AppState>,
-    _id: String,
-    _direction: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    direction: String,
 ) -> Result<(), String> {
-    Err("not implemented".into())
+    let storage = state.storage.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        storage
+            .reorder_pinned(&id, direction.as_str())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    update_tray_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -504,27 +613,165 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     }
 }
 
+fn normalize_optional_shortcut(shortcut: Option<String>) -> Option<String> {
+    shortcut
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) -> bool {
+    match app.global_shortcut().unregister(shortcut) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!(
+                "Failed to unregister {label} shortcut '{}': {}",
+                shortcut,
+                e
+            );
+            false
+        }
+    }
+}
+
+fn restore_shortcut(
+    app: &AppHandle,
+    shortcut: &str,
+    foreground_store: crate::window::ForegroundWindowStore,
+    panel: crate::window::QuickBarPanel,
+    label: &str,
+) {
+    if let Err(e) = register_quickbar_shortcut(app, shortcut, foreground_store, panel) {
+        log::warn!("Failed to restore {label} shortcut '{}': {}", shortcut, e);
+    }
+}
+
+fn apply_shortcut_changes(
+    app: &AppHandle,
+    foreground_store: crate::window::ForegroundWindowStore,
+    old_shortcut: &str,
+    old_pinned_shortcut: Option<&str>,
+    new_shortcut: &str,
+    new_pinned_shortcut: Option<&str>,
+) -> Result<(), String> {
+    let shortcut_changed = old_shortcut != new_shortcut;
+    let pinned_shortcut_changed = old_pinned_shortcut != new_pinned_shortcut;
+
+    if !shortcut_changed && !pinned_shortcut_changed {
+        return Ok(());
+    }
+
+    let mut new_main_registered = false;
+    let mut old_main_unregistered = false;
+    let mut old_pinned_unregistered = false;
+
+    if pinned_shortcut_changed && old_pinned_shortcut == Some(new_shortcut) {
+        old_pinned_unregistered = unregister_shortcut_if_active(app, new_shortcut, "old pinned");
+    }
+
+    if shortcut_changed {
+        if let Err(e) = register_quickbar_shortcut(
+            app,
+            new_shortcut,
+            foreground_store.clone(),
+            crate::window::QuickBarPanel::Recent,
+        ) {
+            if old_pinned_unregistered {
+                if let Some(old_pinned_shortcut) = old_pinned_shortcut {
+                    restore_shortcut(
+                        app,
+                        old_pinned_shortcut,
+                        foreground_store,
+                        crate::window::QuickBarPanel::Pinned,
+                        "old pinned",
+                    );
+                }
+            }
+            return Err(e);
+        }
+        new_main_registered = true;
+    }
+
+    if shortcut_changed && new_pinned_shortcut == Some(old_shortcut) {
+        old_main_unregistered = unregister_shortcut_if_active(app, old_shortcut, "old main");
+    }
+
+    if pinned_shortcut_changed {
+        if let Some(new_pinned_shortcut) = new_pinned_shortcut {
+            if let Err(e) = register_quickbar_shortcut(
+                app,
+                new_pinned_shortcut,
+                foreground_store.clone(),
+                crate::window::QuickBarPanel::Pinned,
+            ) {
+                if new_main_registered {
+                    let _ = app.global_shortcut().unregister(new_shortcut);
+                }
+                if old_main_unregistered {
+                    restore_shortcut(
+                        app,
+                        old_shortcut,
+                        foreground_store.clone(),
+                        crate::window::QuickBarPanel::Recent,
+                        "old main",
+                    );
+                }
+                if old_pinned_unregistered {
+                    if let Some(old_pinned_shortcut) = old_pinned_shortcut {
+                        restore_shortcut(
+                            app,
+                            old_pinned_shortcut,
+                            foreground_store,
+                            crate::window::QuickBarPanel::Pinned,
+                            "old pinned",
+                        );
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    if shortcut_changed && !old_main_unregistered {
+        unregister_shortcut_if_active(app, old_shortcut, "old main");
+    }
+
+    if pinned_shortcut_changed && !old_pinned_unregistered {
+        if let Some(old_pinned_shortcut) = old_pinned_shortcut {
+            unregister_shortcut_if_active(app, old_pinned_shortcut, "old pinned");
+        }
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    settings.pinned_shortcut = normalize_optional_shortcut(settings.pinned_shortcut.take());
     log::info!("Updating settings: {:?}", settings);
 
-    let old_shortcut = state.settings.get().global_shortcut;
-    let old_tray_text_length = state.settings.get().tray_text_length;
-    let old_autostart = state.settings.get().enable_autostart;
-    let old_locale = state.settings.get().locale;
+    let old_settings = state.settings.get();
+    let old_shortcut = old_settings.global_shortcut;
+    let old_pinned_shortcut = old_settings.pinned_shortcut;
+    let old_tray_text_length = old_settings.tray_text_length;
+    let old_autostart = old_settings.enable_autostart;
+    let old_locale = old_settings.locale;
     let new_shortcut = settings.global_shortcut.clone();
+    let new_pinned_shortcut = settings.pinned_shortcut.clone();
+
+    if new_pinned_shortcut.as_deref() == Some(new_shortcut.as_str()) {
+        return Err("Pinned shortcut cannot match the main global shortcut".to_string());
+    }
+
     let shortcut_changed = old_shortcut != new_shortcut;
+    let pinned_shortcut_changed = old_pinned_shortcut != new_pinned_shortcut;
     let tray_text_changed = old_tray_text_length != settings.tray_text_length;
     let autostart_changed = old_autostart != settings.enable_autostart;
     let locale_changed = old_locale != settings.locale;
     let quickbar_foreground_window = state.quickbar_foreground_window.clone();
-
-    state.settings.set(settings.clone());
-    state.settings.save(&app)?;
 
     // Update autostart if changed
     if autostart_changed {
@@ -551,38 +798,19 @@ pub async fn update_settings(
         );
     }
 
-    // Re-register hotkey if changed
-    if shortcut_changed {
-        log::info!(
-            "Hotkey changed from '{}' to '{}', re-registering...",
-            old_shortcut,
-            new_shortcut
-        );
-
-        if let Err(e) = app.global_shortcut().unregister(old_shortcut.as_str()) {
-            log::warn!(
-                "Failed to unregister old shortcut '{}': {}",
-                old_shortcut,
-                e
-            );
-        }
-
-        let app_clone = app.clone();
-        let foreground_store = quickbar_foreground_window.clone();
-        let new_shortcut_clone = new_shortcut.clone();
-        app.global_shortcut()
-            .on_shortcut(new_shortcut.as_str(), move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    log::info!("Global shortcut triggered: {}", new_shortcut_clone);
-                    if let Err(e) = crate::window::show_quickbar(&app_clone, &foreground_store) {
-                        log::error!("Failed to show QuickBar: {}", e);
-                    }
-                }
-            })
-            .map_err(|e| format!("Failed to register new shortcut '{}': {}", new_shortcut, e))?;
-
-        log::info!("Hotkey successfully updated to '{}'", new_shortcut);
+    if shortcut_changed || pinned_shortcut_changed {
+        apply_shortcut_changes(
+            &app,
+            quickbar_foreground_window,
+            old_shortcut.as_str(),
+            old_pinned_shortcut.as_deref(),
+            new_shortcut.as_str(),
+            new_pinned_shortcut.as_deref(),
+        )?;
     }
+
+    state.settings.set(settings.clone());
+    state.settings.save(&app)?;
 
     // Rebuild tray menu if text length or locale changed
     if tray_text_changed || locale_changed {
@@ -617,7 +845,8 @@ pub async fn disable_global_shortcut(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current_shortcut = state.settings.get().global_shortcut;
+    let settings = state.settings.get();
+    let current_shortcut = settings.global_shortcut;
 
     if let Err(e) = app.global_shortcut().unregister(current_shortcut.as_str()) {
         log::warn!(
@@ -632,6 +861,19 @@ pub async fn disable_global_shortcut(
         "Global shortcut '{}' temporarily disabled",
         current_shortcut
     );
+
+    if let Some(pinned_shortcut) = settings.pinned_shortcut {
+        if let Err(e) = app.global_shortcut().unregister(pinned_shortcut.as_str()) {
+            log::warn!(
+                "Failed to disable pinned shortcut '{}': {}",
+                pinned_shortcut,
+                e
+            );
+        } else {
+            log::info!("Pinned shortcut '{}' temporarily disabled", pinned_shortcut);
+        }
+    }
+
     Ok(())
 }
 
@@ -640,23 +882,33 @@ pub async fn enable_global_shortcut(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let current_shortcut = state.settings.get().global_shortcut;
-    let app_clone = app.clone();
-    let shortcut_clone = current_shortcut.clone();
+    let settings = state.settings.get();
+    let current_shortcut = settings.global_shortcut;
     let foreground_store = state.quickbar_foreground_window.clone();
 
-    app.global_shortcut()
-        .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                log::info!("Global shortcut triggered: {}", shortcut_clone);
-                if let Err(e) = crate::window::show_quickbar(&app_clone, &foreground_store) {
-                    log::error!("Failed to show QuickBar: {}", e);
-                }
-            }
-        })
-        .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
+    register_quickbar_shortcut(
+        &app,
+        current_shortcut.as_str(),
+        foreground_store.clone(),
+        crate::window::QuickBarPanel::Recent,
+    )
+    .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
 
     log::info!("Global shortcut '{}' re-enabled", current_shortcut);
+
+    if let Some(pinned_shortcut) = settings.pinned_shortcut {
+        if pinned_shortcut != current_shortcut {
+            register_quickbar_shortcut(
+                &app,
+                pinned_shortcut.as_str(),
+                foreground_store,
+                crate::window::QuickBarPanel::Pinned,
+            )
+            .map_err(|e| format!("Failed to re-enable pinned shortcut: {}", e))?;
+            log::info!("Pinned shortcut '{}' re-enabled", pinned_shortcut);
+        }
+    }
+
     Ok(())
 }
 

@@ -2,10 +2,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
-import type { ClipItem, PasteMode } from '$lib/types';
+import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
 
 // Re-export type for convenience
 export type { ClipItem } from '$lib/types';
+
+function comparePinOrder(a: ClipItem, b: ClipItem) {
+  const aOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
+  return aOrder - bOrder || b.timestamp - a.timestamp;
+}
 
 class ClipboardStore {
   recentItems = $state<ClipItem[]>([]);
@@ -27,7 +33,7 @@ class ClipboardStore {
 
   pinnedDisplayItems = $derived(
     this.searchQuery.trim()
-      ? this.searchResults.filter((item) => item.isPinned)
+      ? this.searchResults.filter((item) => item.isPinned).sort(comparePinOrder)
       : this.pinnedItems,
   );
 
@@ -115,6 +121,12 @@ class ClipboardStore {
     }
   }
 
+  async clearSearch() {
+    this.searchQuery = '';
+    this.searchResults = [];
+    await this.loadHistory();
+  }
+
   async clearNonPinned() {
     try {
       await invoke('clear_non_pinned_history');
@@ -147,7 +159,32 @@ class ClipboardStore {
     }
   }
 
-  async useClip(item: ClipItem, mode: PasteMode = 'paste') {
+  async setClipLabel(id: string, label: string) {
+    const normalizedLabel = label.trim();
+
+    try {
+      await invoke('set_clip_label', {
+        id,
+        label: normalizedLabel.length > 0 ? normalizedLabel : null,
+      });
+      await this.reloadFromBackend();
+    } catch (error) {
+      console.error('Failed to set clip label:', error);
+      throw error;
+    }
+  }
+
+  async reorderPinned(id: string, direction: ReorderDirection) {
+    try {
+      await invoke('reorder_pinned', { id, direction });
+      await this.reloadFromBackend();
+    } catch (error) {
+      console.error('Failed to reorder pinned item:', error);
+      throw error;
+    }
+  }
+
+  async useClip(item: ClipItem, mode: PasteMode = 'default') {
     try {
       await invoke('paste_clip', { id: item.id, mode });
     } catch (error) {

@@ -32,6 +32,17 @@
         },
     ];
 
+    const pinnedShortcutPresets = [
+        {
+            label: isMac ? "⌘⇧P" : "Ctrl+Shift+P",
+            value: "CommandOrControl+Shift+P",
+        },
+        {
+            label: isMac ? "⌘⌥V" : "Ctrl+Alt+V",
+            value: "CommandOrControl+Alt+V",
+        },
+    ];
+
     // Convert Tauri shortcut to display format
     function formatShortcut(shortcut: string): string[] {
         if (!shortcut) return [];
@@ -157,6 +168,11 @@
     let formattedKeys = $state<string[]>(
         formatShortcut(settings.globalShortcut),
     );
+
+    function handlePinnedShortcutInput(event: Event) {
+        const value = (event.currentTarget as HTMLInputElement).value.trim();
+        settings.pinnedShortcut = value.length > 0 ? value : null;
+    }
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -334,6 +350,54 @@
                     />
                 </div>
             </details>
+        </div>
+
+        <div class="space-y-3 border-t border-border pt-6">
+            <div class="space-y-1">
+                <label for="pinned-shortcut-input" class="text-sm font-medium"
+                    >{t.pinnedShortcut}</label
+                >
+                <p class="text-xs text-muted-foreground">
+                    {t.pinnedShortcutDesc}
+                </p>
+            </div>
+
+            <div class="flex gap-2">
+                <Input
+                    id="pinned-shortcut-input"
+                    type="text"
+                    value={settings.pinnedShortcut ?? ""}
+                    oninput={handlePinnedShortcutInput}
+                    placeholder="CommandOrControl+Shift+P"
+                    class="text-sm font-mono"
+                />
+                <Button
+                    type="button"
+                    variant="outline"
+                    onclick={() => (settings.pinnedShortcut = null)}
+                    disabled={!settings.pinnedShortcut}
+                >
+                    {t.clear}
+                </Button>
+            </div>
+
+            <div class="flex flex-wrap gap-2 pt-1">
+                <span class="text-xs text-muted-foreground self-center"
+                    >{t.commonHotkeys}</span
+                >
+                {#each pinnedShortcutPresets as preset}
+                    <Button
+                        type="button"
+                        variant={settings.pinnedShortcut === preset.value
+                            ? "default"
+                            : "outline"}
+                        size="sm"
+                        onclick={() => (settings.pinnedShortcut = preset.value)}
+                    >
+                        {preset.label}
+                    </Button>
+                {/each}
+            </div>
         </div>
     </Card>
 </div>

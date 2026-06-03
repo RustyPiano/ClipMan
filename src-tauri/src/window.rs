@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
 pub const QUICKBAR_WINDOW_LABEL: &str = "main";
@@ -8,6 +9,27 @@ pub const QUICKBAR_WIDTH: u32 = 560;
 pub const QUICKBAR_HEIGHT: u32 = 420;
 
 pub type ForegroundWindowStore = Arc<Mutex<Option<ForegroundWindow>>>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum QuickBarPanel {
+    Recent,
+    Pinned,
+}
+
+impl QuickBarPanel {
+    fn as_str(self) -> &'static str {
+        match self {
+            QuickBarPanel::Recent => "recent",
+            QuickBarPanel::Pinned => "pinned",
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickBarOpenedPayload {
+    panel: &'static str,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForegroundWindow {
@@ -38,6 +60,14 @@ pub fn show_quickbar(
     app: &AppHandle,
     foreground_store: &ForegroundWindowStore,
 ) -> Result<(), String> {
+    show_quickbar_with_panel(app, foreground_store, QuickBarPanel::Recent)
+}
+
+pub fn show_quickbar_with_panel(
+    app: &AppHandle,
+    foreground_store: &ForegroundWindowStore,
+    panel: QuickBarPanel,
+) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
 
     remember_foreground_window(foreground_store, &quickbar);
@@ -46,7 +76,13 @@ pub fn show_quickbar(
     quickbar.unminimize().map_err(to_string)?;
     quickbar.show().map_err(to_string)?;
     focus_quickbar(&quickbar)?;
-    app.emit("quickbar-opened", ()).map_err(to_string)?;
+    app.emit(
+        "quickbar-opened",
+        QuickBarOpenedPayload {
+            panel: panel.as_str(),
+        },
+    )
+    .map_err(to_string)?;
 
     Ok(())
 }

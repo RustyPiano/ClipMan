@@ -258,11 +258,59 @@ impl ClipStorage {
     }
 
     pub fn set_clip_label(&self, id: &str, label: Option<String>) -> Result<()> {
+        let label = normalize_label(label);
+
         self.conn.execute(
             "UPDATE clips SET label = ?1 WHERE id = ?2",
             params![label, id],
         )?;
         self.sync_fts_for_clip_id(id)?;
+        Ok(())
+    }
+
+    pub fn reorder_pinned(&self, id: &str, direction: &str) -> Result<()> {
+        let move_up = match direction {
+            "up" => true,
+            "down" => false,
+            _ => return Err(rusqlite::Error::InvalidParameterName(direction.to_string())),
+        };
+
+        let mut pinned_ids = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id
+                 FROM clips
+                 WHERE is_pinned = 1
+                 ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>>>()?
+        };
+
+        let Some(index) = pinned_ids.iter().position(|pinned_id| pinned_id == id) else {
+            return Ok(());
+        };
+
+        let swap_index = if move_up {
+            if index == 0 {
+                return Ok(());
+            }
+            index - 1
+        } else {
+            if index + 1 >= pinned_ids.len() {
+                return Ok(());
+            }
+            index + 1
+        };
+
+        pinned_ids.swap(index, swap_index);
+
+        for (index, pinned_id) in pinned_ids.iter().enumerate() {
+            self.conn.execute(
+                "UPDATE clips SET pin_order = ?1 WHERE id = ?2",
+                params![(index + 1) as i32, pinned_id],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -510,12 +558,7 @@ impl ClipStorage {
         self.conn.execute(
             "INSERT INTO clips_fts(rowid, clip_id, search_text, label)
              VALUES (?1, ?2, ?3, ?4)",
-            params![
-                payload.rowid,
-                payload.clip_id,
-                search_text,
-                payload.label,
-            ],
+            params![payload.rowid, payload.clip_id, search_text, payload.label,],
         )?;
         Ok(())
     }
@@ -561,6 +604,12 @@ fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
         }
         ContentType::Image => String::new(),
     }
+}
+
+fn normalize_label(label: Option<String>) -> Option<String> {
+    label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn escape_fts_query(query: &str) -> String {
@@ -714,7 +763,10 @@ mod tests {
         let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
 
         storage
-            .insert(&labeled_item("labeled", b"deploy command", "work email", 1), 100)
+            .insert(
+                &labeled_item("labeled", b"deploy command", "work email", 1),
+                100,
+            )
             .unwrap();
 
         let indexed_label: String = storage
@@ -806,6 +858,87 @@ mod tests {
             .map(|item| item.id)
             .collect();
         assert_eq!(vec!["pinned-first", "pinned-later"], pinned_ids);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn set_clip_label_trims_empty_labels_and_updates_search_index() {
+        let db_path = temp_db_path("label_update");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        storage
+            .insert(&test_item("clip", b"body text", 1, true, Some(1)), 100)
+            .unwrap();
+
+        storage
+            .set_clip_label("clip", Some("  work email  ".to_string()))
+            .unwrap();
+
+        let item = storage.get_by_id("clip").unwrap().unwrap();
+        assert_eq!(Some("work email".to_string()), item.label);
+
+        let search_ids: Vec<String> = storage
+            .search("email")
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["clip"], search_ids);
+
+        storage
+            .set_clip_label("clip", Some("   ".to_string()))
+            .unwrap();
+
+        let item = storage.get_by_id("clip").unwrap().unwrap();
+        assert_eq!(None, item.label);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn reorder_pinned_swaps_adjacent_items_and_renumbers_slots() {
+        let db_path = temp_db_path("reorder_pinned");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        storage
+            .insert(&test_item("first", b"first", 30, true, Some(10)), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("second", b"second", 20, true, Some(20)), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("third", b"third", 10, true, Some(30)), 100)
+            .unwrap();
+
+        storage.reorder_pinned("second", "up").unwrap();
+
+        let pinned: Vec<(String, Option<i32>)> = storage
+            .get_pinned_clips()
+            .unwrap()
+            .into_iter()
+            .map(|item| (item.id, item.pin_order))
+            .collect();
+        assert_eq!(
+            vec![
+                ("second".to_string(), Some(1)),
+                ("first".to_string(), Some(2)),
+                ("third".to_string(), Some(3)),
+            ],
+            pinned
+        );
+
+        storage.reorder_pinned("second", "down").unwrap();
+
+        let pinned_ids: Vec<String> = storage
+            .get_pinned_clips()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["first", "second", "third"], pinned_ids);
 
         drop(storage);
         cleanup_db(&db_path);
