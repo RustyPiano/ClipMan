@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -68,7 +68,7 @@ pub async fn paste_clip(
     hide_quickbar(&app)?;
 
     if should_simulate_paste(mode, auto_paste) {
-        match simulate_paste(state)? {
+        match simulate_paste(&app, state)? {
             PasteSimulation::Pasted => log::info!("Pasted clip {}", item.id),
             PasteSimulation::CopiedOnly => {
                 log::warn!(
@@ -231,13 +231,11 @@ fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn simulate_paste(state: &AppState) -> Result<PasteSimulation, String> {
+fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
     // The QuickBar stole keyboard focus while it was open. It is now hidden, so
     // bring the previously frontmost app back to the front before pressing
     // Cmd+V; otherwise the keystroke is delivered to nothing.
-    if let Err(e) =
-        crate::window::restore_recorded_foreground_window(&state.quickbar_foreground_window)
-    {
+    if let Err(e) = restore_recorded_foreground_window_on_main_thread(app, state) {
         log::warn!("Could not reactivate previous app before paste: {}", e);
     }
     // Give the reactivated app a brief moment to become key and accept input.
@@ -248,14 +246,34 @@ fn simulate_paste(state: &AppState) -> Result<PasteSimulation, String> {
         .map_err(|e| format!("accessibility_permission_required_or_input_simulation_failed: {e}"))
 }
 
+#[cfg(target_os = "macos")]
+fn restore_recorded_foreground_window_on_main_thread(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<(), String> {
+    let foreground_store = state.quickbar_foreground_window.clone();
+    let (sender, receiver) = mpsc::channel();
+
+    app.run_on_main_thread(move || {
+        let _ = sender.send(crate::window::restore_recorded_foreground_window(
+            &foreground_store,
+        ));
+    })
+    .map_err(|e| format!("Failed to schedule foreground restore on main thread: {e}"))?;
+
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("Timed out waiting for foreground restore: {e}"))?
+}
+
 #[cfg(target_os = "windows")]
-fn simulate_paste(state: &AppState) -> Result<PasteSimulation, String> {
+fn simulate_paste(_app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
     crate::window::restore_recorded_foreground_window(&state.quickbar_foreground_window)?;
     send_paste_shortcut(Key::Control).map(|_| PasteSimulation::Pasted)
 }
 
 #[cfg(target_os = "linux")]
-fn simulate_paste(_state: &AppState) -> Result<PasteSimulation, String> {
+fn simulate_paste(_app: &AppHandle, _state: &AppState) -> Result<PasteSimulation, String> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         log::warn!("Wayland detected; degrading paste request to copy-only");
         return Ok(PasteSimulation::CopiedOnly);

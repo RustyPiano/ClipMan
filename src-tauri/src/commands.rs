@@ -1,4 +1,7 @@
 // Tauri commands module
+use std::sync::mpsc;
+use std::time::Duration;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -7,6 +10,29 @@ use crate::settings::Settings;
 use crate::storage::{ContentType, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, safe_lock, AppState};
+
+fn run_window_command_on_main_thread<F>(
+    app: &AppHandle,
+    command_name: &'static str,
+    action: F,
+) -> Result<(), String>
+where
+    F: FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
+{
+    // Frontend IPC handlers can run off the event-loop thread; macOS window
+    // focus/activation touches AppKit and must be dispatched back to main.
+    let app_for_task = app.clone();
+    let (sender, receiver) = mpsc::channel();
+
+    app.run_on_main_thread(move || {
+        let _ = sender.send(action(app_for_task));
+    })
+    .map_err(|e| format!("Failed to schedule {command_name} on main thread: {e}"))?;
+
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("Timed out waiting for {command_name} on main thread: {e}"))?
+}
 
 #[tauri::command]
 pub async fn get_recent_clips(
@@ -282,12 +308,23 @@ pub async fn reorder_pinned(
 
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
-    crate::window::open_settings_window(&app)
+    run_window_command_on_main_thread(&app, "open_settings_window", |app| {
+        crate::window::open_settings_window(&app)
+    })
 }
 
 #[tauri::command]
 pub async fn hide_quickbar(app: AppHandle) -> Result<(), String> {
     crate::window::hide_quickbar(&app)
+}
+
+#[tauri::command]
+pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let foreground_store = state.quickbar_foreground_window.clone();
+
+    run_window_command_on_main_thread(&app, "show_quickbar", move |app| {
+        crate::window::show_quickbar(&app, &foreground_store)
+    })
 }
 
 #[tauri::command]

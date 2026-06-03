@@ -1,6 +1,7 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
     import { onMount } from "svelte";
+    import { getCurrentWindow } from "@tauri-apps/api/window";
     import { router } from "$lib/stores/router.svelte";
     import { i18n } from "$lib/i18n";
     import Button from "$lib/components/ui/Button.svelte";
@@ -196,6 +197,21 @@
             changingDataPath = false;
         }
     }
+
+    async function handleBack() {
+        try {
+            const win = getCurrentWindow();
+            if (win.label === "settings") {
+                await invoke("show_quickbar");
+                await win.hide();
+            } else {
+                router.goHome();
+            }
+        } catch (err) {
+            console.error("Failed to handle back navigation:", err);
+            router.goHome();
+        }
+    }
 </script>
 
 <div
@@ -209,7 +225,7 @@
             <Button
                 variant="ghost"
                 size="icon"
-                onclick={() => router.goHome()}
+                onclick={handleBack}
                 class="hover:bg-muted rounded-full"
             >
                 <ChevronLeft class="h-5 w-5" />

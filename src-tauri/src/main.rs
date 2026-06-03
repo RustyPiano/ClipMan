@@ -17,7 +17,7 @@ use commands::{
     disable_global_shortcut, enable_global_shortcut, get_current_data_path, get_pinned_clips,
     get_recent_clips, get_settings, hide_quickbar, install_update, migrate_data_location,
     open_folder, open_settings_window, paste_clip, register_quickbar_shortcut, reorder_pinned,
-    search_clips, set_clip_label, toggle_pin, update_settings,
+    search_clips, set_clip_label, show_quickbar, toggle_pin, update_settings,
 };
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};
@@ -271,6 +271,7 @@ fn main() {
             reorder_pinned,
             open_settings_window,
             hide_quickbar,
+            show_quickbar,
             check_for_updates,
             install_update,
             disable_global_shortcut,
