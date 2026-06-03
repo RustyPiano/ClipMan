@@ -28,6 +28,15 @@
   } from 'lucide-svelte';
   import { flip } from 'svelte/animate';
 
+  const initialSettingsCheck = typeof window !== 'undefined' && 
+    (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'settings';
+
+  if (initialSettingsCheck) {
+    router.goToSettings();
+  }
+
+  let isSettings = $state(initialSettingsCheck);
+
   const SEARCH_INPUT_ID = 'quickbar-search';
 
   interface QuickBarOpenedPayload {
@@ -222,7 +231,8 @@
   }
 
   onMount(() => {
-    if (getCurrentWindow().label === 'settings') {
+    if (isSettings || getCurrentWindow().label === 'settings') {
+      isSettings = true;
       router.goToSettings();
       return;
     }
@@ -292,7 +302,7 @@
   });
 </script>
 
-{#if router.currentRoute === 'settings'}
+{#if isSettings || router.currentRoute === 'settings'}
   <SettingsPage />
 {:else}
   <div class="flex h-screen flex-col p-3">
