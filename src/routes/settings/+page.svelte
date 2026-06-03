@@ -7,7 +7,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Settings, UpdateInfo, SettingsTab, Locale } from '$lib/types';
+  import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
+  import { normalizeSettingsLocale } from '$lib/utils/settings';
 
   // Import modularized components
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
@@ -59,26 +60,23 @@
     await Promise.all([loadSettings(), loadDataPath()]);
   });
 
-  function isValidLocale(loc: any): loc is Locale {
-    return loc === 'zh-CN' || loc === 'en';
-  }
-
   async function loadSettings() {
     try {
       loading = true;
-      const data = await invoke<any>('get_settings');
-      let needsSave = false;
-      if (!isValidLocale(data.locale)) {
+      const data = await invoke<Settings>('get_settings');
+      const normalized = normalizeSettingsLocale(data);
+      if (normalized.needsSave) {
         console.warn(
-          `[WARNING] Invalid locale loaded from backend: ${data.locale}, falling back to 'zh-CN'`
+          `[WARNING] Invalid locale loaded from backend: ${
+            (data as Settings & { locale: unknown }).locale
+          }, falling back to 'zh-CN'`
         );
-        data.locale = 'zh-CN';
-        needsSave = true;
       }
-      settings = data;
+      settings = normalized.settings;
       if (settings.locale !== i18n.locale) {
         i18n.setLocale(settings.locale);
-      } else if (needsSave) {
+      }
+      if (normalized.needsSave) {
         // If we corrected the locale, update backend settings immediately to fix the file on disk
         await invoke('update_settings', { settings: settings });
       }

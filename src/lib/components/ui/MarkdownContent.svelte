@@ -1,9 +1,16 @@
 <script lang="ts">
   import type { Token, Tokens } from 'marked';
-  import { markdownBlockTokens, safeMarkdownUrl } from '$lib/utils/markdown';
+  import { i18n } from '$lib/i18n';
+  import {
+    markdownBlockTokens,
+    markdownListItemBlockTokens,
+    markdownListItemInlineTokens,
+    safeMarkdownUrl,
+  } from '$lib/utils/markdown';
 
   let { content = '' } = $props<{ content: string }>();
 
+  const t = $derived(i18n.t);
   const tokens = $derived(markdownBlockTokens(content));
 
   function tokenKey(token: Token, index: number) {
@@ -31,7 +38,7 @@
   }
 
   function taskLabel(item: Tokens.ListItem) {
-    return item.checked ? 'Checked task' : 'Unchecked task';
+    return item.checked ? t.checkedTask : t.uncheckedTask;
   }
 </script>
 
@@ -115,11 +122,19 @@
         aria-label={taskLabel(item)}
       />
       <div class="task-list-content">
-        {@render blockTokens(item.tokens)}
+        {@render listItemContent(item)}
       </div>
     </li>
   {:else}
-    <li>{@render blockTokens(item.tokens)}</li>
+    <li>{@render listItemContent(item)}</li>
+  {/if}
+{/snippet}
+
+{#snippet listItemContent(item: Tokens.ListItem)}
+  {#if item.loose}
+    {@render blockTokens(markdownListItemBlockTokens(item))}
+  {:else}
+    {@render inlineTokens(markdownListItemInlineTokens(item))}
   {/if}
 {/snippet}
 

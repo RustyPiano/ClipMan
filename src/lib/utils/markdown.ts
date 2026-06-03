@@ -12,6 +12,20 @@ export function safeMarkdownUrl(value: string, attributeName: 'href' | 'src') {
   return isSafeUrl(trimmedValue, attributeName) ? trimmedValue : null;
 }
 
+export function markdownListItemBlockTokens(item: Tokens.ListItem) {
+  return stripUnsafeTokens(item.tokens).filter((token) => token.type !== 'checkbox');
+}
+
+export function markdownListItemInlineTokens(item: Tokens.ListItem): Token[] {
+  return markdownListItemBlockTokens(item).flatMap((token) => {
+    if (token.type === 'text' && 'tokens' in token && Array.isArray(token.tokens)) {
+      return token.tokens;
+    }
+
+    return [token];
+  });
+}
+
 function stripUnsafeTokens(tokens: Token[]): Token[] {
   return tokens
     .filter((token) => token.type !== 'html' && token.type !== 'tag')

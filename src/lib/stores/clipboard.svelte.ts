@@ -18,6 +18,11 @@ interface ClearSearchOptions extends LoadHistoryOptions {
   reload?: boolean;
 }
 
+interface IncomingItemEvent {
+  revision: number;
+  item: ClipItem;
+}
+
 class ClipboardStore {
   recentItems = $state.raw<ClipItem[]>([]);
   pinnedItems = $state.raw<ClipItem[]>([]);
@@ -29,6 +34,8 @@ class ClipboardStore {
   private unlisten?: () => void;
   private historyRequests = new RequestSequencer();
   private searchRequests = new RequestSequencer();
+  private incomingRevision = 0;
+  private incomingEvents: IncomingItemEvent[] = [];
 
   recentDisplayItems = $derived(
     this.searchQuery.trim() ? this.searchResults.filter((item) => !item.isPinned) : this.recentItems
@@ -93,6 +100,7 @@ class ClipboardStore {
 
     const showLoading = options.showLoading ?? true;
     const requestId = this.historyRequests.next();
+    const startIncomingRevision = this.incomingRevision;
 
     if (showLoading) {
       this.isLoading = true;
@@ -105,8 +113,14 @@ class ClipboardStore {
       ]);
 
       if (this.historyRequests.isCurrent(requestId)) {
-        this.recentItems = recent;
-        this.pinnedItems = pinned;
+        const nextItems = this.replayIncomingItemsSince({
+          recentItems: recent,
+          pinnedItems: pinned,
+          revision: startIncomingRevision,
+        });
+
+        this.recentItems = nextItems.recentItems;
+        this.pinnedItems = nextItems.pinnedItems;
         if (!this.searchQuery.trim()) {
           this.searchResults = [];
         }
@@ -116,7 +130,7 @@ class ClipboardStore {
         console.error('[ERROR] Failed to load clipboard history:', error);
       }
     } finally {
-      if (showLoading && this.historyRequests.isCurrent(requestId) && !this.searchQuery.trim()) {
+      if (this.historyRequests.isCurrent(requestId) && !this.searchQuery.trim()) {
         this.isLoading = false;
       }
     }
@@ -148,6 +162,10 @@ class ClipboardStore {
   }
 
   async search(query: string) {
+    if (query.trim() && this.searchQuery !== query) {
+      return;
+    }
+
     const requestId = this.searchRequests.next();
     this.searchQuery = query;
 
@@ -183,14 +201,14 @@ class ClipboardStore {
   async clearSearch(options: ClearSearchOptions = {}) {
     const reload = options.reload ?? true;
 
+    this.searchRequests.next();
     this.searchQuery = '';
     this.searchResults = [];
+    this.isLoading = false;
 
     if (reload) {
-      this.searchRequests.next();
       await this.loadHistory({ showLoading: options.showLoading });
     } else {
-      this.searchRequests.next();
       this.isLoading = false;
     }
   }
@@ -296,6 +314,8 @@ class ClipboardStore {
   }
 
   private applyIncomingItem(incoming: ClipItem) {
+    this.recordIncomingItem(incoming);
+
     const nextItems = applyClipboardChanged({
       recentItems: this.recentItems,
       pinnedItems: this.pinnedItems,
@@ -305,6 +325,43 @@ class ClipboardStore {
 
     this.recentItems = nextItems.recentItems;
     this.pinnedItems = nextItems.pinnedItems;
+  }
+
+  private recordIncomingItem(item: ClipItem) {
+    this.incomingRevision += 1;
+    this.incomingEvents.push({ revision: this.incomingRevision, item });
+
+    if (this.incomingEvents.length > this.maxHistoryItems) {
+      this.incomingEvents = this.incomingEvents.slice(-this.maxHistoryItems);
+    }
+  }
+
+  private replayIncomingItemsSince({
+    recentItems,
+    pinnedItems,
+    revision,
+  }: {
+    recentItems: readonly ClipItem[];
+    pinnedItems: readonly ClipItem[];
+    revision: number;
+  }) {
+    let nextItems = {
+      recentItems: [...recentItems],
+      pinnedItems: [...pinnedItems],
+    };
+
+    for (const event of this.incomingEvents) {
+      if (event.revision <= revision) continue;
+
+      nextItems = applyClipboardChanged({
+        recentItems: nextItems.recentItems,
+        pinnedItems: nextItems.pinnedItems,
+        incoming: event.item,
+        maxHistoryItems: this.maxHistoryItems,
+      });
+    }
+
+    return nextItems;
   }
 
   private findItem(id: string) {

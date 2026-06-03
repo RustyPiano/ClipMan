@@ -147,6 +147,8 @@ export interface Translations {
   switchTheme: string;
   decodeFailed: string;
   emptyContent: string;
+  checkedTask: string;
+  uncheckedTask: string;
 
   // QuickBar footer hints
   paste: string;
@@ -300,6 +302,8 @@ const zh: Translations = {
   switchTheme: '切换主题',
   decodeFailed: '[解码失败]',
   emptyContent: '[内容为空]',
+  checkedTask: '已完成任务',
+  uncheckedTask: '未完成任务',
 
   // QuickBar footer hints
   paste: '粘贴',
@@ -455,6 +459,8 @@ const en: Translations = {
   switchTheme: 'Switch theme',
   decodeFailed: '[Decode failed]',
   emptyContent: '[Empty content]',
+  checkedTask: 'Checked task',
+  uncheckedTask: 'Unchecked task',
 
   // QuickBar footer hints
   paste: 'Paste',

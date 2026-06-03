@@ -78,7 +78,7 @@ describe('clip item helpers', () => {
     expect(next.recentItems).toEqual([]);
   });
 
-  test('preserves existing pinned metadata when an incoming duplicate omits it', () => {
+  test('uses authoritative incoming metadata for existing duplicate items', () => {
     const existing = clip({
       id: 'pinned',
       isPinned: true,
@@ -103,14 +103,14 @@ describe('clip item helpers', () => {
       maxHistoryItems: 10,
     });
 
-    expect(next.recentItems).toEqual([]);
-    expect(next.pinnedItems).toHaveLength(1);
-    expect(next.pinnedItems[0]).toMatchObject({
+    expect(next.pinnedItems).toEqual([]);
+    expect(next.recentItems).toHaveLength(1);
+    expect(next.recentItems[0]).toMatchObject({
       id: 'pinned',
-      isPinned: true,
-      pinOrder: 2,
-      label: 'favorite',
-      groupName: 'snippets',
+      isPinned: false,
+      pinOrder: null,
+      label: null,
+      groupName: null,
       timestamp: 20,
     });
   });

@@ -59,32 +59,18 @@ export function applyClipboardChanged({
   incoming,
   maxHistoryItems,
 }: ApplyClipboardChangedOptions) {
-  const existingItem =
-    pinnedItems.find((item) => item.id === incoming.id) ??
-    recentItems.find((item) => item.id === incoming.id);
-  const mergedIncoming = existingItem ? mergeExistingMetadata(existingItem, incoming) : incoming;
-  const recentWithoutIncoming = recentItems.filter((item) => item.id !== mergedIncoming.id);
-  const pinnedWithoutIncoming = pinnedItems.filter((item) => item.id !== mergedIncoming.id);
+  const recentWithoutIncoming = recentItems.filter((item) => item.id !== incoming.id);
+  const pinnedWithoutIncoming = pinnedItems.filter((item) => item.id !== incoming.id);
 
-  if (mergedIncoming.isPinned) {
+  if (incoming.isPinned) {
     return {
       recentItems: recentWithoutIncoming,
-      pinnedItems: [...pinnedWithoutIncoming, mergedIncoming].sort(comparePinOrder),
+      pinnedItems: [...pinnedWithoutIncoming, incoming].sort(comparePinOrder),
     };
   }
 
   return {
-    recentItems: [mergedIncoming, ...recentWithoutIncoming].slice(0, maxHistoryItems),
+    recentItems: [incoming, ...recentWithoutIncoming].slice(0, maxHistoryItems),
     pinnedItems: pinnedWithoutIncoming,
-  };
-}
-
-function mergeExistingMetadata(existingItem: ClipItem, incoming: ClipItem): ClipItem {
-  return {
-    ...incoming,
-    isPinned: existingItem.isPinned,
-    pinOrder: existingItem.pinOrder,
-    label: existingItem.label,
-    groupName: existingItem.groupName,
   };
 }
