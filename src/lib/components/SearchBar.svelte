@@ -5,6 +5,8 @@
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { Loader2, Search, X } from 'lucide-svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import { hasTauriRuntime } from '$lib/utils/tauri';
 
   const SEARCH_DEBOUNCE_MS = 120;
   const SEARCH_INPUT_ID = 'quickbar-search';
@@ -13,6 +15,10 @@
 
   let debounceTimer: ReturnType<typeof setTimeout>;
   let isComposing = false;
+  let discardComposition = false;
+  let unlistenHidden: (() => void) | undefined;
+  let unlistenOpened: (() => void) | undefined;
+  let isDestroyed = false;
 
   function runSearch(query: string) {
     clearTimeout(debounceTimer);
@@ -33,6 +39,9 @@
   }
 
   function handleInput(event: Event) {
+    if (discardComposition) {
+      return;
+    }
     const target = event.target as HTMLInputElement;
     if (isComposing) {
       clearTimeout(debounceTimer);
@@ -44,12 +53,16 @@
   }
 
   function handleCompositionStart() {
+    discardComposition = false;
     isComposing = true;
     clearTimeout(debounceTimer);
   }
 
   function handleCompositionEnd(event: Event) {
     isComposing = false;
+    if (discardComposition) {
+      return;
+    }
     applySearchInput((event.target as HTMLInputElement).value);
   }
 
@@ -63,16 +76,43 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     const input = document.getElementById(SEARCH_INPUT_ID);
     if (input instanceof HTMLInputElement) {
       input.focus();
     }
+
+    if (hasTauriRuntime()) {
+      const uHidden = await listen('quickbar-hidden', () => {
+        const wasComposing = isComposing;
+        isComposing = false;
+        discardComposition = wasComposing;
+        clearTimeout(debounceTimer);
+      });
+      if (isDestroyed) {
+        uHidden();
+      } else {
+        unlistenHidden = uHidden;
+      }
+
+      const uOpened = await listen('quickbar-opened', () => {
+        discardComposition = false;
+      });
+      if (isDestroyed) {
+        uOpened();
+      } else {
+        unlistenOpened = uOpened;
+      }
+    }
   });
 
   onDestroy(() => {
+    isDestroyed = true;
     clearTimeout(debounceTimer);
+    unlistenHidden?.();
+    unlistenOpened?.();
   });
+
 
 </script>
 
