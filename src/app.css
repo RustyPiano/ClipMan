@@ -145,9 +145,10 @@
   }
 }
 
-/* QuickBar window only: transparent so the rounded floating panel + shadow show.
-   Scoped via a class added on <html> in the main window, so the Settings window
-   (which shares this stylesheet) keeps its opaque background. */
+/* QuickBar window only: transparent body so the rounded panel's corners + drop
+   shadow show. Scoped via a class on <html> in the main window so the Settings
+   window keeps its opaque background. The panel itself stays fully opaque
+   (no backdrop-blur) to avoid the irregular frosted-glass artifact on macOS. */
 html.quickbar-window,
 html.quickbar-window body {
   background: transparent;

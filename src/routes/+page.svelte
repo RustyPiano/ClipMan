@@ -225,8 +225,8 @@
       return;
     }
 
-    // Mark this window so app.css can make the body transparent, letting the
-    // rounded floating panel + shadow show. Settings window never gets this.
+    // Transparent body so the rounded panel corners + shadow show (main window
+    // only). The panel stays opaque — no frosted glass.
     document.documentElement.classList.add('quickbar-window');
 
     let unlistenQuickbarOpened: (() => void) | undefined;
@@ -293,9 +293,9 @@
 {#if router.currentRoute === 'settings'}
   <SettingsPage />
 {:else}
-  <div class="flex h-screen flex-col p-2 text-foreground">
+  <div class="flex h-screen flex-col p-3">
     <div
-      class="flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/95 shadow-2xl backdrop-blur-xl"
+      class="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-background text-foreground shadow-[0_6px_18px_-14px_rgb(15_23_42_/_0.45)]"
     >
       <PermissionCheck />
       <Toast />

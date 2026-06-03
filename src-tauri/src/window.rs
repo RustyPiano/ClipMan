@@ -115,6 +115,7 @@ pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Resu
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
     use cocoa::base::{id, nil, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
@@ -321,6 +322,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &WebviewWindow) {
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
