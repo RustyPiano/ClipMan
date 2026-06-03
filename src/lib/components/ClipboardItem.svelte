@@ -92,7 +92,7 @@
       copyTimeout = setTimeout(() => {
         isCopied = false;
       }, 2000);
-    } catch (error) {
+    } catch (_error) {
       // Error handled in store
     }
   }

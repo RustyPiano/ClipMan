@@ -1,9 +1,9 @@
-use rusqlite::{Connection, params, Result, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use crate::crypto::Crypto;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ContentType {
     Text,
@@ -14,7 +14,7 @@ pub enum ContentType {
 }
 
 impl ContentType {
-    fn to_string(&self) -> &str {
+    fn as_db_value(&self) -> &str {
         match self {
             ContentType::Text => "text",
             ContentType::Image => "image",
@@ -24,13 +24,30 @@ impl ContentType {
         }
     }
 
-    fn from_string(s: &str) -> Self {
-        match s {
+    fn from_db_value(value: &str) -> Self {
+        match value {
             "image" => ContentType::Image,
             "file" => ContentType::File,
             "html" => ContentType::Html,
             "rtf" => ContentType::Rtf,
             _ => ContentType::Text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyMarker {
+    pub hash: String,
+    pub content_type: ContentType,
+}
+
+impl CopyMarker {
+    /// The payload must already be normalized by the caller for its clipboard type.
+    pub fn from_payload(content_type: ContentType, payload: &[u8]) -> Self {
+        Self {
+            hash: hash_bytes(payload),
+            content_type,
         }
     }
 }
@@ -41,10 +58,14 @@ pub struct ClipItem {
     pub id: String,
     #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub thumbnail: Option<Vec<u8>>,
     pub content_type: ContentType,
     pub timestamp: i64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
+    pub label: Option<String>,
+    pub group_name: Option<String>,
 }
 
 // Frontend-optimized version: converts images to data URLs for zero-cost rendering
@@ -52,26 +73,25 @@ pub struct ClipItem {
 #[serde(rename_all = "camelCase")]
 pub struct FrontendClipItem {
     pub id: String,
-    pub content: String,  // Base64 string or data URL
+    pub content: String, // Base64 string or data URL
     pub content_type: ContentType,
     pub timestamp: i64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
+    pub label: Option<String>,
+    pub group_name: Option<String>,
 }
 
 impl From<ClipItem> for FrontendClipItem {
     fn from(item: ClipItem) -> Self {
         use data_encoding::BASE64;
-        
+
         let content = match item.content_type {
             ContentType::Image => {
-                // Convert to data URL: browser can use directly in <img src>
-                format!("data:image/png;base64,{}", BASE64.encode(&item.content))
-            },
-            _ => {
-                // Text and other types: just base64 encode
-                BASE64.encode(&item.content)
+                let image_bytes = item.thumbnail.as_deref().unwrap_or(&item.content);
+                format!("data:image/png;base64,{}", BASE64.encode(image_bytes))
             }
+            _ => BASE64.encode(&item.content),
         };
 
         FrontendClipItem {
@@ -81,266 +101,148 @@ impl From<ClipItem> for FrontendClipItem {
             timestamp: item.timestamp,
             is_pinned: item.is_pinned,
             pin_order: item.pin_order,
+            label: item.label,
+            group_name: item.group_name,
         }
     }
 }
 
 pub struct ClipStorage {
     conn: Connection,
-    crypto: Option<Arc<Crypto>>,
 }
 
+const CLIP_COLUMNS: &str =
+    "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name";
+const CLIP_COLUMNS_WITH_ALIAS: &str = "c.id, c.content, c.thumbnail, c.content_type, c.timestamp, c.is_pinned, c.pin_order, c.label, c.group_name";
+
 impl ClipStorage {
-    pub fn new(db_path: &str, crypto: Option<Arc<Crypto>>) -> Result<Self> {
+    pub fn new(db_path: &str) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
 
-        // Create main table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS clips (
-                id TEXT PRIMARY KEY,
-                content BLOB NOT NULL,
-                content_type TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                is_pinned INTEGER DEFAULT 0,
-                pin_order INTEGER
-            )",
-            [],
-        )?;
+        Self::initialize_schema(&conn)?;
 
-        // Migration: Add content_hash column if it doesn't exist
-        // Check if column exists by querying pragma
-        let has_content_hash: bool = conn
-            .prepare("PRAGMA table_info(clips)")?
-            .query_map([], |row| {
-                let name: String = row.get(1)?;
-                Ok(name)
-            })?
-            .filter_map(Result::ok)
-            .any(|name| name == "content_hash");
+        let data_dir = data_dir_for_db_path(db_path);
+        crate::migration::upgrade_clip_database_to_v1(&conn, &data_dir)
+            .map_err(string_to_rusqlite_error)?;
 
-        if !has_content_hash {
-            log::info!("📦 Migrating database: adding content_hash column");
-            conn.execute("ALTER TABLE clips ADD COLUMN content_hash TEXT", [])?;
-        }
+        Self::initialize_fts(&conn)?;
 
-        // Create index for fast queries
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_timestamp ON clips(timestamp DESC)",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pinned ON clips(is_pinned, pin_order)",
-            [],
-        )?;
-
-        // Create index for content hash to speed up duplicate checks
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_content_hash ON clips(content_hash, content_type)",
-            [],
-        )?;
-
-        Ok(Self { conn, crypto })
+        let storage = Self { conn };
+        storage.rebuild_fts_index()?;
+        Ok(storage)
     }
 
     pub fn insert(&self, item: &ClipItem, max_history_items: usize) -> Result<Option<String>> {
-        use sha2::{Sha256, Digest};
+        let content_hash = hash_bytes(&item.content);
 
-        // Calculate content hash for deduplication
-        let mut hasher = Sha256::new();
-        hasher.update(&item.content);
-        let content_hash = format!("{:x}", hasher.finalize());
-
-        // Check if content already exists in recent items (last 100)
-        let existing_id: Option<String> = self.conn.query_row(
-            "SELECT id FROM clips 
-             WHERE content_hash = ?1 AND content_type = ?2
-             ORDER BY timestamp DESC
-             LIMIT 100",
-            params![content_hash, item.content_type.to_string()],
-            |row| row.get(0)
-        ).optional()?;
+        let existing_id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT id FROM clips
+                 WHERE content_hash = ?1 AND content_type = ?2
+                 ORDER BY timestamp DESC
+                 LIMIT 100",
+                params![content_hash, item.content_type.as_db_value()],
+                |row| row.get(0),
+            )
+            .optional()?;
 
         if let Some(id) = existing_id {
-            log::debug!("⏭️ Duplicate content detected (hash: {}), updating timestamp", &content_hash[..8]);
-            
-            // Update timestamp of existing item using the shared method
+            log::debug!(
+                "⏭️ Duplicate content detected (hash: {}), updating timestamp",
+                &content_hash[..8]
+            );
             self.update_timestamp(&id, item.timestamp)?;
-            
             return Ok(Some(id));
         }
 
-        // Encrypt content if crypto is available
-        let content_to_store = if let Some(crypto) = &self.crypto {
-            crypto.encrypt(&item.content)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e
-                ))))?
-        } else {
-            item.content.clone()
-        };
-
         self.conn.execute(
-            "INSERT INTO clips (id, content, content_hash, content_type, timestamp, is_pinned, pin_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO clips (
+                id, content, thumbnail, content_hash, content_type, timestamp,
+                is_pinned, pin_order, label, group_name
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 item.id,
-                content_to_store,
+                item.content,
+                item.thumbnail,
                 content_hash,
-                item.content_type.to_string(),
+                item.content_type.as_db_value(),
                 item.timestamp,
                 item.is_pinned as i32,
                 item.pin_order,
+                item.label,
+                item.group_name,
             ],
         )?;
 
-        // Auto-cleanup old items (keep last max_history_items)
-        self.conn.execute(
-            "DELETE FROM clips
-             WHERE id IN (
-                SELECT id FROM clips
-                WHERE is_pinned = 0
-                ORDER BY timestamp DESC
-                LIMIT -1 OFFSET ?1
-             )",
-            params![max_history_items],
-        )?;
+        self.sync_fts_for_clip_id(&item.id)?;
+        self.prune_history(max_history_items)?;
 
         Ok(None)
     }
 
-    // Helper method to decrypt content
-    fn decrypt_content(&self, encrypted: Vec<u8>) -> Result<Vec<u8>> {
-        if let Some(crypto) = &self.crypto {
-            crypto.decrypt(&encrypted)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Blob,
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                ))
-        } else {
-            Ok(encrypted)
-        }
+    pub fn get_recent_clips(&self, limit: usize) -> Result<Vec<ClipItem>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS}
+             FROM clips
+             WHERE is_pinned = 0
+             ORDER BY timestamp DESC
+             LIMIT ?1"
+        ))?;
+
+        let items = stmt.query_map([limit], Self::clip_from_row)?;
+        items.collect()
     }
 
-    pub fn get_recent(&self, limit: usize) -> Result<Vec<ClipItem>> {
-        // Query to get all pinned items plus the most recent N non-pinned items
-        // This ensures pinned items are always visible regardless of timestamp
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, content_type, timestamp, is_pinned, pin_order
+    pub fn get_pinned_clips(&self) -> Result<Vec<ClipItem>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS}
              FROM clips
              WHERE is_pinned = 1
-             UNION ALL
-             SELECT id, content, content_type, timestamp, is_pinned, pin_order
-             FROM (
-                 SELECT id, content, content_type, timestamp, is_pinned, pin_order
-                 FROM clips
-                 WHERE is_pinned = 0
-                 ORDER BY timestamp DESC
-                 LIMIT ?1
-             )
-             ORDER BY timestamp DESC"
-        )?;
+             ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC"
+        ))?;
 
-        let items = stmt.query_map([limit], |row| {
-            let encrypted_content: Vec<u8> = row.get(1)?;
-            let content = match self.decrypt_content(encrypted_content.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    // 解密失败，记录错误并跳过此项
-                    let id: String = row.get(0).unwrap_or_else(|_| "unknown".to_string());
-                    log::warn!("⚠️ Failed to decrypt item {}: {:?}. Skipping.", id, e);
-                    // 返回空内容以避免整个查询失败
-                    Vec::new()
-                }
-            };
+        let items = stmt.query_map([], Self::clip_from_row)?;
+        items.collect()
+    }
 
-            // 如果内容为空（解密失败），我们仍然返回item但标记为无效
-            Ok(ClipItem {
-                id: row.get(0)?,
-                content,
-                content_type: ContentType::from_string(&row.get::<_, String>(2)?),
-                timestamp: row.get(3)?,
-                is_pinned: row.get::<_, i32>(4)? != 0,
-                pin_order: row.get(5)?,
-            })
-        })?;
+    /// Deprecated compatibility wrapper. New code should call `get_recent_clips`.
+    pub fn get_recent(&self, limit: usize) -> Result<Vec<ClipItem>> {
+        self.get_recent_clips(limit)
+    }
 
-        // 过滤掉解密失败的项目（内容为空）
-        items.filter_map(|item| {
-            match item {
-                Ok(clip_item) if !clip_item.content.is_empty() => Some(Ok(clip_item)),
-                Ok(_) => None, // 跳过空内容的项目
-                Err(e) => Some(Err(e)),
-            }
-        }).collect()
+    /// Deprecated compatibility wrapper. New code should call `get_pinned_clips`.
+    pub fn get_pinned(&self) -> Result<Vec<ClipItem>> {
+        self.get_pinned_clips()
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<ClipItem>> {
-        // FTS5 需要对特殊字符进行转义，或者使用简单的 LIKE 查询
-        // 对于用户输入，我们使用更简单的方法：直接搜索文本内容
         log::info!("🔍 Searching for: {}", query);
 
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, content_type, timestamp, is_pinned, pin_order
-             FROM clips
-             WHERE content_type = 'text'
-             ORDER BY timestamp DESC
-             LIMIT 1000"
-        )?;
+        let query = query.trim();
+        if query.is_empty() {
+            return self.get_all_for_search();
+        }
 
-        let items = stmt.query_map([], |row| {
-            let encrypted_content: Vec<u8> = row.get(1)?;
-            let content = match self.decrypt_content(encrypted_content.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    let id: String = row.get(0).unwrap_or_else(|_| "unknown".to_string());
-                    log::warn!("⚠️ Failed to decrypt search result {}: {:?}. Skipping.", id, e);
-                    Vec::new()
-                }
-            };
+        if query.chars().count() < 3 {
+            return self.search_with_like(query);
+        }
 
-            Ok(ClipItem {
-                id: row.get(0)?,
-                content,
-                content_type: ContentType::from_string(&row.get::<_, String>(2)?),
-                timestamp: row.get(3)?,
-                is_pinned: row.get::<_, i32>(4)? != 0,
-                pin_order: row.get(5)?,
-            })
-        })?;
-
-        // 在内存中过滤搜索结果
-        let query_lower = query.to_lowercase();
-        items.filter_map(|item| {
-            match item {
-                Ok(clip_item) if !clip_item.content.is_empty() => {
-                    // 解码内容并检查是否包含查询字符串
-                    if let Ok(text) = String::from_utf8(clip_item.content.clone()) {
-                        if text.to_lowercase().contains(&query_lower) {
-                            Some(Ok(clip_item))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
-                Ok(_) => None,
-                Err(e) => Some(Err(e)),
-            }
-        }).collect()
+        self.search_with_fts(query)
     }
 
     pub fn update_pin(&self, id: &str, is_pinned: bool) -> Result<()> {
         let pin_order = if is_pinned {
-            // Get next pin order
-            let max_order: Option<i32> = self.conn.query_row(
-                "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
-                [],
-                |row| row.get(0),
-            ).unwrap_or(None);
+            let max_order: Option<i32> = self
+                .conn
+                .query_row(
+                    "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(None);
 
             Some(max_order.unwrap_or(0) + 1)
         } else {
@@ -355,53 +257,51 @@ impl ClipStorage {
         Ok(())
     }
 
+    pub fn set_clip_label(&self, id: &str, label: Option<String>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clips SET label = ?1 WHERE id = ?2",
+            params![label, id],
+        )?;
+        self.sync_fts_for_clip_id(id)?;
+        Ok(())
+    }
+
     pub fn delete(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM clips_fts WHERE clip_id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM clips WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn clear_all(&self) -> Result<()> {
         log::info!("🗑️ Clearing all clipboard history");
+        self.conn.execute("DELETE FROM clips_fts", [])?;
         self.conn.execute("DELETE FROM clips", [])?;
         Ok(())
     }
 
     pub fn clear_non_pinned(&self) -> Result<()> {
         log::info!("🗑️ Clearing non-pinned clipboard history");
-        self.conn.execute("DELETE FROM clips WHERE is_pinned = 0", [])?;
+        self.conn.execute(
+            "DELETE FROM clips_fts
+             WHERE clip_id IN (SELECT id FROM clips WHERE is_pinned = 0)",
+            [],
+        )?;
+        self.conn
+            .execute("DELETE FROM clips WHERE is_pinned = 0", [])?;
         Ok(())
     }
 
     /// Get a single clip item by ID (efficient single-row lookup)
     pub fn get_by_id(&self, id: &str) -> Result<Option<ClipItem>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, content_type, timestamp, is_pinned, pin_order
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS}
              FROM clips
              WHERE id = ?1"
-        )?;
+        ))?;
 
-        let item = stmt.query_row([id], |row| {
-            let encrypted_content: Vec<u8> = row.get(1)?;
-            let content = match self.decrypt_content(encrypted_content.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("⚠️ Failed to decrypt item {}: {:?}", id, e);
-                    Vec::new()
-                }
-            };
-
-            Ok(ClipItem {
-                id: row.get(0)?,
-                content,
-                content_type: ContentType::from_string(&row.get::<_, String>(2)?),
-                timestamp: row.get(3)?,
-                is_pinned: row.get::<_, i32>(4)? != 0,
-                pin_order: row.get(5)?,
-            })
-        }).optional()?;
-
-        // Filter out items with empty content (decryption failed)
-        Ok(item.filter(|i| !i.content.is_empty()))
+        stmt.query_row([id], Self::clip_from_row).optional()
     }
 
     /// Update the timestamp of a clip item (move it to the top of recent list)
@@ -414,41 +314,500 @@ impl ClipStorage {
         Ok(())
     }
 
-    pub fn get_pinned(&self) -> Result<Vec<ClipItem>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content, content_type, timestamp, is_pinned, pin_order
-             FROM clips
-             WHERE is_pinned = 1
-             ORDER BY pin_order ASC"
+    fn initialize_schema(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS clips (
+                id TEXT PRIMARY KEY,
+                content BLOB NOT NULL,
+                thumbnail BLOB,
+                content_hash TEXT,
+                content_type TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                is_pinned INTEGER DEFAULT 0,
+                pin_order INTEGER,
+                label TEXT,
+                group_name TEXT
+            )",
+            [],
         )?;
 
-        let items = stmt.query_map([], |row| {
-            let encrypted_content: Vec<u8> = row.get(1)?;
-            let content = match self.decrypt_content(encrypted_content.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    let id: String = row.get(0).unwrap_or_else(|_| "unknown".to_string());
-                    log::warn!("⚠️ Failed to decrypt pinned item {}: {:?}. Skipping.", id, e);
-                    Vec::new()
-                }
-            };
+        Self::add_column_if_missing(conn, "content_hash", "TEXT")?;
+        Self::add_column_if_missing(conn, "thumbnail", "BLOB")?;
+        Self::add_column_if_missing(conn, "label", "TEXT")?;
+        Self::add_column_if_missing(conn, "group_name", "TEXT")?;
 
-            Ok(ClipItem {
-                id: row.get(0)?,
-                content,
-                content_type: ContentType::from_string(&row.get::<_, String>(2)?),
-                timestamp: row.get(3)?,
-                is_pinned: row.get::<_, i32>(4)? != 0,
-                pin_order: row.get(5)?,
-            })
-        })?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_timestamp ON clips(timestamp DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pinned ON clips(is_pinned, pin_order)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_hash ON clips(content_hash, content_type)",
+            [],
+        )?;
 
-        items.filter_map(|item| {
-            match item {
-                Ok(clip_item) if !clip_item.content.is_empty() => Some(Ok(clip_item)),
-                Ok(_) => None,
-                Err(e) => Some(Err(e)),
+        Ok(())
+    }
+
+    fn initialize_fts(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts
+             USING fts5(clip_id UNINDEXED, search_text, label, tokenize='trigram')",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn add_column_if_missing(conn: &Connection, name: &str, column_type: &str) -> Result<()> {
+        if !Self::has_column(conn, name)? {
+            log::info!("📦 Migrating database: adding {} column", name);
+            conn.execute(
+                &format!("ALTER TABLE clips ADD COLUMN {name} {column_type}"),
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn has_column(conn: &Connection, name: &str) -> Result<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(clips)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+
+        for column in columns {
+            if column? == name {
+                return Ok(true);
             }
-        }).collect()
+        }
+
+        Ok(false)
+    }
+
+    fn clip_from_row(row: &Row<'_>) -> Result<ClipItem> {
+        Ok(ClipItem {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            thumbnail: row.get(2)?,
+            content_type: ContentType::from_db_value(&row.get::<_, String>(3)?),
+            timestamp: row.get(4)?,
+            is_pinned: row.get::<_, i32>(5)? != 0,
+            pin_order: row.get(6)?,
+            label: row.get(7)?,
+            group_name: row.get(8)?,
+        })
+    }
+
+    fn get_all_for_search(&self) -> Result<Vec<ClipItem>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS}
+             FROM clips
+             ORDER BY timestamp DESC
+             LIMIT 1000"
+        ))?;
+
+        let items = stmt.query_map([], Self::clip_from_row)?;
+        items.collect()
+    }
+
+    fn search_with_fts(&self, query: &str) -> Result<Vec<ClipItem>> {
+        let fts_query = escape_fts_query(query);
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS_WITH_ALIAS}
+             FROM clips c
+             JOIN clips_fts ON clips_fts.rowid = c.rowid
+             WHERE clips_fts MATCH ?1
+             ORDER BY c.timestamp DESC
+             LIMIT 1000"
+        ))?;
+
+        let items = stmt.query_map([fts_query], Self::clip_from_row)?;
+        items.collect()
+    }
+
+    fn search_with_like(&self, query: &str) -> Result<Vec<ClipItem>> {
+        let like_query = format!("%{}%", escape_like_query(query));
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CLIP_COLUMNS}
+             FROM clips
+             WHERE (
+                content_type IN ('text', 'file', 'html', 'rtf')
+                AND CAST(content AS TEXT) LIKE ?1 ESCAPE '\\'
+             )
+             OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
+             ORDER BY timestamp DESC
+             LIMIT 1000"
+        ))?;
+
+        let items = stmt.query_map([like_query], Self::clip_from_row)?;
+        items.collect()
+    }
+
+    fn rebuild_fts_index(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM clips_fts", [])?;
+
+        let payloads = {
+            let mut stmt = self.conn.prepare(
+                "SELECT rowid, id, content, content_type, label
+                 FROM clips
+                 ORDER BY rowid ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let content_type = ContentType::from_db_value(&row.get::<_, String>(3)?);
+                Ok(FtsPayload {
+                    rowid: row.get(0)?,
+                    clip_id: row.get(1)?,
+                    content: row.get(2)?,
+                    content_type,
+                    label: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>>>()?
+        };
+
+        for payload in payloads {
+            self.insert_fts_payload(&payload)?;
+        }
+
+        Ok(())
+    }
+
+    fn sync_fts_for_clip_id(&self, id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM clips_fts WHERE clip_id = ?1", params![id])?;
+
+        let payload = self
+            .conn
+            .query_row(
+                "SELECT rowid, id, content, content_type, label
+                 FROM clips
+                 WHERE id = ?1",
+                params![id],
+                |row| {
+                    let content_type = ContentType::from_db_value(&row.get::<_, String>(3)?);
+                    Ok(FtsPayload {
+                        rowid: row.get(0)?,
+                        clip_id: row.get(1)?,
+                        content: row.get(2)?,
+                        content_type,
+                        label: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        if let Some(payload) = payload {
+            self.insert_fts_payload(&payload)?;
+        }
+
+        Ok(())
+    }
+
+    fn insert_fts_payload(&self, payload: &FtsPayload) -> Result<()> {
+        let search_text = search_text_for_fts(&payload.content, &payload.content_type);
+        self.conn.execute(
+            "INSERT INTO clips_fts(rowid, clip_id, search_text, label)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                payload.rowid,
+                payload.clip_id,
+                search_text,
+                payload.label,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn prune_history(&self, max_history_items: usize) -> Result<()> {
+        let stale_ids = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM clips
+                 WHERE is_pinned = 0
+                 ORDER BY timestamp DESC
+                 LIMIT -1 OFFSET ?1",
+            )?;
+            let rows = stmt.query_map([max_history_items], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>>>()?
+        };
+
+        for id in stale_ids {
+            self.delete(&id)?;
+        }
+
+        Ok(())
+    }
+}
+
+struct FtsPayload {
+    rowid: i64,
+    clip_id: String,
+    content: Vec<u8>,
+    content_type: ContentType,
+    label: Option<String>,
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
+    match content_type {
+        ContentType::Text | ContentType::File | ContentType::Html | ContentType::Rtf => {
+            String::from_utf8_lossy(content).into_owned()
+        }
+        ContentType::Image => String::new(),
+    }
+}
+
+fn escape_fts_query(query: &str) -> String {
+    format!("\"{}\"", query.replace('"', "\"\""))
+}
+
+fn escape_like_query(query: &str) -> String {
+    query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn data_dir_for_db_path(db_path: &str) -> PathBuf {
+    Path::new(db_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn string_to_rusqlite_error(error: String) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        error,
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("clipman_{}_{}.db", name, Uuid::new_v4()))
+    }
+
+    fn cleanup_db(path: &Path) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(format!("{}-shm", path.display()));
+        let _ = fs::remove_file(format!("{}-wal", path.display()));
+    }
+
+    fn test_item(
+        id: &str,
+        content: &[u8],
+        timestamp: i64,
+        is_pinned: bool,
+        pin_order: Option<i32>,
+    ) -> ClipItem {
+        ClipItem {
+            id: id.to_string(),
+            content: content.to_vec(),
+            thumbnail: None,
+            content_type: ContentType::Text,
+            timestamp,
+            is_pinned,
+            pin_order,
+            label: None,
+            group_name: None,
+        }
+    }
+
+    fn labeled_item(id: &str, content: &[u8], label: &str, timestamp: i64) -> ClipItem {
+        ClipItem {
+            label: Some(label.to_string()),
+            ..test_item(id, content, timestamp, false, None)
+        }
+    }
+
+    #[test]
+    fn new_database_uses_v1_schema_and_wal() {
+        let db_path = temp_db_path("schema");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        let columns: Vec<String> = storage
+            .conn
+            .prepare("PRAGMA table_info(clips)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<Vec<String>>>()
+            .unwrap();
+
+        assert!(columns.contains(&"content_hash".to_string()));
+        assert!(columns.contains(&"thumbnail".to_string()));
+        assert!(columns.contains(&"label".to_string()));
+        assert!(columns.contains(&"group_name".to_string()));
+
+        let journal_mode: String = storage
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!("wal", journal_mode);
+
+        let user_version: i64 = storage
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(1, user_version);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn insert_stores_plaintext_content() {
+        let db_path = temp_db_path("plaintext");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+        storage
+            .insert(&test_item("plain", b"Hello, ClipMan!", 1, false, None), 100)
+            .unwrap();
+
+        let stored_content: Vec<u8> = storage
+            .conn
+            .query_row("SELECT content FROM clips WHERE id = 'plain'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(b"Hello, ClipMan!".to_vec(), stored_content);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn new_database_creates_trigram_fts_table() {
+        let db_path = temp_db_path("fts_schema");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        let table_sql: String = storage
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'clips_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(table_sql.contains("fts5"));
+        assert!(table_sql.contains("clip_id UNINDEXED"));
+        assert!(table_sql.contains("tokenize='trigram'"));
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn fts_index_tracks_insert_label_search_and_delete() {
+        let db_path = temp_db_path("fts_sync");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        storage
+            .insert(&labeled_item("labeled", b"deploy command", "work email", 1), 100)
+            .unwrap();
+
+        let indexed_label: String = storage
+            .conn
+            .query_row(
+                "SELECT label FROM clips_fts WHERE clip_id = 'labeled'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!("work email", indexed_label);
+
+        let search_ids: Vec<String> = storage
+            .search("email")
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["labeled"], search_ids);
+
+        storage.delete("labeled").unwrap();
+        let fts_count: i64 = storage
+            .conn
+            .query_row("SELECT COUNT(*) FROM clips_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(0, fts_count);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn short_search_query_uses_like_fallback() {
+        let db_path = temp_db_path("fts_short_query");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        storage
+            .insert(&test_item("cn", "中文内容".as_bytes(), 1, false, None), 100)
+            .unwrap();
+
+        let search_ids: Vec<String> = storage
+            .search("中")
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["cn"], search_ids);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn recent_clips_exclude_pinned_and_pinned_clips_keep_pin_order() {
+        let db_path = temp_db_path("split_queries");
+        let storage = ClipStorage::new(db_path.to_str().unwrap()).unwrap();
+
+        storage
+            .insert(&test_item("recent-old", b"old", 10, false, None), 100)
+            .unwrap();
+        storage
+            .insert(
+                &test_item("pinned-later", b"pin later", 40, true, Some(2)),
+                100,
+            )
+            .unwrap();
+        storage
+            .insert(&test_item("recent-new", b"new", 30, false, None), 100)
+            .unwrap();
+        storage
+            .insert(
+                &test_item("pinned-first", b"pin first", 20, true, Some(1)),
+                100,
+            )
+            .unwrap();
+
+        let recent_ids: Vec<String> = storage
+            .get_recent_clips(10)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["recent-new", "recent-old"], recent_ids);
+
+        let pinned_ids: Vec<String> = storage
+            .get_pinned_clips()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["pinned-first", "pinned-later"], pinned_ids);
+
+        drop(storage);
+        cleanup_db(&db_path);
     }
 }

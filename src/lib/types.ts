@@ -17,6 +17,8 @@ export interface ClipItem {
   timestamp: number;
   isPinned: boolean;
   pinOrder: number | null;
+  label: string | null;
+  groupName: string | null;
 }
 
 /**
@@ -24,16 +26,24 @@ export interface ClipItem {
  */
 export interface Settings {
   globalShortcut: string;
+  autoPaste: boolean;
+  ignoreConcealed: boolean;
+  pinnedShortcut: string | null;
   maxHistoryItems: number;
   autoCleanup: boolean;
   trayTextLength: number;
-  storeOriginalImage: boolean;
+  /** @deprecated Removed from backend in v2; settings UI removal lands in WP-2.B. */
+  storeOriginalImage?: boolean;
   maxPinnedInTray: number;
   maxRecentInTray: number;
   customDataPath: string | null;
   enableAutostart: boolean;
   locale: string;
 }
+
+export type PasteMode = 'paste' | 'copy';
+
+export type ReorderDirection = 'up' | 'down';
 
 /**
  * Update check result

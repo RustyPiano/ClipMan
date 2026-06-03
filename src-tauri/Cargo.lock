@@ -637,7 +637,6 @@ dependencies = [
  "log",
  "lru",
  "objc",
- "ring",
  "rusqlite",
  "serde",
  "serde_bytes",

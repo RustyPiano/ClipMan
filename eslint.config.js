@@ -4,14 +4,73 @@ import tsparser from '@typescript-eslint/parser';
 import svelte from 'eslint-plugin-svelte';
 import prettier from 'eslint-config-prettier';
 
+const browserGlobals = {
+  alert: 'readonly',
+  atob: 'readonly',
+  clearTimeout: 'readonly',
+  confirm: 'readonly',
+  console: 'readonly',
+  document: 'readonly',
+  Event: 'readonly',
+  HTMLInputElement: 'readonly',
+  KeyboardEvent: 'readonly',
+  localStorage: 'readonly',
+  MouseEvent: 'readonly',
+  navigator: 'readonly',
+  setTimeout: 'readonly',
+  TextDecoder: 'readonly',
+  window: 'readonly',
+};
+
+const svelteRuneGlobals = {
+  $bindable: 'readonly',
+  $derived: 'readonly',
+  $effect: 'readonly',
+  $props: 'readonly',
+  $state: 'readonly',
+};
+
 export default [
+  {
+    ignores: ['dist/', 'node_modules/', 'src-tauri/target/', '.svelte-kit/'],
+  },
   eslint.configs.recommended,
+  ...svelte.configs['flat/base'],
   prettier,
   {
-    files: ['**/*.ts', '**/*.svelte'],
+    languageOptions: {
+      globals: {
+        ...browserGlobals,
+        ...svelteRuneGlobals,
+      },
+    },
+  },
+  {
+    files: ['**/*.ts'],
+    ignores: ['**/*.svelte.ts'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      'no-unused-vars': 'off',
+    },
+  },
+  {
+    files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
+    languageOptions: {
+      parserOptions: {
+        parser: tsparser,
         extraFileExtensions: ['.svelte'],
       },
     },
@@ -19,18 +78,11 @@ export default [
       '@typescript-eslint': tseslint,
     },
     rules: {
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
       'no-unused-vars': 'off',
     },
-  },
-  {
-    files: ['**/*.svelte'],
-    plugins: {
-      svelte,
-    },
-    processor: 'svelte/svelte',
-  },
-  {
-    ignores: ['dist/', 'node_modules/', 'src-tauri/target/', '.svelte-kit/'],
   },
 ];

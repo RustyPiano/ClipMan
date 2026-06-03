@@ -21,6 +21,9 @@
 
     let settings = $state<Settings>({
         globalShortcut: "CommandOrControl+Shift+V",
+        autoPaste: true,
+        ignoreConcealed: true,
+        pinnedShortcut: null,
         maxHistoryItems: 100,
         autoCleanup: true,
         trayTextLength: 50,
@@ -101,6 +104,9 @@
         try {
             settings = {
                 globalShortcut: "CommandOrControl+Shift+V",
+                autoPaste: true,
+                ignoreConcealed: true,
+                pinnedShortcut: null,
                 maxHistoryItems: 100,
                 autoCleanup: true,
                 trayTextLength: 50,
@@ -113,7 +119,7 @@
             };
             await saveSettings();
             message = t.reset + " ✓";
-        } catch (err) {
+        } catch (_err) {
             message = t.saveSettingsFailed;
         }
     }

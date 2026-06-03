@@ -3,7 +3,7 @@ use tauri::{AppHandle, Manager, State, Emitter};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use crate::storage::{FrontendClipItem, ContentType};
+use crate::storage::{FrontendClipItem, ContentType, CopyMarker};
 use crate::settings::Settings;
 use crate::tray::update_tray_menu;
 use crate::{AppState, safe_lock, migration};
@@ -18,7 +18,39 @@ pub async fn get_clipboard_history(
 
     tauri::async_runtime::spawn_blocking(move || {
         let storage = safe_lock(&storage);
-        let items = storage.get_recent(limit).map_err(|e| e.to_string())?;
+        let items = storage.get_recent_clips(limit).map_err(|e| e.to_string())?;
+        Ok(items.into_iter().map(FrontendClipItem::from).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_recent_clips(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<FrontendClipItem>, String> {
+    let storage = state.storage.clone();
+    let limit = limit.unwrap_or(100);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        let items = storage.get_recent_clips(limit).map_err(|e| e.to_string())?;
+        Ok(items.into_iter().map(FrontendClipItem::from).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_pinned_clips(
+    state: State<'_, AppState>,
+) -> Result<Vec<FrontendClipItem>, String> {
+    let storage = state.storage.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        let items = storage.get_pinned_clips().map_err(|e| e.to_string())?;
         Ok(items.into_iter().map(FrontendClipItem::from).collect())
     })
     .await
@@ -207,7 +239,10 @@ pub async fn copy_clip_to_clipboard_internal(
             // Mark as self-copied to prevent re-capture
             {
                 let mut last_copied = safe_lock(&state.last_copied_by_us);
-                *last_copied = Some(text.clone());
+                *last_copied = Some(CopyMarker::from_payload(
+                    ContentType::Text,
+                    text.as_bytes(),
+                ));
             }
 
             clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
@@ -297,6 +332,51 @@ pub async fn copy_to_system_clipboard(
 ) -> Result<(), String> {
     // Use unified function, no notification for window copy
     copy_clip_to_clipboard_internal(&app, &clip_id, false).await
+}
+
+// CopyMarker contract:
+// - WP-1.B sets hash=SHA256(normalized_clipboard_payload) and content_type when writing clipboard.
+// - WP-1.D computes the same normalized hash on clipboard changes and skips matching payloads.
+// - The marker is cleared after the existing short self-copy window.
+#[tauri::command]
+pub async fn paste_clip(
+    _state: State<'_, AppState>,
+    _id: String,
+    _mode: String,
+) -> Result<(), String> {
+    Err("not implemented".into())
+}
+
+#[tauri::command]
+pub async fn set_clip_label(
+    _state: State<'_, AppState>,
+    _id: String,
+    _label: Option<String>,
+) -> Result<(), String> {
+    Err("not implemented".into())
+}
+
+#[tauri::command]
+pub async fn reorder_pinned(
+    _state: State<'_, AppState>,
+    _id: String,
+    _direction: String,
+) -> Result<(), String> {
+    Err("not implemented".into())
+}
+
+#[tauri::command]
+pub async fn open_settings_window(
+    _app: AppHandle,
+) -> Result<(), String> {
+    Err("not implemented".into())
+}
+
+#[tauri::command]
+pub async fn hide_quickbar(
+    _app: AppHandle,
+) -> Result<(), String> {
+    Err("not implemented".into())
 }
 
 #[tauri::command]

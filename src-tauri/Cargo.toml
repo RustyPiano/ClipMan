@@ -40,8 +40,6 @@ serde_bytes = "0.11"
 # Async Runtime
 tokio = { version = "1.40", features = ["full"] }
 
-# Crypto
-ring = "0.17"
 data-encoding = "2.6"
 sha2 = "0.10"
 

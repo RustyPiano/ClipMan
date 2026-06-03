@@ -7,10 +7,12 @@ use tauri::AppHandle;
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub global_shortcut: String,
+    pub auto_paste: bool,
+    pub ignore_concealed: bool,
+    pub pinned_shortcut: Option<String>,
     pub max_history_items: usize,
     pub auto_cleanup: bool,
     pub tray_text_length: usize,
-    pub store_original_image: bool,
     pub max_pinned_in_tray: usize,
     pub max_recent_in_tray: usize,
     pub custom_data_path: Option<String>,
@@ -22,10 +24,12 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             global_shortcut: "CommandOrControl+Shift+V".to_string(),
+            auto_paste: true,
+            ignore_concealed: true,
+            pinned_shortcut: None,
             max_history_items: 100,
             auto_cleanup: true,
             tray_text_length: 50,
-            store_original_image: false,
             max_pinned_in_tray: 5,
             max_recent_in_tray: 20,
             custom_data_path: None,
@@ -57,6 +61,23 @@ impl SettingsManager {
             }
         }
 
+        if let Some(auto_paste) = store.get("auto_paste") {
+            if let Some(b) = auto_paste.as_bool() {
+                self.settings.lock().unwrap().auto_paste = b;
+            }
+        }
+
+        if let Some(ignore_concealed) = store.get("ignore_concealed") {
+            if let Some(b) = ignore_concealed.as_bool() {
+                self.settings.lock().unwrap().ignore_concealed = b;
+            }
+        }
+
+        if let Some(pinned_shortcut) = store.get("pinned_shortcut") {
+            let mut settings = self.settings.lock().unwrap();
+            settings.pinned_shortcut = pinned_shortcut.as_str().map(|s| s.to_string());
+        }
+
         if let Some(max_items) = store.get("max_history_items") {
             if let Some(n) = max_items.as_u64() {
                 self.settings.lock().unwrap().max_history_items = n as usize;
@@ -72,12 +93,6 @@ impl SettingsManager {
         if let Some(tray_text_length) = store.get("tray_text_length") {
             if let Some(n) = tray_text_length.as_u64() {
                 self.settings.lock().unwrap().tray_text_length = n as usize;
-            }
-        }
-
-        if let Some(store_original) = store.get("store_original_image") {
-            if let Some(b) = store_original.as_bool() {
-                self.settings.lock().unwrap().store_original_image = b;
             }
         }
 
@@ -122,10 +137,12 @@ impl SettingsManager {
         let settings = self.settings.lock().unwrap();
 
         store.set("global_shortcut", serde_json::json!(settings.global_shortcut));
+        store.set("auto_paste", serde_json::json!(settings.auto_paste));
+        store.set("ignore_concealed", serde_json::json!(settings.ignore_concealed));
+        store.set("pinned_shortcut", serde_json::json!(settings.pinned_shortcut));
         store.set("max_history_items", serde_json::json!(settings.max_history_items));
         store.set("auto_cleanup", serde_json::json!(settings.auto_cleanup));
         store.set("tray_text_length", serde_json::json!(settings.tray_text_length));
-        store.set("store_original_image", serde_json::json!(settings.store_original_image));
         store.set("max_pinned_in_tray", serde_json::json!(settings.max_pinned_in_tray));
         store.set("max_recent_in_tray", serde_json::json!(settings.max_recent_in_tray));
         store.set("custom_data_path", serde_json::json!(settings.custom_data_path));
@@ -144,5 +161,19 @@ impl SettingsManager {
 
     pub fn set(&self, settings: Settings) {
         *self.settings.lock().unwrap() = settings;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_include_phase0_fields() {
+        let settings = Settings::default();
+
+        assert!(settings.auto_paste);
+        assert!(settings.ignore_concealed);
+        assert_eq!(None, settings.pinned_shortcut);
     }
 }

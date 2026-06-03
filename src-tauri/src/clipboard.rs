@@ -6,16 +6,16 @@ use uuid::Uuid;
 use chrono::Utc;
 use image::GenericImageView;
 
-use crate::storage::{ClipItem, ContentType};
+use crate::storage::{ClipItem, ContentType, CopyMarker};
 
 pub struct ClipboardMonitor {
     app_handle: AppHandle,
-    last_copied_by_us: Arc<Mutex<Option<String>>>,
+    last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
 }
 
 struct Handler {
     app_handle: AppHandle,
-    last_copied_by_us: Arc<Mutex<Option<String>>>,
+    last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
     last_text: Arc<Mutex<String>>,
     last_image: Arc<Mutex<Option<Vec<u8>>>>,
 }
@@ -37,8 +37,12 @@ impl ClipboardHandler for Handler {
                 // Check if this was copied by us
                 let should_skip = {
                     if let Ok(last_copied) = self.last_copied_by_us.lock() {
-                        if let Some(ref copied_text) = *last_copied {
-                            if copied_text == &text {
+                        if let Some(ref marker) = *last_copied {
+                            let text_marker = CopyMarker::from_payload(
+                                ContentType::Text,
+                                text.as_bytes(),
+                            );
+                            if marker == &text_marker {
                                 log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
                                 true
                             } else {
@@ -58,10 +62,13 @@ impl ClipboardHandler for Handler {
                     let item = ClipItem {
                         id: Uuid::new_v4().to_string(),
                         content: text.clone().into_bytes(),
+                        thumbnail: None,
                         content_type: ContentType::Text,
                         timestamp: Utc::now().timestamp(),
                         is_pinned: false,
                         pin_order: None,
+                        label: None,
+                        group_name: None,
                     };
 
                     ClipboardMonitor::save_to_storage(&self.app_handle, item);
@@ -84,26 +91,18 @@ impl ClipboardHandler for Handler {
                 let image_bytes_clone = image_bytes.clone();
                 
                 tauri::async_runtime::spawn(async move {
-                    // Check settings for image quality preference
-                    let store_original = if let Some(state) = app_handle.try_state::<crate::AppState>() {
-                        state.settings.get().store_original_image
-                    } else {
-                        false
-                    };
-
-                    let content = if store_original {
-                        ClipboardMonitor::process_full_image(&image_bytes_clone)
-                    } else {
-                        ClipboardMonitor::create_thumbnail(&image_bytes_clone)
-                    };
+                    let content = ClipboardMonitor::process_full_image(&image_bytes_clone);
 
                     let item = ClipItem {
                         id: Uuid::new_v4().to_string(),
                         content,
+                        thumbnail: None,
                         content_type: ContentType::Image,
                         timestamp: Utc::now().timestamp(),
                         is_pinned: false,
                         pin_order: None,
+                        label: None,
+                        group_name: None,
                     };
 
                     ClipboardMonitor::save_to_storage(&app_handle, item);
@@ -123,7 +122,7 @@ impl ClipboardHandler for Handler {
 }
 
 impl ClipboardMonitor {
-    pub fn new(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<String>>>) -> Self {
+    pub fn new(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>) -> Self {
         Self {
             app_handle,
             last_copied_by_us,
@@ -164,7 +163,7 @@ impl ClipboardMonitor {
     }
 
     // Fallback polling implementation
-    fn start_polling(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<String>>>) {
+    fn start_polling(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>) {
         use std::thread;
         use std::time::Duration;
 
@@ -185,8 +184,12 @@ impl ClipboardMonitor {
                 if text != last_text && !text.is_empty() {
                     let should_skip = {
                         if let Ok(last_copied) = last_copied_by_us.lock() {
-                            if let Some(ref copied_text) = *last_copied {
-                                if copied_text == &text {
+                            if let Some(ref marker) = *last_copied {
+                                let text_marker = CopyMarker::from_payload(
+                                    ContentType::Text,
+                                    text.as_bytes(),
+                                );
+                                if marker == &text_marker {
                                     log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
                                     true
                                 } else {
@@ -207,10 +210,13 @@ impl ClipboardMonitor {
                         let item = ClipItem {
                             id: Uuid::new_v4().to_string(),
                             content: text.into_bytes(),
+                            thumbnail: None,
                             content_type: ContentType::Text,
                             timestamp: Utc::now().timestamp(),
                             is_pinned: false,
                             pin_order: None,
+                            label: None,
+                            group_name: None,
                         };
 
                         Self::save_to_storage(&app_handle, item);
@@ -232,25 +238,18 @@ impl ClipboardMonitor {
                     let image_bytes_clone = image_bytes.clone();
                     
                     tauri::async_runtime::spawn(async move {
-                        let store_original = if let Some(state) = app_handle_clone.try_state::<crate::AppState>() {
-                            state.settings.get().store_original_image
-                        } else {
-                            false
-                        };
-
-                        let content = if store_original {
-                            Self::process_full_image(&image_bytes_clone)
-                        } else {
-                            Self::create_thumbnail(&image_bytes_clone)
-                        };
+                        let content = Self::process_full_image(&image_bytes_clone);
 
                         let item = ClipItem {
                             id: Uuid::new_v4().to_string(),
                             content,
+                            thumbnail: None,
                             content_type: ContentType::Image,
                             timestamp: Utc::now().timestamp(),
                             is_pinned: false,
                             pin_order: None,
+                            label: None,
+                            group_name: None,
                         };
 
                         Self::save_to_storage(&app_handle_clone, item);

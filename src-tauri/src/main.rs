@@ -2,26 +2,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod clipboard;
-mod storage;
-mod crypto;
-mod settings;
-mod migration;
-mod tray;
 mod commands;
+mod migration;
+mod settings;
+mod storage;
+mod tray;
 
 use clipboard::ClipboardMonitor;
-use storage::ClipStorage;
-use crypto::Crypto;
-use settings::SettingsManager;
-use tray::{TrayIconCache, build_tray_menu};
 use commands::*;
+use settings::SettingsManager;
+use storage::{ClipStorage, CopyMarker};
+use tray::{build_tray_menu, TrayIconCache};
 
-use tauri::Manager;
-use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use std::sync::{Arc, Mutex};
-use std::fs;
-use std::path::PathBuf;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(target_os = "macos")]
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
@@ -30,7 +26,9 @@ use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 fn set_activation_policy() {
     unsafe {
         let app = NSApp();
-        app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory);
+        app.setActivationPolicy_(
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+        );
     }
     log::info!("macOS activation policy set to Accessory (menu bar only)");
 }
@@ -47,55 +45,9 @@ pub fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 pub struct AppState {
     pub storage: Arc<Mutex<ClipStorage>>,
     pub monitor: Mutex<Option<ClipboardMonitor>>,
-    #[allow(dead_code)]
-    pub crypto: Arc<Crypto>,
     pub settings: Arc<SettingsManager>,
-    pub last_copied_by_us: Arc<Mutex<Option<String>>>,
+    pub last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
     pub icon_cache: Arc<TrayIconCache>,
-}
-
-/// Generate or load encryption key
-fn get_or_create_encryption_key(app_data_dir: &PathBuf) -> Result<[u8; 32], String> {
-    let key_path = app_data_dir.join(".clipman.key");
-
-    if key_path.exists() {
-        log::info!("Loading existing encryption key from {:?}", key_path);
-        let key_data = fs::read(&key_path)
-            .map_err(|e| format!("Failed to read encryption key: {}", e))?;
-
-        if key_data.len() != 32 {
-            return Err("Invalid encryption key file".to_string());
-        }
-
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&key_data);
-        return Ok(key);
-    }
-
-    log::info!("Generating new encryption key at {:?}", key_path);
-    use ring::rand::{SecureRandom, SystemRandom};
-
-    let rng = SystemRandom::new();
-    let mut key = [0u8; 32];
-    rng.fill(&mut key)
-        .map_err(|e| format!("Failed to generate key: {:?}", e))?;
-
-    fs::write(&key_path, &key)
-        .map_err(|e| format!("Failed to save encryption key: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&key_path)
-            .map_err(|e| format!("Failed to get key file metadata: {}", e))?
-            .permissions();
-        perms.set_mode(0o600);
-        fs::set_permissions(&key_path, perms)
-            .map_err(|e| format!("Failed to set key file permissions: {}", e))?;
-    }
-
-    log::info!("Encryption key generated and saved successfully");
-    Ok(key)
 }
 
 fn main() {
@@ -110,12 +62,16 @@ fn main() {
         log::info!("Running on macOS - checking clipboard access");
 
         match Clipboard::new() {
-            Ok(mut clipboard) => {
-                match clipboard.get_text() {
-                    Ok(text) => log::info!("✅ Clipboard access OK, current content: {} chars", text.len()),
-                    Err(e) => log::warn!("⚠️ Cannot read clipboard: {}. May need accessibility permission.", e),
-                }
-            }
+            Ok(mut clipboard) => match clipboard.get_text() {
+                Ok(text) => log::info!(
+                    "✅ Clipboard access OK, current content: {} chars",
+                    text.len()
+                ),
+                Err(e) => log::warn!(
+                    "⚠️ Cannot read clipboard: {}. May need accessibility permission.",
+                    e
+                ),
+            },
             Err(e) => log::error!("❌ Failed to create clipboard instance: {}", e),
         }
 
@@ -133,7 +89,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"])
+            Some(vec!["--minimized"]),
         ))
         .setup(|app| {
             // Initialize settings first
@@ -141,33 +97,27 @@ fn main() {
             if let Err(e) = settings_manager.load(&app.handle()) {
                 log::warn!("Failed to load settings, using defaults: {}", e);
             }
-            
-            let default_app_data_dir = app.path().app_data_dir()
+
+            let default_app_data_dir = app
+                .path()
+                .app_data_dir()
                 .expect("Failed to get app data directory");
-            
+
             let settings = settings_manager.get();
             let data_dir = migration::get_data_directory(
                 default_app_data_dir.clone(),
-                settings.custom_data_path.clone()
+                settings.custom_data_path.clone(),
             );
-            
-            log::info!("Using data directory: {:?}", data_dir);
-            
-            std::fs::create_dir_all(&data_dir)
-                .expect("Failed to create data directory");
 
-            let encryption_key = get_or_create_encryption_key(&data_dir)
-                .expect("Failed to initialize encryption key");
-            let crypto = Arc::new(Crypto::new(&encryption_key));
-            log::info!("Encryption initialized");
+            log::info!("Using data directory: {:?}", data_dir);
+
+            std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
 
             let db_path = data_dir.join("clipman.db");
             log::info!("Database path: {:?}", db_path);
 
-            let storage = ClipStorage::new(
-                db_path.to_str().unwrap(),
-                Some(crypto.clone())
-            ).expect("Failed to initialize database");
+            let storage =
+                ClipStorage::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
             let icon_cache = Arc::new(TrayIconCache::new());
@@ -175,7 +125,6 @@ fn main() {
             let app_state = AppState {
                 storage: Arc::new(Mutex::new(storage)),
                 monitor: Mutex::new(None),
-                crypto: crypto.clone(),
                 settings: settings_manager.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
                 icon_cache: icon_cache.clone(),
@@ -202,7 +151,10 @@ fn main() {
                             log::info!("Clear non-pinned menu clicked");
                             let app_clone = app.clone();
                             tauri::async_runtime::spawn(async move {
-                                if let Err(e) = clear_non_pinned_history(app_clone.clone(), app_clone.state()).await {
+                                if let Err(e) =
+                                    clear_non_pinned_history(app_clone.clone(), app_clone.state())
+                                        .await
+                                {
                                     log::error!("Failed to clear non-pinned history: {}", e);
                                 }
                             });
@@ -222,7 +174,10 @@ fn main() {
                             let app_clone = app.clone();
                             tauri::async_runtime::spawn(async move {
                                 // Use unified copy function with notification
-                                if let Err(e) = copy_clip_to_clipboard_internal(&app_clone, &clip_id, true).await {
+                                if let Err(e) =
+                                    copy_clip_to_clipboard_internal(&app_clone, &clip_id, true)
+                                        .await
+                                {
                                     log::error!("Failed to copy clip: {}", e);
                                 }
                             });
@@ -275,19 +230,25 @@ fn main() {
 
             let app_handle_hotkey = app.handle().clone();
             let shortcut_display = current_shortcut.clone();
-            app.global_shortcut().on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    log::info!("Global shortcut triggered: {}", shortcut_display);
-                    if let Some(window) = app_handle_hotkey.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
+            app.global_shortcut()
+                .on_shortcut(current_shortcut.as_str(), move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        log::info!("Global shortcut triggered: {}", shortcut_display);
+                        if let Some(window) = app_handle_hotkey.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
-                }
-            }).map_err(|e| {
-                log::error!("Failed to register global shortcut '{}': {}", current_shortcut, e);
-                e
-            })?;
+                })
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to register global shortcut '{}': {}",
+                        current_shortcut,
+                        e
+                    );
+                    e
+                })?;
 
             log::info!("Global shortcuts registered: {}", current_shortcut);
 
@@ -295,6 +256,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_clipboard_history,
+            get_recent_clips,
+            get_pinned_clips,
             search_clips,
             toggle_pin,
             delete_clip,
@@ -304,6 +267,11 @@ fn main() {
             clear_all_history,
             clear_non_pinned_history,
             copy_to_system_clipboard,
+            paste_clip,
+            set_clip_label,
+            reorder_pinned,
+            open_settings_window,
+            hide_quickbar,
             check_for_updates,
             install_update,
             disable_global_shortcut,
