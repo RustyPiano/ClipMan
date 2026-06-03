@@ -6,9 +6,9 @@ Guidance for AI coding agents working on **ClipMan**. For human-facing docs see 
 
 ClipMan is a **local-first desktop clipboard manager** (Windows / macOS / Linux). It captures clipboard history (text + images), lets users search / pin / restore entries from a window or the system tray, and persists everything in a local SQLite database.
 
-- **Backend:** Rust 2021 + Tauri 2.9 (`src-tauri/`) — clipboard monitoring, SQLite storage, tray, global shortcuts, settings, updater.
-- **Frontend:** Svelte 5 (runes) + TypeScript + Tailwind CSS 4, built with Vite 6 (`src/`).
-- **IPC:** Tauri `invoke`/`emit` is the *only* boundary between UI and backend.
+- **Backend:** Rust 2021 + Tauri 2.11 (`src-tauri/`) — clipboard monitoring, SQLite storage, tray, global shortcuts, settings, updater.
+- **Frontend:** Svelte 5 (runes) + TypeScript + Tailwind CSS 4, built with Vite 8 (`src/`).
+- **IPC:** Tauri `invoke`/`emit` is the _only_ boundary between UI and backend.
 - **Architecture:** single desktop process, no network tier. Shared `AppState` (`Arc<Mutex<…>>`) in `src-tauri/src/main.rs`; thin command adapters in `commands.rs` over `storage`/`settings`/`tray`/`clipboard`/`migration` modules.
 
 ## ⚠️ Active redesign — read before changing things
@@ -28,7 +28,7 @@ Use **Bun** (matches CI); npm also works (both `bun.lock` and `package-lock.json
 bun install            # install frontend deps (Cargo deps fetch on first build)
 ```
 
-Requirements: Bun (or Node 18+), Rust 1.82+. Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
+Requirements: Bun 1.3+ (or Node 20.19+ for frontend tooling), Rust 1.96.0 via `rust-toolchain.toml`. Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
 
 ## Development Workflow
 
@@ -37,7 +37,7 @@ bun tauri dev          # run the full desktop app (Vite + Rust, hot reload)
 bun run dev            # frontend only (Vite dev server, no native shell)
 ```
 
-Note: `tauri.conf.json` wires `beforeDevCommand: npm run dev`, so having `npm` available alongside Bun is convenient.
+Note: `tauri.conf.json` wires `beforeDevCommand: bun run dev`, so Bun is the expected frontend runtime.
 
 ## Build
 
@@ -85,19 +85,19 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 
 ## Where Things Live
 
-| Area | Path |
-|---|---|
-| App entry, AppState, tray setup, shortcuts | `src-tauri/src/main.rs` |
-| Tauri command handlers (IPC) | `src-tauri/src/commands.rs` |
-| SQLite storage + dedup + history limits | `src-tauri/src/storage.rs` |
-| Clipboard monitoring (event-driven + polling fallback) | `src-tauri/src/clipboard.rs` |
-| Tray menu (dynamic, rebuilt on change) | `src-tauri/src/tray.rs` |
-| Settings persistence (tauri-plugin-store) | `src-tauri/src/settings.rs` |
-| Data dir / migration | `src-tauri/src/migration.rs` |
-| Frontend stores | `src/lib/stores/*.svelte.ts` |
-| UI components | `src/lib/components/**`, `src/routes/**` |
-| Shared TS types | `src/lib/types.ts` |
-| Native + frontend config | `src-tauri/tauri.conf.json`, `vite.config.js`, `tsconfig.json` |
+| Area                                                   | Path                                                           |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| App entry, AppState, tray setup, shortcuts             | `src-tauri/src/main.rs`                                        |
+| Tauri command handlers (IPC)                           | `src-tauri/src/commands.rs`                                    |
+| SQLite storage + dedup + history limits                | `src-tauri/src/storage.rs`                                     |
+| Clipboard monitoring (event-driven + polling fallback) | `src-tauri/src/clipboard.rs`                                   |
+| Tray menu (dynamic, rebuilt on change)                 | `src-tauri/src/tray.rs`                                        |
+| Settings persistence (tauri-plugin-store)              | `src-tauri/src/settings.rs`                                    |
+| Data dir / migration                                   | `src-tauri/src/migration.rs`                                   |
+| Frontend stores                                        | `src/lib/stores/*.svelte.ts`                                   |
+| UI components                                          | `src/lib/components/**`, `src/routes/**`                       |
+| Shared TS types                                        | `src/lib/types.ts`                                             |
+| Native + frontend config                               | `src-tauri/tauri.conf.json`, `vite.config.js`, `tsconfig.json` |
 
 `$lib/*` maps to `src/lib/*` (in both `tsconfig.json` and `vite.config.js`).
 

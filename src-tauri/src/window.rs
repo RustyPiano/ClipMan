@@ -115,29 +115,19 @@ pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Resu
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
 pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
-    use cocoa::base::{id, nil, BOOL, YES};
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
     let target = (*crate::safe_lock(store))
         .ok_or_else(|| "No foreground app was recorded before QuickBar opened".to_string())?;
     let pid = target.raw() as i32;
 
-    unsafe {
-        let running: id = msg_send![
-            class!(NSRunningApplication),
-            runningApplicationWithProcessIdentifier: pid
-        ];
-        if running == nil {
-            return Err(format!("Recorded app (pid {pid}) is no longer running"));
-        }
+    let Some(running) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+        return Err(format!("Recorded app (pid {pid}) is no longer running"));
+    };
 
-        // NSApplicationActivateIgnoringOtherApps = 1 << 1
-        let activated: BOOL = msg_send![running, activateWithOptions: 1u64 << 1];
-        if activated != YES {
-            return Err(format!("Failed to reactivate app (pid {pid})"));
-        }
+    if !running.activateWithOptions(NSApplicationActivationOptions::empty()) {
+        return Err(format!("Failed to reactivate app (pid {pid})"));
     }
 
     Ok(())
@@ -197,6 +187,15 @@ fn get_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, String> {
         .ok_or_else(|| format!("Window '{label}' is not available"))
 }
 
+#[cfg(target_os = "macos")]
+fn ns_window(window: &WebviewWindow) -> Result<&objc2_app_kit::NSWindow, String> {
+    let raw = window.ns_window().map_err(to_string)? as *mut objc2_app_kit::NSWindow;
+    unsafe {
+        raw.as_ref()
+            .ok_or_else(|| "macOS NSWindow pointer is null".to_string())
+    }
+}
+
 fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let monitor = window
         .current_monitor()
@@ -227,32 +226,19 @@ fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
 fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
-    use cocoa::appkit::{NSWindow, NSWindowCollectionBehavior};
-    use cocoa::base::{id, YES};
-    use cocoa::foundation::NSUInteger;
-    use objc::{msg_send, sel, sel_impl};
+    use objc2_app_kit::{NSFloatingWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
-    const NS_FLOATING_WINDOW_LEVEL: i64 = 3;
-    const NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL: NSUInteger = 1 << 7;
-
-    let ns_window = window.ns_window().map_err(to_string)? as id;
-    unsafe {
-        let style_mask: NSUInteger = msg_send![ns_window, styleMask];
-        let _: () = msg_send![
-            ns_window,
-            setStyleMask: style_mask | NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL
-        ];
-        ns_window.setLevel_(NS_FLOATING_WINDOW_LEVEL);
-        ns_window.setHidesOnDeactivate_(YES);
-        ns_window.setCollectionBehavior_(
-            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
-                | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
-                | NSWindowCollectionBehavior::NSWindowCollectionBehaviorTransient
-                | NSWindowCollectionBehavior::NSWindowCollectionBehaviorIgnoresCycle,
-        );
-    }
+    let ns_window = ns_window(window)?;
+    ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+    ns_window.setLevel(NSFloatingWindowLevel);
+    ns_window.setHidesOnDeactivate(true);
+    ns_window.setCollectionBehavior(
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::Transient
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
 
     log::info!("Configured QuickBar macOS non-activating panel style fallback");
     Ok(())
@@ -322,28 +308,23 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
 fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &WebviewWindow) {
-    use cocoa::base::{id, nil};
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2_app_kit::NSWorkspace;
 
-    unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let front: id = msg_send![workspace, frontmostApplication];
-        if front == nil {
-            log::warn!("No frontmost macOS application to record");
-            return;
-        }
+    let workspace = NSWorkspace::sharedWorkspace();
+    let Some(front) = workspace.frontmostApplication() else {
+        log::warn!("No frontmost macOS application to record");
+        return;
+    };
 
-        let pid: i32 = msg_send![front, processIdentifier];
-        if pid == std::process::id() as i32 {
-            log::debug!("ClipMan is already frontmost; keeping previous paste target");
-            return;
-        }
-
-        *crate::safe_lock(store) = Some(ForegroundWindow { raw: pid as isize });
-        log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
+    let pid = front.processIdentifier();
+    if pid == std::process::id() as i32 {
+        log::debug!("ClipMan is already frontmost; keeping previous paste target");
+        return;
     }
+
+    *crate::safe_lock(store) = Some(ForegroundWindow { raw: pid as isize });
+    log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
@@ -408,14 +389,9 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
-    use cocoa::appkit::NSWindow;
-    use cocoa::base::{id, nil};
-
-    let ns_window = window.ns_window().map_err(to_string)? as id;
-    unsafe {
-        ns_window.orderFrontRegardless();
-        ns_window.makeKeyAndOrderFront_(nil);
-    }
+    let ns_window = ns_window(window)?;
+    ns_window.orderFrontRegardless();
+    ns_window.makeKeyAndOrderFront(None);
 
     window.set_focus().map_err(to_string)
 }
@@ -427,12 +403,12 @@ fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
-    use cocoa::appkit::{NSApp, NSApplication};
-    use cocoa::base::YES;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApp;
 
-    unsafe {
-        NSApp().activateIgnoringOtherApps_(YES);
-    }
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| "Settings window focus must run on the main thread".to_string())?;
+    NSApp(mtm).activate();
 
     window.set_focus().map_err(to_string)
 }

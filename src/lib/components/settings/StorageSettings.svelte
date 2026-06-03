@@ -4,15 +4,8 @@
   import { Loader2, FolderOpen } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
-  import type { Settings } from '$lib/types';
 
-  let {
-    settings = $bindable(),
-    currentDataPath,
-    changingDataPath,
-    changeDataLocation,
-  } = $props<{
-    settings: Settings;
+  let { currentDataPath, changingDataPath, changeDataLocation } = $props<{
     currentDataPath: string;
     changingDataPath: boolean;
     changeDataLocation: () => void;

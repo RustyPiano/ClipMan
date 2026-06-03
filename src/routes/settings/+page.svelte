@@ -264,12 +264,7 @@
           {:else if activeTab === 'tray'}
             <TraySettings bind:settings />
           {:else if activeTab === 'storage'}
-            <StorageSettings
-              bind:settings
-              {currentDataPath}
-              {changingDataPath}
-              {changeDataLocation}
-            />
+            <StorageSettings {currentDataPath} {changingDataPath} {changeDataLocation} />
           {:else if activeTab === 'about'}
             <AboutSection
               {updateInfo}

@@ -6,23 +6,23 @@ authors = ["ClipMan Team"]
 license = "MIT"
 repository = "https://github.com/yourusername/clipman"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.96"
 
 [build-dependencies]
-tauri-build = { version = "2.5", features = [] }
+tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 # Tauri Core
-tauri = { version = "2.9", features = ["macos-private-api", "tray-icon", "devtools"] }
-tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-clipboard-manager = "2.3"
-tauri-plugin-global-shortcut = "2"
-tauri-plugin-store = "2"
-tauri-plugin-updater = "2.1"
+tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon", "devtools"] }
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-dialog = "2.7.1"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-store = "2.4.3"
+tauri-plugin-updater = "2.10.1"
 tauri-plugin-notification = "2.3.3"
-tauri-plugin-autostart = "2"
+tauri-plugin-autostart = "2.5.1"
 
 # Clipboard & System
 arboard = "3.4"
@@ -59,8 +59,16 @@ clipboard-master = "4.0.0"
 
 # macOS specific
 [target.'cfg(target_os = "macos")'.dependencies]
-cocoa = "0.25"
-objc = "0.2"
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", features = [
+    "libc",
+    "NSApplication",
+    "NSPasteboard",
+    "NSRunningApplication",
+    "NSWindow",
+    "NSWorkspace",
+] }
+objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSString"] }
 
 [features]
 default = ["custom-protocol"]
