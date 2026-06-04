@@ -76,6 +76,7 @@ function resetStore() {
   clipboardStore.pinnedItems = [];
   clipboardStore.searchResults = [];
   clipboardStore.searchQuery = '';
+  clipboardStore.activeSearchQuery = '';
   clipboardStore.isLoading = false;
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
@@ -142,6 +143,37 @@ describe('clipboard store races', () => {
     await clipboardStore.deleteItem('x');
     await clipboardStore.fetchFullClip('x');
     expect(getClipCalls).toBe(2); // cache dropped on delete → refetch
+  });
+
+  test('deleteItem removes the deleted clip locally without reloading history', async () => {
+    const invoked: string[] = [];
+    const deleted = clip({ id: 'deleted' });
+    const keptRecent = clip({ id: 'kept-recent' });
+    const keptPinned = clip({ id: 'kept-pinned', isPinned: true, pinOrder: 1 });
+
+    installTauriInvoke((cmd) => {
+      invoked.push(cmd);
+      if (cmd === 'delete_clip') return null;
+      if (cmd === 'get_recent_clips') return [deleted, keptRecent];
+      if (cmd === 'get_pinned_clips') return [keptPinned];
+      return null;
+    });
+
+    clipboardStore.recentItems = [deleted, keptRecent];
+    clipboardStore.pinnedItems = [deleted, keptPinned];
+    clipboardStore.searchResults = [deleted, keptRecent, keptPinned];
+    clipboardStore.activeSearchQuery = 'del';
+
+    await clipboardStore.deleteItem('deleted');
+
+    expect(invoked).toEqual(['delete_clip']);
+    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['kept-recent']);
+    expect(clipboardStore.pinnedItems.map((item) => item.id)).toEqual(['kept-pinned']);
+    expect(clipboardStore.searchResults.map((item) => item.id)).toEqual([
+      'kept-recent',
+      'kept-pinned',
+    ]);
+    expect(clipboardStore.isLoading).toBe(false);
   });
 
   test('fetchFullClip ignores non-text responses and does not cache them', async () => {

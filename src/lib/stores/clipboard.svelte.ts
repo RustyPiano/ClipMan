@@ -277,8 +277,7 @@ class ClipboardStore {
   async deleteItem(id: string) {
     try {
       await invoke('delete_clip', { id });
-      this.fullClipCache.delete(id);
-      await this.reloadFromBackend();
+      this.removeClipLocally(id);
     } catch (error) {
       console.error('Failed to delete item:', error);
     }
@@ -403,6 +402,17 @@ class ClipboardStore {
 
     this.recentItems = nextItems.recentItems;
     this.pinnedItems = nextItems.pinnedItems;
+  }
+
+  private removeClipLocally(id: string) {
+    this.historyRequests.next();
+    this.searchRequests.next();
+    this.fullClipCache.delete(id);
+    this.recentItems = this.recentItems.filter((item) => item.id !== id);
+    this.pinnedItems = this.pinnedItems.filter((item) => item.id !== id);
+    this.searchResults = this.searchResults.filter((item) => item.id !== id);
+    this.isLoading = false;
+    this.isSearchPending = false;
   }
 
   private recordIncomingItem(item: ClipItem) {
