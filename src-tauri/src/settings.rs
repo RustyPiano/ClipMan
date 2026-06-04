@@ -29,7 +29,7 @@ impl Default for Settings {
             ignore_concealed: true,
             pinned_shortcut: None,
             max_history_items: 100,
-            tray_text_length: 50,
+            tray_text_length: 70,
             max_pinned_in_tray: 5,
             max_recent_in_tray: 20,
             custom_data_path: None,
@@ -270,6 +270,14 @@ mod tests {
         assert!(settings.auto_paste);
         assert!(settings.ignore_concealed);
         assert_eq!(None, settings.pinned_shortcut);
+    }
+
+    #[test]
+    fn default_tray_text_length_shows_enough_to_tell_similar_clips_apart() {
+        // Raised from 50 so look-alike entries (shared prefix/suffix) stay
+        // distinguishable in the single-line tray menu. Existing users keep
+        // their stored value; only fresh installs and reset use the default.
+        assert_eq!(70, Settings::default().tray_text_length);
     }
 
     #[test]

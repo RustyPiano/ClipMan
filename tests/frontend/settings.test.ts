@@ -9,7 +9,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     ignoreConcealed: true,
     pinnedShortcut: null,
     maxHistoryItems: 100,
-    trayTextLength: 50,
+    trayTextLength: 70,
     maxPinnedInTray: 5,
     maxRecentInTray: 20,
     customDataPath: null,
