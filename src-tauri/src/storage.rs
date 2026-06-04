@@ -180,6 +180,29 @@ impl FrontendClipItem {
             group_name: item.group_name,
         }
     }
+
+    /// Full-fidelity mapping for the QuickBar preview pane: text is not
+    /// truncated and images use the full-resolution `content` (not the
+    /// downscaled thumbnail), so the preview shows the real payload.
+    pub fn from_full(item: ClipItem) -> Self {
+        use data_encoding::BASE64;
+
+        let content = match item.content_type {
+            ContentType::Image => format!("data:image/png;base64,{}", BASE64.encode(&item.content)),
+            ContentType::Text => BASE64.encode(&item.content),
+        };
+
+        Self {
+            id: item.id,
+            content,
+            content_type: item.content_type,
+            timestamp: item.timestamp,
+            is_pinned: item.is_pinned,
+            pin_order: item.pin_order,
+            label: item.label,
+            group_name: item.group_name,
+        }
+    }
 }
 
 pub struct ClipStorage {

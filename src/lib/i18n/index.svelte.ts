@@ -42,11 +42,17 @@ export interface Translations {
   noPinnedItemsHint: string;
   noClipboardHistory: string;
   noClipboardHistoryHint: string;
+  noSearchResults: string;
+  noSearchResultsHint: string;
 
   // Search
   searchPlaceholder: string;
   showing: string;
   items: string;
+
+  // Preview pane
+  selectToPreview: string;
+  charCount: string;
 
   // Settings sections
   settingsGeneral: string;
@@ -197,11 +203,17 @@ const zh: Translations = {
   noPinnedItemsHint: '点击置顶图标收藏常用内容',
   noClipboardHistory: '暂无剪切板历史',
   noClipboardHistoryHint: '复制内容后会自动出现在这里',
+  noSearchResults: '没有匹配的结果',
+  noSearchResultsHint: '换个关键词试试',
 
   // Search
   searchPlaceholder: '搜索剪切板内容...',
   showing: '显示',
   items: '项',
+
+  // Preview pane
+  selectToPreview: '选择一项查看完整内容',
+  charCount: '{n} 字',
 
   // Settings sections
   settingsGeneral: '常规',
@@ -352,11 +364,17 @@ const en: Translations = {
   noPinnedItemsHint: 'Click the pin icon to save frequently used content',
   noClipboardHistory: 'No clipboard history',
   noClipboardHistoryHint: 'Copied content will appear here',
+  noSearchResults: 'No matching results',
+  noSearchResultsHint: 'Try a different keyword',
 
   // Search
   searchPlaceholder: 'Search clipboard...',
   showing: 'Showing',
   items: 'items',
+
+  // Preview pane
+  selectToPreview: 'Select an item to see the full content',
+  charCount: '{n} chars',
 
   // Settings sections
   settingsGeneral: 'General',

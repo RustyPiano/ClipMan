@@ -13,6 +13,7 @@
   import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
+  import ClipPreview from '$lib/components/ClipPreview.svelte';
   import SettingsPage from './settings/+page.svelte';
   import PermissionCheck from '$lib/components/PermissionCheck.svelte';
   import Toast from '$lib/components/Toast.svelte';
@@ -27,6 +28,7 @@
     ClipboardList,
     Loader2,
     Heart,
+    Search,
   } from 'lucide-svelte';
 
   const initialSettingsCheck =
@@ -60,6 +62,14 @@
     clampSelectedIndex(selectionStore.selectedIndex, displayItems.length)
   );
   const selectedItem = $derived(displayItems[selectedIndex]);
+
+  // Master-detail: show the preview pane only when the window is wide enough and
+  // there's an actual list to preview (loading/empty states span full width).
+  const PREVIEW_MIN_VIEWPORT = 620;
+  let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
+  const showPreview = $derived(
+    viewportWidth >= PREVIEW_MIN_VIEWPORT && !clipboardStore.isLoading && displayItems.length > 0
+  );
 
   $effect(() => {
     const clampedIndex = selectedIndex;
@@ -374,6 +384,8 @@
   });
 </script>
 
+<svelte:window onresize={() => (viewportWidth = window.innerWidth)} />
+
 {#if isSettings || router.currentRoute === 'settings'}
   <div class="contents" {@attach syncTheme(themeStore.current)}>
     <SettingsPage />
@@ -434,41 +446,60 @@
         </div>
       </div>
 
-      <!-- Results -->
-      <main id="clipboard-content" class="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {#if clipboardStore.isLoading}
-          <div class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 class="h-6 w-6 animate-spin" />
-            <p class="text-sm">{t.loading}</p>
-          </div>
-        {:else if displayItems.length === 0}
-          <div
-            class="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-muted-foreground"
-          >
-            {#if selectionStore.panel === 'pinned'}
-              <Pin class="h-8 w-8 opacity-20" />
-              <p class="text-sm font-medium">{t.noPinnedItems}</p>
-              <p class="text-xs opacity-70">{t.noPinnedItemsHint}</p>
-            {:else}
-              <ClipboardList class="h-8 w-8 opacity-20" />
-              <p class="text-sm font-medium">{t.noClipboardHistory}</p>
-              <p class="text-xs opacity-70">{t.noClipboardHistoryHint}</p>
-            {/if}
-          </div>
-        {:else}
-          <div {@attach attachResultsScroller} class="flex-1 space-y-1 overflow-y-auto p-2">
-            {#each displayItems as item, index (item.id)}
-              <ClipboardItem
-                {item}
-                selected={index === selectedIndex}
-                slotNumber={index < 9 ? index + 1 : null}
-                onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
-                onUse={() => useItem(item)}
-              />
-            {/each}
-          </div>
+      <!-- Results + Preview (master-detail) -->
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+        <main
+          id="clipboard-content"
+          class="flex min-h-0 flex-1 flex-col overflow-hidden {showPreview
+            ? 'border-r border-border/60'
+            : ''}"
+        >
+          {#if clipboardStore.isLoading}
+            <div
+              class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"
+            >
+              <Loader2 class="h-6 w-6 animate-spin" />
+              <p class="text-sm">{t.loading}</p>
+            </div>
+          {:else if displayItems.length === 0}
+            <div
+              class="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-muted-foreground"
+            >
+              {#if clipboardStore.activeSearchQuery.trim()}
+                <Search class="h-8 w-8 opacity-20" />
+                <p class="text-sm font-medium">{t.noSearchResults}</p>
+                <p class="text-xs opacity-70">{t.noSearchResultsHint}</p>
+              {:else if selectionStore.panel === 'pinned'}
+                <Pin class="h-8 w-8 opacity-20" />
+                <p class="text-sm font-medium">{t.noPinnedItems}</p>
+                <p class="text-xs opacity-70">{t.noPinnedItemsHint}</p>
+              {:else}
+                <ClipboardList class="h-8 w-8 opacity-20" />
+                <p class="text-sm font-medium">{t.noClipboardHistory}</p>
+                <p class="text-xs opacity-70">{t.noClipboardHistoryHint}</p>
+              {/if}
+            </div>
+          {:else}
+            <div {@attach attachResultsScroller} class="flex-1 space-y-1 overflow-y-auto p-2">
+              {#each displayItems as item, index (item.id)}
+                <ClipboardItem
+                  {item}
+                  selected={index === selectedIndex}
+                  slotNumber={index < 9 ? index + 1 : null}
+                  onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
+                  onUse={() => useItem(item)}
+                />
+              {/each}
+            </div>
+          {/if}
+        </main>
+
+        {#if showPreview}
+          <aside class="flex w-[42%] min-w-0 flex-none flex-col overflow-hidden">
+            <ClipPreview item={selectedItem} />
+          </aside>
         {/if}
-      </main>
+      </div>
 
       <!-- Footer: shortcut hints + quick actions -->
       <div

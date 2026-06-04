@@ -40,6 +40,14 @@ class ClipboardStore {
   private searchRequests = new RequestSequencer();
   private incomingRevision = 0;
   private incomingEvents: IncomingItemEvent[] = [];
+  // Full-content caches for the preview pane. Keyed by id; a clip's content is
+  // immutable for a given id (only label/pin/timestamp change), so entries never
+  // go stale. Images are kept in a tiny separate cache because each full image is
+  // a (potentially multi-MB) base64 data URL — caching many would balloon memory.
+  private fullTextCache = new Map<string, ClipItem>();
+  private fullImageCache = new Map<string, ClipItem>();
+  private static readonly FULL_TEXT_CACHE_LIMIT = 200;
+  private static readonly FULL_IMAGE_CACHE_LIMIT = 6;
 
   recentDisplayItems = $derived(
     this.activeSearchQuery.trim()
@@ -328,6 +336,46 @@ class ClipboardStore {
       console.error('[ERROR] Failed to copy to clipboard:', error);
       toastStore.add(i18n.t.copyFailed, 'error');
       throw error;
+    }
+  }
+
+  /** Synchronously read a cached full clip (no fetch). */
+  getCachedFullClip(id: string): ClipItem | undefined {
+    return this.fullTextCache.get(id) ?? this.fullImageCache.get(id);
+  }
+
+  /**
+   * Fetch the full, untruncated clip (full text / full-resolution image) by id
+   * for the preview pane. Results are cached; callers should guard against
+   * stale selections since this resolves asynchronously.
+   */
+  async fetchFullClip(id: string): Promise<ClipItem | null> {
+    const cached = this.getCachedFullClip(id);
+    if (cached) return cached;
+    if (!hasTauriRuntime()) return null;
+
+    try {
+      const full = await invoke<ClipItem | null>('get_clip', { id });
+      if (full) this.cacheFullClip(full);
+      return full ?? null;
+    } catch (error) {
+      console.error('[ERROR] Failed to fetch full clip:', error);
+      return null;
+    }
+  }
+
+  private cacheFullClip(item: ClipItem) {
+    const isImage = item.contentType === 'image';
+    const cache = isImage ? this.fullImageCache : this.fullTextCache;
+    const limit = isImage
+      ? ClipboardStore.FULL_IMAGE_CACHE_LIMIT
+      : ClipboardStore.FULL_TEXT_CACHE_LIMIT;
+
+    cache.set(item.id, item);
+    while (cache.size > limit) {
+      const oldestKey = cache.keys().next().value;
+      if (!oldestKey) break;
+      cache.delete(oldestKey);
     }
   }
 

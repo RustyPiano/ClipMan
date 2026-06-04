@@ -1,12 +1,16 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 pub const QUICKBAR_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
-pub const QUICKBAR_WIDTH: u32 = 560;
-pub const QUICKBAR_HEIGHT: u32 = 420;
+// Adaptive sizing caps (logical px): comfortable max on large screens, scaled
+// down proportionally on smaller ones. The initial window size lives in
+// `tauri.conf.json` (820×600); the real size is computed per-monitor in
+// `position_quickbar`.
+const QUICKBAR_MAX_WIDTH: f64 = 820.0;
+const QUICKBAR_MAX_HEIGHT: f64 = 600.0;
 pub const QUICKBAR_HIDDEN_EVENT: &str = "quickbar-hidden";
 
 pub type ForegroundWindowStore = Arc<Mutex<Option<ForegroundWindow>>>;
@@ -241,14 +245,22 @@ fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
     };
 
     let work_area = monitor.work_area();
-    let size = window
-        .inner_size()
-        .unwrap_or_else(|_| (QUICKBAR_WIDTH, QUICKBAR_HEIGHT).into());
-
-    let width = size.width as i32;
-    let height = size.height as i32;
     let work_width = work_area.size.width as i32;
     let work_height = work_area.size.height as i32;
+
+    // Size and centering both derive from the *target* monitor's scale (not the
+    // window's current one), so mixed-DPI / primary-monitor fallback stays
+    // correct. We compute a logical size, then set the exact physical box.
+    let scale = monitor.scale_factor().max(0.1);
+    let (logical_w, logical_h) =
+        quickbar_logical_size(work_width as f64 / scale, work_height as f64 / scale);
+
+    let width = (logical_w * scale).round() as i32;
+    let height = (logical_h * scale).round() as i32;
+
+    window
+        .set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32))
+        .map_err(to_string)?;
 
     let x = work_area.position.x + ((work_width - width) / 2).max(0);
     let y = work_area.position.y + ((work_height - height) / 3).max(0);
@@ -256,6 +268,15 @@ fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(to_string)
+}
+
+/// Compute the QuickBar logical size from a (logical) work-area: scale to a
+/// fraction of the screen, capped at a comfortable max. The fraction guarantees
+/// the result never exceeds the work area, so no floor is needed.
+fn quickbar_logical_size(work_width: f64, work_height: f64) -> (f64, f64) {
+    let width = (work_width * 0.92).min(QUICKBAR_MAX_WIDTH);
+    let height = (work_height * 0.7).min(QUICKBAR_MAX_HEIGHT);
+    (width, height)
 }
 
 #[cfg(target_os = "macos")]
@@ -453,6 +474,27 @@ fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
 
 fn to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    #[test]
+    fn caps_at_max_on_large_screens() {
+        let (w, h) = quickbar_logical_size(2560.0, 1440.0);
+        assert_eq!(w, QUICKBAR_MAX_WIDTH);
+        assert_eq!(h, QUICKBAR_MAX_HEIGHT);
+    }
+
+    #[test]
+    fn never_exceeds_work_area_on_small_screens() {
+        // A tiny work area must not produce a window larger than itself.
+        let (work_w, work_h) = (390.0, 320.0);
+        let (w, h) = quickbar_logical_size(work_w, work_h);
+        assert!(w <= work_w && h <= work_h);
+        assert!(w <= QUICKBAR_MAX_WIDTH && h <= QUICKBAR_MAX_HEIGHT);
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]

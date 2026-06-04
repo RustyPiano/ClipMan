@@ -153,6 +153,24 @@ pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<Frontend
 }
 
 #[tauri::command]
+pub async fn get_clip(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<FrontendClipItem>, String> {
+    let storage = state.storage.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = {
+            let storage = safe_lock(&storage);
+            storage.get_by_id(&id).map_err(|e| e.to_string())?
+        };
+        Ok(item.map(FrontendClipItem::from_full))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn search_clips(
     state: State<'_, AppState>,
     query: String,

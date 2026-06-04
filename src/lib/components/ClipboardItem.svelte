@@ -267,7 +267,9 @@
           </span>
 
           <div
-            class="flex items-center gap-1 opacity-0 translate-y-0.5 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 ease-out"
+            class="flex items-center gap-1 transition-all duration-200 ease-out {selected
+              ? 'opacity-100 translate-y-0 pointer-events-auto'
+              : 'opacity-0 translate-y-0.5 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0'}"
           >
             <Button
               variant="ghost"
