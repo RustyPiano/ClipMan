@@ -164,7 +164,7 @@ pub async fn get_clip(
             let storage = safe_lock(&storage);
             storage.get_by_id(&id).map_err(|e| e.to_string())?
         };
-        Ok(item.map(FrontendClipItem::from_full))
+        Ok(item.and_then(FrontendClipItem::from_full_text))
     })
     .await
     .map_err(|e| e.to_string())?

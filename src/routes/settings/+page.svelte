@@ -4,6 +4,8 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { router } from '$lib/stores/router.svelte';
   import { i18n } from '$lib/i18n';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import { confirmStore } from '$lib/stores/confirm.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -37,7 +39,6 @@
 
   let loading = $state(true);
   let saving = $state(false);
-  let message = $state('');
 
   // 更新相关状态
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -84,7 +85,7 @@
       console.error('Failed to load settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
       if (!preserveMessage) {
-        message = `${t.loadSettingsFailed}: ${errorMsg}`;
+        toastStore.add(`${t.loadSettingsFailed}: ${errorMsg}`, 'error');
       }
     } finally {
       loading = false;
@@ -103,42 +104,42 @@
   async function saveSettings() {
     try {
       saving = true;
-      message = '';
       await invoke('update_settings', { settings: settings });
       i18n.setLocale(settings.locale);
-      message = t.save + ' ✓';
-      setTimeout(() => (message = ''), 3000);
+      toastStore.add(t.saved, 'success');
     } catch (err) {
       console.error('Failed to save settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      message = `${t.saveSettingsFailed}: ${errorMsg}`;
+      toastStore.add(`${t.saveSettingsFailed}: ${errorMsg}`, 'error');
     } finally {
       saving = false;
     }
   }
 
   async function resetSettings() {
-    if (!confirm(t.confirmResetSettings)) return;
+    const confirmed = await confirmStore.ask({
+      title: t.reset,
+      message: t.confirmResetSettings,
+      confirmLabel: t.reset,
+      destructive: true,
+    });
+    if (!confirmed) return;
 
-    try {
-      settings = {
-        globalShortcut: 'CommandOrControl+Shift+V',
-        autoPaste: true,
-        ignoreConcealed: true,
-        pinnedShortcut: null,
-        maxHistoryItems: 100,
-        trayTextLength: 70,
-        maxPinnedInTray: 5,
-        maxRecentInTray: 20,
-        customDataPath: null,
-        enableAutostart: false,
-        locale: 'zh-CN',
-      };
-      await saveSettings();
-      message = t.reset + ' ✓';
-    } catch (_err) {
-      message = t.saveSettingsFailed;
-    }
+    // saveSettings handles its own success/error toasts, so no try/catch here.
+    settings = {
+      globalShortcut: 'CommandOrControl+Shift+V',
+      autoPaste: true,
+      ignoreConcealed: true,
+      pinnedShortcut: null,
+      maxHistoryItems: 100,
+      trayTextLength: 70,
+      maxPinnedInTray: 5,
+      maxRecentInTray: 20,
+      customDataPath: null,
+      enableAutostart: false,
+      locale: 'zh-CN',
+    };
+    await saveSettings();
   }
 
   async function checkForUpdates() {
@@ -189,7 +190,7 @@
       }
     } catch (err) {
       console.error('Failed to select directory:', err);
-      message = t.selectDirectoryFailed;
+      toastStore.add(t.selectDirectoryFailed, 'error');
     }
   }
 
@@ -203,12 +204,11 @@
         deleteOld: deleteOldData,
       });
 
-      message = t.migrationSuccess + ' ✓';
-      setTimeout(() => (message = ''), 3000);
+      toastStore.add(t.migrationSuccess, 'success');
     } catch (err) {
       console.error('Migration failed:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      message = `${t.migrationFailed}: ${errorMsg}`;
+      toastStore.add(`${t.migrationFailed}: ${errorMsg}`, 'error');
     } finally {
       await Promise.all([loadSettings({ preserveMessage: true }), loadDataPath()]);
       changingDataPath = false;
@@ -305,17 +305,6 @@
       {/if}
     </main>
   </div>
-
-  {#if message}
-    <div
-      class="absolute bottom-6 right-6 p-4 rounded-md shadow-lg text-sm font-medium animate-in slide-in-from-bottom-4 fade-in duration-300 z-50
-            {message.includes('✓')
-        ? 'bg-primary text-primary-foreground'
-        : 'bg-destructive text-destructive-foreground'}"
-    >
-      {message}
-    </div>
-  {/if}
 </div>
 
 <!-- 数据迁移确认对话框 -->

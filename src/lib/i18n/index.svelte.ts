@@ -22,6 +22,7 @@ export interface Translations {
   clear: string;
   clearNonPinned: string;
   save: string;
+  saved: string;
   saving: string;
   reset: string;
   cancel: string;
@@ -137,6 +138,7 @@ export interface Translations {
   loadSettingsFailed: string;
   saveSettingsFailed: string;
   copyFailed: string;
+  clearFailed: string;
 
   // Statistics
   statistics: string;
@@ -192,6 +194,7 @@ const zh: Translations = {
   clear: '清除',
   clearNonPinned: '清除非置顶',
   save: '保存',
+  saved: '已保存',
   saving: '保存中',
   reset: '重置',
   cancel: '取消',
@@ -307,6 +310,7 @@ const zh: Translations = {
   loadSettingsFailed: '加载设置失败',
   saveSettingsFailed: '保存失败',
   copyFailed: '复制失败',
+  clearFailed: '清除失败',
 
   // Statistics
   statistics: '统计信息',
@@ -362,6 +366,7 @@ const en: Translations = {
   clear: 'Clear',
   clearNonPinned: 'Clear Non-pinned',
   save: 'Save',
+  saved: 'Saved',
   saving: 'Saving',
   reset: 'Reset',
   cancel: 'Cancel',
@@ -479,6 +484,7 @@ const en: Translations = {
   loadSettingsFailed: 'Failed to load settings',
   saveSettingsFailed: 'Failed to save',
   copyFailed: 'Copy failed',
+  clearFailed: 'Failed to clear',
 
   // Statistics
   statistics: 'Statistics',

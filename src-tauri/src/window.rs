@@ -234,12 +234,7 @@ fn ns_window(window: &WebviewWindow) -> Result<&objc2_app_kit::NSWindow, String>
 }
 
 fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
-    let monitor = window
-        .current_monitor()
-        .map_err(to_string)?
-        .or(window.primary_monitor().map_err(to_string)?);
-
-    let Some(monitor) = monitor else {
+    let Some(monitor) = quickbar_monitor(window) else {
         log::warn!("No monitor detected for QuickBar positioning");
         return Ok(());
     };
@@ -268,6 +263,24 @@ fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(to_string)
+}
+
+/// Pick the monitor the user is actually working on: the one under the cursor,
+/// falling back to the window's current monitor, then the primary monitor.
+/// `current_monitor()` alone tracks where the *window* last sat, not the active
+/// screen, so on multi-monitor setups it would keep misplacing the QuickBar.
+fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
+    if let Ok(cursor) = window.cursor_position() {
+        if let Ok(Some(monitor)) = window.monitor_from_point(cursor.x, cursor.y) {
+            return Some(monitor);
+        }
+    }
+
+    window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
 }
 
 /// Compute the QuickBar logical size from a (logical) work-area: scale to a

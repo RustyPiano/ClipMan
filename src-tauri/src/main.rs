@@ -16,9 +16,9 @@ use commands::{
     copy_clip_to_clipboard_internal, copy_to_system_clipboard, delete_clip,
     disable_global_shortcut, enable_global_shortcut, get_clip, get_current_data_path,
     get_pinned_clips, get_recent_clips, get_settings, hide_quickbar, install_update,
-    migrate_data_location,
-    open_folder, open_settings_window, paste_clip, register_quickbar_shortcut, reorder_pinned,
-    search_clips, set_clip_label, show_quickbar, toggle_pin, update_settings,
+    migrate_data_location, open_folder, open_settings_window, paste_clip,
+    register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, show_quickbar,
+    toggle_pin, update_settings,
 };
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};

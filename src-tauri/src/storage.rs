@@ -181,18 +181,19 @@ impl FrontendClipItem {
         }
     }
 
-    /// Full-fidelity mapping for the QuickBar preview pane: text is not
-    /// truncated and images use the full-resolution `content` (not the
-    /// downscaled thumbnail), so the preview shows the real payload.
-    pub fn from_full(item: ClipItem) -> Self {
+    /// Full-fidelity text mapping for the QuickBar preview pane. Images are
+    /// intentionally rejected here: the UI reuses thumbnails for images so full
+    /// image payloads do not cross the JSON IPC boundary.
+    pub fn from_full_text(item: ClipItem) -> Option<Self> {
         use data_encoding::BASE64;
 
-        let content = match item.content_type {
-            ContentType::Image => format!("data:image/png;base64,{}", BASE64.encode(&item.content)),
-            ContentType::Text => BASE64.encode(&item.content),
-        };
+        if item.content_type != ContentType::Text {
+            return None;
+        }
 
-        Self {
+        let content = BASE64.encode(&item.content);
+
+        Some(Self {
             id: item.id,
             content,
             content_type: item.content_type,
@@ -201,7 +202,7 @@ impl FrontendClipItem {
             pin_order: item.pin_order,
             label: item.label,
             group_name: item.group_name,
-        }
+        })
     }
 }
 
@@ -1965,6 +1966,31 @@ mod tests {
         assert_eq!(TEXT_PREVIEW_BYTES, preview.preview_content.len());
         drop(storage);
         cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn full_text_mapping_returns_complete_text_payload() {
+        use data_encoding::BASE64;
+
+        let mut long_text = vec![b'a'; TEXT_PREVIEW_BYTES];
+        long_text.extend(vec![b'b'; 128]);
+        let item = test_item("text", &long_text, 1, false, None);
+
+        let full = FrontendClipItem::from_full_text(item).unwrap();
+
+        assert_eq!(BASE64.encode(&long_text), full.content);
+        assert_eq!(ContentType::Text, full.content_type);
+    }
+
+    #[test]
+    fn full_text_mapping_rejects_image_payloads() {
+        let item = ClipItem {
+            content_type: ContentType::Image,
+            thumbnail: Some(b"thumbnail".to_vec()),
+            ..test_item("image", b"full image payload", 1, false, None)
+        };
+
+        assert!(FrontendClipItem::from_full_text(item).is_none());
     }
 
     #[test]

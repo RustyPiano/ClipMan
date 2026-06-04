@@ -6,6 +6,9 @@
 
 <div
   class="fixed bottom-8 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-[9999] pointer-events-none"
+  role="status"
+  aria-live="polite"
+  aria-atomic="true"
 >
   {#each toastStore.toasts as toast (toast.id)}
     <div

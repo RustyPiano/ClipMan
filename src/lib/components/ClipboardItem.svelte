@@ -13,10 +13,12 @@
     selected?: boolean;
     slotNumber?: number | null;
     onSelect?: () => void;
+    /** Hover-driven selection; falls back to onSelect when not provided. */
+    onHover?: () => void;
     onUse?: () => void | Promise<void>;
   }
 
-  let { item, selected = false, slotNumber = null, onSelect, onUse }: Props = $props();
+  let { item, selected = false, slotNumber = null, onSelect, onHover, onUse }: Props = $props();
 
   const t = $derived(i18n.t);
   const cardClass = $derived(
@@ -160,7 +162,7 @@
   class="group relative"
   style="content-visibility: auto; contain-intrinsic-size: 72px;"
   role="listitem"
-  onmouseenter={onSelect}
+  onmouseenter={onHover ?? onSelect}
 >
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -249,7 +251,7 @@
             {#if imageDataUrl}
               <img
                 src={imageDataUrl}
-                alt="Clipboard content"
+                alt={trimmedLabel || t.image}
                 class="max-h-20 max-w-full object-contain transition-transform duration-300 group-hover/image:scale-105"
                 loading="lazy"
               />
@@ -269,7 +271,7 @@
           <div
             class="flex items-center gap-1 transition-all duration-200 ease-out {selected
               ? 'opacity-100 translate-y-0 pointer-events-auto'
-              : 'opacity-0 translate-y-0.5 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0'}"
+              : 'opacity-0 translate-y-0.5 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 focus-within:pointer-events-auto'}"
           >
             <Button
               variant="ghost"

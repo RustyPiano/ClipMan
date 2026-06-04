@@ -40,14 +40,16 @@ class ClipboardStore {
   private searchRequests = new RequestSequencer();
   private incomingRevision = 0;
   private incomingEvents: IncomingItemEvent[] = [];
-  // Full-content caches for the preview pane. Keyed by id; a clip's content is
-  // immutable for a given id (only label/pin/timestamp change), so entries never
-  // go stale. Images are kept in a tiny separate cache because each full image is
-  // a (potentially multi-MB) base64 data URL — caching many would balloon memory.
-  private fullTextCache = new Map<string, ClipItem>();
-  private fullImageCache = new Map<string, ClipItem>();
-  private static readonly FULL_TEXT_CACHE_LIMIT = 200;
-  private static readonly FULL_IMAGE_CACHE_LIMIT = 6;
+  // Full-text cache for the preview pane, keyed by id. A clip's content is
+  // immutable for a given id (only label/pin/timestamp change), so entries are
+  // only dropped when the clip is deleted/cleared. Images are not cached — the
+  // preview reuses the 256px thumbnail the list already holds, so large image
+  // data URLs never accumulate in renderer memory.
+  private fullClipCache = new Map<string, ClipItem>();
+  private static readonly FULL_CLIP_CACHE_LIMIT = 100;
+  // Skip caching very large payloads to bound memory; they re-fetch on demand
+  // (rare, and only one item is previewed at a time).
+  private static readonly MAX_CACHEABLE_CONTENT_LENGTH = 256 * 1024;
 
   recentDisplayItems = $derived(
     this.activeSearchQuery.trim()
@@ -93,6 +95,7 @@ class ClipboardStore {
     });
 
     const unlistenHistoryCleared = await listen('history-cleared', async () => {
+      this.fullClipCache.clear();
       await this.reloadFromBackend();
     });
 
@@ -250,6 +253,7 @@ class ClipboardStore {
   async clearNonPinned() {
     try {
       await invoke('clear_non_pinned_history');
+      this.fullClipCache.clear();
       await this.reloadFromBackend();
       console.log('[SUCCESS] Cleared all non-pinned items');
     } catch (error) {
@@ -273,6 +277,7 @@ class ClipboardStore {
   async deleteItem(id: string) {
     try {
       await invoke('delete_clip', { id });
+      this.fullClipCache.delete(id);
       await this.reloadFromBackend();
     } catch (error) {
       console.error('Failed to delete item:', error);
@@ -341,13 +346,14 @@ class ClipboardStore {
 
   /** Synchronously read a cached full clip (no fetch). */
   getCachedFullClip(id: string): ClipItem | undefined {
-    return this.fullTextCache.get(id) ?? this.fullImageCache.get(id);
+    return this.fullClipCache.get(id);
   }
 
   /**
-   * Fetch the full, untruncated clip (full text / full-resolution image) by id
-   * for the preview pane. Results are cached; callers should guard against
-   * stale selections since this resolves asynchronously.
+   * Fetch the full, untruncated text clip by id for the preview pane. Images use
+   * list thumbnails and are ignored here so full image payloads never cross IPC.
+   * Results are cached; callers should guard against stale selections since this
+   * resolves asynchronously.
    */
   async fetchFullClip(id: string): Promise<ClipItem | null> {
     const cached = this.getCachedFullClip(id);
@@ -356,8 +362,9 @@ class ClipboardStore {
 
     try {
       const full = await invoke<ClipItem | null>('get_clip', { id });
+      if (full?.contentType !== 'text') return null;
       if (full) this.cacheFullClip(full);
-      return full ?? null;
+      return full;
     } catch (error) {
       console.error('[ERROR] Failed to fetch full clip:', error);
       return null;
@@ -365,17 +372,14 @@ class ClipboardStore {
   }
 
   private cacheFullClip(item: ClipItem) {
-    const isImage = item.contentType === 'image';
-    const cache = isImage ? this.fullImageCache : this.fullTextCache;
-    const limit = isImage
-      ? ClipboardStore.FULL_IMAGE_CACHE_LIMIT
-      : ClipboardStore.FULL_TEXT_CACHE_LIMIT;
+    if (item.contentType !== 'text') return;
+    if (item.content.length > ClipboardStore.MAX_CACHEABLE_CONTENT_LENGTH) return;
 
-    cache.set(item.id, item);
-    while (cache.size > limit) {
-      const oldestKey = cache.keys().next().value;
+    this.fullClipCache.set(item.id, item);
+    while (this.fullClipCache.size > ClipboardStore.FULL_CLIP_CACHE_LIMIT) {
+      const oldestKey = this.fullClipCache.keys().next().value;
       if (!oldestKey) break;
-      cache.delete(oldestKey);
+      this.fullClipCache.delete(oldestKey);
     }
   }
 

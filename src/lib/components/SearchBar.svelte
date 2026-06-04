@@ -112,8 +112,6 @@
     unlistenHidden?.();
     unlistenOpened?.();
   });
-
-
 </script>
 
 <div class="relative w-full">

@@ -8,6 +8,8 @@
   import { router } from '$lib/stores/router.svelte';
   import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
+  import { confirmStore } from '$lib/stores/confirm.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import { i18n } from '$lib/i18n';
   import { hasTauriRuntime } from '$lib/utils/tauri';
   import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
@@ -17,6 +19,7 @@
   import SettingsPage from './settings/+page.svelte';
   import PermissionCheck from '$lib/components/PermissionCheck.svelte';
   import Toast from '$lib/components/Toast.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import {
     Sun,
@@ -71,6 +74,10 @@
     viewportWidth >= PREVIEW_MIN_VIEWPORT && !clipboardStore.isLoading && displayItems.length > 0
   );
 
+  // Hover-to-select is only honored after a genuine pointer move, so keyboard
+  // navigation isn't hijacked when the list scrolls under a stationary cursor.
+  let hoverSelectArmed = $state(true);
+
   $effect(() => {
     const clampedIndex = selectedIndex;
     if (clampedIndex !== selectionStore.selectedIndex) {
@@ -96,7 +103,7 @@
     if (itemCount <= 0) return 0;
 
     const currentIndex = clampSelectedIndex(selectionStore.selectedIndex, itemCount);
-    return ((currentIndex + delta) % itemCount + itemCount) % itemCount;
+    return (((currentIndex + delta) % itemCount) + itemCount) % itemCount;
   }
 
   function scrollItemIntoView(index: number) {
@@ -233,9 +240,20 @@
   }
 
   async function clearHistory() {
-    if (confirm(t.confirmClearHistory)) {
-      await clipboardStore.clearNonPinned();
+    const confirmed = await confirmStore.ask({
+      title: t.clearNonPinned,
+      message: t.confirmClearHistory,
+      confirmLabel: t.clear,
+      destructive: true,
+    });
+    if (confirmed) {
+      try {
+        await clipboardStore.clearNonPinned();
+      } catch (_error) {
+        toastStore.add(t.clearFailed, 'error');
+      }
     }
+    focusSearchInput();
   }
 
   async function openSettingsWindow() {
@@ -267,6 +285,7 @@
 
   function handleQuickBarKeydown(event: KeyboardEvent) {
     if (router.currentRoute !== 'home' || event.defaultPrevented || event.isComposing) return;
+    if (confirmStore.open) return;
 
     const activeElement = document.activeElement;
     const activeTextInput = isTextInput(activeElement);
@@ -278,6 +297,7 @@
 
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
+      hoverSelectArmed = false;
 
       if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
         void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
@@ -291,6 +311,7 @@
 
     if (event.key === 'Tab') {
       event.preventDefault();
+      hoverSelectArmed = false;
       resetPanelAndReveal(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
       focusSearchInput();
       return;
@@ -384,7 +405,13 @@
   });
 </script>
 
-<svelte:window onresize={() => (viewportWidth = window.innerWidth)} />
+<svelte:window
+  onresize={() => (viewportWidth = window.innerWidth)}
+  onpointermove={() => (hoverSelectArmed = true)}
+/>
+
+<Toast />
+<ConfirmDialog />
 
 {#if isSettings || router.currentRoute === 'settings'}
   <div class="contents" {@attach syncTheme(themeStore.current)}>
@@ -394,7 +421,6 @@
   <div class="flex h-screen flex-col p-3" {@attach syncTheme(themeStore.current)}>
     <div class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
       <PermissionCheck />
-      <Toast />
 
       <!-- Spotlight-style search row -->
       <div
@@ -491,6 +517,10 @@
                   selected={index === selectedIndex}
                   slotNumber={index < 9 ? index + 1 : null}
                   onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
+                  onHover={() => {
+                    if (hoverSelectArmed)
+                      selectionStore.setSelectedIndex(index, displayItems.length);
+                  }}
                   onUse={() => useItem(item)}
                 />
               {/each}

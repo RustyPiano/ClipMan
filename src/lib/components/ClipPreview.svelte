@@ -16,13 +16,16 @@
   // scroll the list doesn't fire an IPC request per row.
   const SETTLE_MS = 90;
 
-  // Full-fidelity payload for the selected item (untruncated text / full image).
+  // Full-fidelity text payload for the selected item.
   let fullItem = $state<ClipItem | null>(null);
 
   $effect(() => {
     const current = item;
 
-    if (!current) {
+    // Only text needs a full fetch (the list preview truncates it to 4096 bytes).
+    // Images reuse the 256px thumbnail already on the list item — no full-res
+    // fetch, so large image payloads never cross IPC or sit in the cache.
+    if (!current || current.contentType !== 'text') {
       fullItem = null;
       return;
     }
@@ -65,9 +68,7 @@
   const trimmedLabel = $derived((item?.label ?? '').trim());
 
   function formatFullTime(timestamp: number): string {
-    return new Date(timestamp * 1000).toLocaleString(
-      i18n.locale === 'zh-CN' ? 'zh-CN' : 'en-US'
-    );
+    return new Date(timestamp * 1000).toLocaleString(i18n.locale === 'zh-CN' ? 'zh-CN' : 'en-US');
   }
 </script>
 
@@ -107,7 +108,7 @@
         {#if imageUrl}
           <img
             src={imageUrl}
-            alt="Clipboard content"
+            alt={trimmedLabel || t.image}
             class="mx-auto max-w-full rounded-md border border-border bg-muted/40 object-contain"
           />
         {/if}

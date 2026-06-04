@@ -5,6 +5,8 @@
   import { Trash2 } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import { confirmStore } from '$lib/stores/confirm.svelte';
   import type { Settings } from '$lib/types';
 
   let { settings = $bindable() } = $props<{
@@ -16,7 +18,13 @@
   let clearing = $state(false);
 
   async function clearNonPinnedHistory() {
-    if (!confirm(t.confirmClearHistory)) {
+    const confirmed = await confirmStore.ask({
+      title: t.clearNonPinned,
+      message: t.confirmClearHistory,
+      confirmLabel: t.clear,
+      destructive: true,
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -25,7 +33,7 @@
       await invoke('clear_non_pinned_history');
     } catch (err) {
       console.error('Failed to clear non-pinned history:', err);
-      alert(t.copyFailed + ': ' + String(err));
+      toastStore.add(`${t.clearFailed}: ${String(err)}`, 'error');
     } finally {
       clearing = false;
     }

@@ -112,12 +112,55 @@ describe('clipboard store races', () => {
     });
 
     clipboardStore.setSearchQuery('abc');
-    expect(clipboardStore.isLoading).toBe(true);
+    // setSearchQuery flags a pending search (not a full-screen load) when a Tauri
+    // runtime is present, which installTauriInvoke provides.
+    expect(clipboardStore.isSearchPending).toBe(true);
 
     await clipboardStore.clearSearch({ showLoading: false });
 
     expect(clipboardStore.searchQuery).toBe('');
     expect(clipboardStore.isLoading).toBe(false);
+  });
+
+  test('fetchFullClip caches by id and drops the entry on delete', async () => {
+    let getClipCalls = 0;
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'get_clip') {
+        getClipCalls += 1;
+        return clip({ id: String(args?.id), content: 'ZnVsbA==' });
+      }
+      if (cmd === 'delete_clip') return null;
+      if (cmd === 'get_recent_clips' || cmd === 'get_pinned_clips') return [];
+      return null;
+    });
+
+    const first = await clipboardStore.fetchFullClip('x');
+    const second = await clipboardStore.fetchFullClip('x');
+    expect(getClipCalls).toBe(1); // second call served from cache
+    expect(second).toEqual(first);
+
+    await clipboardStore.deleteItem('x');
+    await clipboardStore.fetchFullClip('x');
+    expect(getClipCalls).toBe(2); // cache dropped on delete → refetch
+  });
+
+  test('fetchFullClip ignores non-text responses and does not cache them', async () => {
+    let getClipCalls = 0;
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'get_clip') {
+        getClipCalls += 1;
+        return clip({
+          id: String(args?.id),
+          content: 'data:image/png;base64,aW1hZ2U=',
+          contentType: 'image',
+        });
+      }
+      return null;
+    });
+
+    await expect(clipboardStore.fetchFullClip('image')).resolves.toBeNull();
+    await expect(clipboardStore.fetchFullClip('image')).resolves.toBeNull();
+    expect(getClipCalls).toBe(2);
   });
 
   test('replays incoming clipboard events over an older in-flight history response', async () => {
