@@ -317,6 +317,16 @@ fn setup_quickbar_macos(_window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn webview_hwnd(window: &WebviewWindow) -> Result<windows::Win32::Foundation::HWND, String> {
+    use windows::Win32::Foundation::HWND;
+
+    // Tauri/wry may use a newer `windows` crate; bridge through the raw handle.
+    Ok(HWND(
+        window.hwnd().map_err(to_string)?.0 as *mut std::ffi::c_void,
+    ))
+}
+
+#[cfg(windows)]
 fn setup_quickbar_windows(window: &WebviewWindow) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -324,7 +334,7 @@ fn setup_quickbar_windows(window: &WebviewWindow) -> Result<(), String> {
         SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_TOOLWINDOW,
     };
 
-    let hwnd = window.hwnd().map_err(to_string)?;
+    let hwnd = webview_hwnd(window)?;
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let tool_window_style = style | WS_EX_TOOLWINDOW.0 as isize;
@@ -361,7 +371,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
         return;
     }
 
-    if let Ok(quickbar_hwnd) = quickbar.hwnd() {
+    if let Ok(quickbar_hwnd) = webview_hwnd(quickbar) {
         if foreground == quickbar_hwnd {
             log::debug!("QuickBar is already the foreground window; keeping previous target");
             return;
