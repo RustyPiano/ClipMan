@@ -1,6 +1,7 @@
 <script lang="ts">
   import Card from '$lib/components/ui/Card.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import Switch from '$lib/components/ui/Switch.svelte';
   import { Trash2 } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
@@ -70,15 +71,7 @@
           {t.autoPasteDesc}
         </p>
       </div>
-      <input
-        id="auto-paste"
-        type="checkbox"
-        bind:checked={settings.autoPaste}
-        class="w-11 h-6 appearance-none rounded-full relative cursor-pointer transition-colors
-                       before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white checked:before:bg-primary-foreground before:rounded-full before:transition-transform
-                       checked:before:translate-x-5"
-        style:background-color={settings.autoPaste ? 'var(--primary)' : 'var(--muted)'}
-      />
+      <Switch id="auto-paste" bind:checked={settings.autoPaste} />
     </div>
 
     <div class="flex items-center justify-between">
@@ -90,15 +83,7 @@
           {t.ignoreConcealedDesc}
         </p>
       </div>
-      <input
-        id="ignore-concealed"
-        type="checkbox"
-        bind:checked={settings.ignoreConcealed}
-        class="w-11 h-6 appearance-none rounded-full relative cursor-pointer transition-colors
-                       before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white checked:before:bg-primary-foreground before:rounded-full before:transition-transform
-                       checked:before:translate-x-5"
-        style:background-color={settings.ignoreConcealed ? 'var(--primary)' : 'var(--muted)'}
-      />
+      <Switch id="ignore-concealed" bind:checked={settings.ignoreConcealed} />
     </div>
 
     <div class="pt-4 border-t border-border">

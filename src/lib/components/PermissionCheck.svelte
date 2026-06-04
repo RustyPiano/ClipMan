@@ -2,11 +2,14 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { hasTauriRuntime } from '$lib/utils/tauri';
+  import { i18n } from '$lib/i18n';
   import Button from './ui/Button.svelte';
   import { AlertTriangle, RefreshCw } from 'lucide-svelte';
 
+  const t = $derived(i18n.t);
+
   let hasPermission = $state(true);
-  let isChecking = $state(true); // Used for future loading state UI
+  let isChecking = $state(true);
   let errorMessage = $state('');
 
   async function checkPermission() {
@@ -53,27 +56,25 @@
         <AlertTriangle class="h-5 w-5 text-amber-500" />
       </div>
       <div class="ml-3 w-full">
-        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-200">需要剪贴板访问权限</h3>
+        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-200">
+          {t.clipboardAccessTitle}
+        </h3>
         <div class="mt-2 text-sm text-amber-700 dark:text-amber-300">
-          <p>ClipMan 需要辅助功能权限来监听剪贴板变化。</p>
-          <ol class="list-decimal list-inside mt-2 space-y-1">
-            <li>打开 <strong>系统设置</strong> > <strong>隐私与安全性</strong></li>
-            <li>点击 <strong>辅助功能</strong></li>
-            <li>确保 <strong>ClipMan</strong> 已启用</li>
-          </ol>
+          <p>{t.clipboardAccessDesc}</p>
+          <p class="mt-2">{t.clipboardAccessHint}</p>
         </div>
 
         <details class="mt-3">
           <summary
             class="text-xs text-amber-600 dark:text-amber-400 cursor-pointer hover:underline"
           >
-            查看详情
+            {t.details}
           </summary>
           {#if errorMessage}
             <p
               class="mt-2 p-2 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 rounded text-xs font-mono break-all"
             >
-              错误: {errorMessage}
+              {t.errorLabel}: {errorMessage}
             </p>
           {/if}
         </details>
@@ -86,7 +87,7 @@
             size="sm"
           >
             <RefreshCw class="h-4 w-4 mr-2 {isChecking ? 'animate-spin' : ''}" />
-            {isChecking ? '检查中...' : '重新检查'}
+            {isChecking ? t.checking : t.recheck}
           </Button>
         </div>
       </div>

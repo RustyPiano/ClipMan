@@ -2,6 +2,7 @@
   import Card from '$lib/components/ui/Card.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import Switch from '$lib/components/ui/Switch.svelte';
   import { onDestroy } from 'svelte';
   import { Keyboard, X } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
@@ -211,15 +212,7 @@
           {t.autostartDesc}
         </p>
       </div>
-      <input
-        id="enable-autostart"
-        type="checkbox"
-        bind:checked={settings.enableAutostart}
-        class="w-11 h-6 appearance-none rounded-full relative cursor-pointer transition-colors
-                       before:content-[''] before:absolute before:top-1 before:left-1 before:w-4 before:h-4 before:bg-white checked:before:bg-primary-foreground before:rounded-full before:transition-transform
-                       checked:before:translate-x-5"
-        style:background-color={settings.enableAutostart ? 'var(--primary)' : 'var(--muted)'}
-      />
+      <Switch id="enable-autostart" bind:checked={settings.enableAutostart} />
     </div>
 
     <div class="space-y-3">

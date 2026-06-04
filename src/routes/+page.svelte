@@ -480,7 +480,11 @@
               {/if}
             </div>
           {:else}
-            <div {@attach attachResultsScroller} class="flex-1 space-y-1 overflow-y-auto p-2">
+            <div
+              {@attach attachResultsScroller}
+              role="list"
+              class="flex-1 space-y-1 overflow-y-auto p-2"
+            >
               {#each displayItems as item, index (item.id)}
                 <ClipboardItem
                   {item}
@@ -519,6 +523,22 @@
             >
             {t.slot}
           </span>
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}P</kbd>
+            {t.pin}
+          </span>
+          <span class="flex flex-none items-center gap-1.5">
+            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}⌫</kbd>
+            {t.delete}
+          </span>
+          {#if selectionStore.panel === 'pinned'}
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-12 h-4 scale-95"
+                >{shortcutModifierLabel}⇧↑↓</kbd
+              >
+              {t.reorder}
+            </span>
+          {/if}
           <span class="flex flex-none items-center gap-1.5">
             <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
             {t.switchPanel}

@@ -135,7 +135,7 @@
     oninput={handleInput}
     oncompositionstart={handleCompositionStart}
     oncompositionend={handleCompositionEnd}
-    class="h-10 border-transparent bg-transparent pl-9 pr-10 text-[14px] font-medium placeholder:text-muted-foreground/35 shadow-none transition-colors focus-visible:ring-0 select-none"
+    class="h-10 border-transparent bg-transparent pl-9 pr-10 text-[14px] font-medium placeholder:text-muted-foreground/35 shadow-none transition-colors focus-visible:ring-0"
   />
 
   {#if clipboardStore.searchQuery}

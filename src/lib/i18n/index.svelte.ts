@@ -156,11 +156,20 @@ export interface Translations {
   checkedTask: string;
   uncheckedTask: string;
 
+  // Clipboard permission
+  clipboardAccessTitle: string;
+  clipboardAccessDesc: string;
+  clipboardAccessHint: string;
+  recheck: string;
+  details: string;
+  errorLabel: string;
+
   // QuickBar footer hints
   paste: string;
   slot: string;
   switchPanel: string;
   close: string;
+  reorder: string;
 }
 
 const zh: Translations = {
@@ -317,11 +326,20 @@ const zh: Translations = {
   checkedTask: '已完成任务',
   uncheckedTask: '未完成任务',
 
+  // Clipboard permission
+  clipboardAccessTitle: '无法访问剪贴板',
+  clipboardAccessDesc: 'ClipMan 暂时无法读取系统剪贴板，新复制的内容可能不会被记录。',
+  clipboardAccessHint: '请稍后重试；若持续出现，检查是否有其他剪贴板工具正在占用剪贴板。',
+  recheck: '重新检查',
+  details: '查看详情',
+  errorLabel: '错误',
+
   // QuickBar footer hints
   paste: '粘贴',
   slot: '槽位',
   switchPanel: '切换',
   close: '关闭',
+  reorder: '排序',
 };
 
 const en: Translations = {
@@ -480,11 +498,22 @@ const en: Translations = {
   checkedTask: 'Checked task',
   uncheckedTask: 'Unchecked task',
 
+  // Clipboard permission
+  clipboardAccessTitle: 'Cannot access the clipboard',
+  clipboardAccessDesc:
+    'ClipMan cannot read the system clipboard right now, so new copies may not be recorded.',
+  clipboardAccessHint:
+    'Try again shortly. If it keeps happening, check whether another clipboard tool is holding the clipboard.',
+  recheck: 'Re-check',
+  details: 'Details',
+  errorLabel: 'Error',
+
   // QuickBar footer hints
   paste: 'Paste',
   slot: 'Slot',
   switchPanel: 'Switch',
   close: 'Close',
+  reorder: 'Reorder',
 };
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };
