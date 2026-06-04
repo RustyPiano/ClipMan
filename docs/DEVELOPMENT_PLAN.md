@@ -4,7 +4,7 @@
 >
 > **v2 修订要点（评审后收紧的硬约束）**：① Windows 焦点模型先 spike，不用 `WS_EX_NOACTIVATE`；② FTS5 表结构写死；③ 自捕获标记是跨文件契约，提到 Phase 0；④ 图片改「始终存原图 + 缩略图列」；⑤ 最近/常用数据契约拆清；⑥ 命令桩用 `Err("not implemented")`，禁止 `todo!()`。
 >
-> **当前状态（2026-06-04）**：Phase 0 的数据层/设置/命令契约和 Phase 1 的 QuickBar、自动粘贴、前端交互、隐私/图片捕获已有实现；不要把本文当成“全部未开始”的清单。本文保留为实施回顾与后续收尾清单，已落地项以当前代码和本段状态说明为准。平台焦点与自动粘贴链路仍需按 Phase 3 真机矩阵验证后才能宣称完成。
+> **当前状态（2026-06-04）**：Phase 0 的数据层/设置/命令契约和 Phase 1 的 QuickBar、自动粘贴、前端交互、隐私/图片捕获已有实现；不要把本文当成“全部未开始”的清单。本文保留为实施回顾与后续收尾清单，已落地项以当前代码和本段状态说明为准。macOS 平台焦点与自动粘贴链路已验证通过，Windows 仍需按 Phase 3 真机矩阵验证后才能宣称完成。
 >
 > **并行原则**：并行的 WP 各自拥有不重叠文件；共享文件（`main.rs`/`commands.rs`/`settings.rs`/`Cargo.toml`）的改动集中在 Phase 0 打桩，Phase 1 之后只在各自函数/区域追加。
 
@@ -144,7 +144,7 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **负责文件**：`tauri.conf.json`、`main.rs`(窗口/快捷键段)、`window.rs`(新增)、`tray.rs`(设置入口)。
 - **依赖**：WP-0.0（spike 结论）、WP-0.1（main.rs 已清理）、WP-0.3（快捷键设置）。
 - **步骤**：
-  1. `tauri.conf.json`：main → `decorations:false`、`alwaysOnTop:true`、`skipTaskbar:true`、`visible:false`、`resizable:false`、560×420。新增 `settings` 窗口（普通、有边框、`visible:false`）。
+  1. `tauri.conf.json`：main → `decorations:false`、`alwaysOnTop:true`、`skipTaskbar:true`、`visible:false`、`resizable:false`、自适应尺寸（最大 820×600）。新增 `settings` 窗口（普通、有边框、`visible:false`）。
   2. **macOS**：通过 Tauri 窗口句柄直接设置 `NSWindowStyleMaskNonactivatingPanel`、floating level 与 collection behavior，封装进 `window.rs::setup_quickbar_macos()`；`tauri-nspanel` 只保留为后续兼容性备选。
   3. **Windows**（按 S1 结论）：main 为**正常可取焦点**窗口（`WS_EX_TOOLWINDOW` 不进任务栏，**不加 `WS_EX_NOACTIVATE`**）。在唤起前用 `GetForegroundWindow()` 记录原前台窗口（存到一个 `Arc<Mutex<Option<HWND-ish>>>` 状态，供 1.B 取用恢复）。封装 `window.rs::setup_quickbar_windows()` + `remember_foreground()`。
   4. 唤起：全局快捷键 → 活动屏幕中心略偏上定位 → show + 聚焦搜索；macOS 面板成 key、app 不前台；Windows 正常取焦点（原窗口已记录）。
@@ -227,7 +227,8 @@ Phase 3  WP-3.A 集成 + 平台测试矩阵（串行收尾）
 - **测试矩阵**（macOS + Windows 各跑）：
   - 目标应用：VS Code、浏览器地址栏/输入框、Word/Pages、系统终端、微信/飞书输入框。
   - 用例：文本自动粘贴；图片自动粘贴（原图质量）；`copy` 模式不自动粘；`Tab`+数字取常用；常用起名/调序持久；失焦/Esc 关窗；macOS 辅助功能未授权提示；Windows 恢复原前台再粘；密码类不入历史；旧库迁移/重置；搜索（中/英/单字/标签/<3 回退）；tray 用缩略图。
-- **验收**：矩阵全绿；README 路线图勾选与实际一致（FTS5、自动粘贴等）；更新 README/release notes。
+- **当前验证状态**：macOS 已验证通过；Windows 与 Linux 降级路径仍需补齐记录。
+- **验收**：剩余矩阵全绿；README 路线图勾选与实际一致（FTS5、自动粘贴等）；更新 README/release notes。
 - **注意**：Linux 仅验证「降级为仅复制」不报错。
 
 ---

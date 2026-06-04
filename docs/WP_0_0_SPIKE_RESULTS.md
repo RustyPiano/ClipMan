@@ -22,20 +22,20 @@ Unverified runtime risks:
 
 ## macOS S2 Non-Activating Panel
 
-Status: Deferred runtime validation
+Status: Verified on macOS
 
-Implementation may proceed using the documented design:
+Validated implementation:
 
 - Use a Tauri v2-compatible non-activating panel approach. The production implementation currently sets the macOS window style through the Tauri window handle and `objc2`; `tauri-nspanel` remains only a fallback candidate if future compatibility issues justify it.
 - QuickBar should be able to become the key window for search input without making ClipMan the active foreground app.
 - On paste, write the clipboard, hide QuickBar, then send `Cmd+V`.
 
-Unverified runtime risks:
+Verified result:
 
-- The chosen panel approach may require API adjustments for the exact Tauri v2/window crate versions in this repo.
-- Search focus in a non-activating panel must be confirmed on a real macOS runtime.
-- Keyboard simulation requires Accessibility permission and must be tested with the final paste flow.
+- QuickBar search focus works on the current macOS runtime.
+- The final paste flow works after Accessibility permission is granted.
+- ClipMan does not need to become the active foreground app for the verified macOS flow.
 
 ## Proceeding Rule
 
-Phase 1 implementation is allowed to proceed from these documented design decisions. Do not claim Windows or macOS runtime behavior is verified until the platform test matrix has actually been run.
+Phase 1 implementation is allowed to proceed from these documented design decisions. macOS runtime behavior has been verified; do not claim Windows runtime behavior is verified until the platform test matrix has actually been run.

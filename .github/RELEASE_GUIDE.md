@@ -127,6 +127,20 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="..."
 bun tauri build
 ```
 
+GitHub Actions secrets 已配置时，GitHub 只能列出 secret 名称，不能读回 secret 值。可用下面命令确认仓库里是否存在对应 secret：
+
+```bash
+gh secret list --repo RustyPiano/ClipMan
+```
+
+如果本机没有环境变量，也找不到当初生成的私钥，只能重新生成一组 updater signing key：
+
+```bash
+bun tauri signer generate --write-keys ~/.tauri/clipman.key
+```
+
+把新的 private key 写入 GitHub secrets，把新的 public key 同步更新到 `src-tauri/tauri.conf.json` 的 updater `pubkey`。
+
 如果只验证代码是否能编译，使用：
 
 ```bash
