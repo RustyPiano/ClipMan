@@ -143,8 +143,15 @@ fn main() {
             // Build tray menu
             let menu = build_tray_menu(app.handle())?;
 
+            #[cfg(target_os = "macos")]
+            let tray_icon =
+                tauri::image::Image::new(include_bytes!("../icons/tray-icon.rgba"), 32, 32);
+            #[cfg(not(target_os = "macos"))]
+            let tray_icon = app.default_window_icon().unwrap().clone();
+
             let _tray = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
+                .icon_as_template(cfg!(target_os = "macos"))
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
                     let event_id = event.id().as_ref();
