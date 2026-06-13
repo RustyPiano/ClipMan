@@ -10,6 +10,50 @@ export function comparePinOrder(a: ClipItem, b: ClipItem) {
   return aOrder - bOrder || b.timestamp - a.timestamp;
 }
 
+interface DisplayItemsOptions {
+  activeSearchQuery: string;
+  searchResults: readonly ClipItem[];
+  recentItems: readonly ClipItem[];
+  pinnedItems: readonly ClipItem[];
+}
+
+export function getRecentDisplayItems({
+  activeSearchQuery,
+  searchResults,
+  recentItems,
+  pinnedItems,
+}: DisplayItemsOptions) {
+  const items = activeSearchQuery.trim()
+    ? searchResults
+    : mergeItemsById([...recentItems, ...pinnedItems]);
+
+  return [...items].sort(compareTimestampDesc);
+}
+
+export function getPinnedDisplayItems({
+  activeSearchQuery,
+  searchResults,
+  pinnedItems,
+}: DisplayItemsOptions) {
+  const items = activeSearchQuery.trim()
+    ? searchResults.filter((item) => item.isPinned)
+    : pinnedItems;
+
+  return [...items].sort(comparePinOrder);
+}
+
+function compareTimestampDesc(a: ClipItem, b: ClipItem) {
+  return b.timestamp - a.timestamp;
+}
+
+function mergeItemsById(items: readonly ClipItem[]) {
+  const merged = new Map<string, ClipItem>();
+  for (const item of items) {
+    merged.set(item.id, item);
+  }
+  return [...merged.values()];
+}
+
 export function decodeClipText(item: ClipItem, emptyContent: string, decodeFailed: string) {
   if (item.contentType !== 'text') return '';
   if (!item.content) return emptyContent;

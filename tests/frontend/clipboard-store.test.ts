@@ -228,4 +228,51 @@ describe('clipboard store races', () => {
 
     expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['new', 'old']);
   });
+
+  test('reloadFromBackend refreshes history while search is active', async () => {
+    const oldItem = clip({ id: 'old', timestamp: 1 });
+    const copied = clip({ id: 'copied', timestamp: 20 });
+    const invoked: string[] = [];
+
+    installTauriInvoke((cmd) => {
+      invoked.push(cmd);
+      if (cmd === 'get_recent_clips') return [copied, oldItem];
+      if (cmd === 'get_pinned_clips') return [];
+      if (cmd === 'search_clips') return [copied];
+      return null;
+    });
+
+    clipboardStore.recentItems = [oldItem, clip({ id: 'copied', timestamp: 2 })];
+    clipboardStore.searchQuery = 'needle';
+    clipboardStore.activeSearchQuery = 'needle';
+    clipboardStore.isSearchPending = false;
+
+    await (
+      clipboardStore as unknown as { reloadFromBackend: () => Promise<void> }
+    ).reloadFromBackend();
+
+    expect(invoked).toEqual(['get_recent_clips', 'get_pinned_clips', 'search_clips']);
+    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['copied', 'old']);
+    expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['copied']);
+    // A background refresh must not flash the search spinner.
+    expect(clipboardStore.isSearchPending).toBe(false);
+  });
+
+  test('silent search refreshes results without toggling the pending spinner', async () => {
+    const match = clip({ id: 'match', timestamp: 5 });
+    installTauriInvoke((cmd) => {
+      if (cmd === 'search_clips') return [match];
+      return null;
+    });
+
+    clipboardStore.searchQuery = 'needle';
+    clipboardStore.activeSearchQuery = 'needle';
+    clipboardStore.isSearchPending = false;
+
+    await clipboardStore.search('needle', { silent: true });
+
+    expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['match']);
+    expect(clipboardStore.activeSearchQuery).toBe('needle');
+    expect(clipboardStore.isSearchPending).toBe(false);
+  });
 });

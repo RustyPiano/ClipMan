@@ -3,6 +3,7 @@ import {
   applyClipboardChanged,
   comparePinOrder,
   decodeClipText,
+  getRecentDisplayItems,
 } from '../../src/lib/utils/clip-items';
 import type { ClipItem } from '../../src/lib/types';
 
@@ -127,5 +128,33 @@ describe('clip item helpers', () => {
       'second',
       'later-no-order',
     ]);
+  });
+
+  test('history display includes pinned and recent items ordered by timestamp', () => {
+    const items = getRecentDisplayItems({
+      activeSearchQuery: '',
+      searchResults: [],
+      recentItems: [clip({ id: 'recent', timestamp: 20 })],
+      pinnedItems: [
+        clip({ id: 'pinned-new', isPinned: true, pinOrder: 2, timestamp: 30 }),
+        clip({ id: 'pinned-old', isPinned: true, pinOrder: 1, timestamp: 10 }),
+      ],
+    });
+
+    expect(items.map((item) => item.id)).toEqual(['pinned-new', 'recent', 'pinned-old']);
+  });
+
+  test('history search display includes pinned matches', () => {
+    const items = getRecentDisplayItems({
+      activeSearchQuery: 'needle',
+      searchResults: [
+        clip({ id: 'recent-match', timestamp: 20 }),
+        clip({ id: 'pinned-match', isPinned: true, pinOrder: 1, timestamp: 10 }),
+      ],
+      recentItems: [],
+      pinnedItems: [],
+    });
+
+    expect(items.map((item) => item.id)).toEqual(['recent-match', 'pinned-match']);
   });
 });

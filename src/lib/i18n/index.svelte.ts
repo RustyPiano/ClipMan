@@ -45,6 +45,8 @@ export interface Translations {
   noClipboardHistoryHint: string;
   noSearchResults: string;
   noSearchResultsHint: string;
+  noPinnedMatches: string;
+  noPinnedMatchesHint: string;
 
   // Search
   searchPlaceholder: string;
@@ -217,6 +219,8 @@ const zh: Translations = {
   noClipboardHistoryHint: '复制内容后会自动出现在这里',
   noSearchResults: '没有匹配的结果',
   noSearchResultsHint: '换个关键词试试',
+  noPinnedMatches: '没有匹配的置顶项',
+  noPinnedMatchesHint: '在「历史」中查看 {n} 条匹配',
 
   // Search
   searchPlaceholder: '搜索剪切板内容...',
@@ -389,6 +393,8 @@ const en: Translations = {
   noClipboardHistoryHint: 'Copied content will appear here',
   noSearchResults: 'No matching results',
   noSearchResultsHint: 'Try a different keyword',
+  noPinnedMatches: 'No matching pinned items',
+  noPinnedMatchesHint: 'View {n} matches in History',
 
   // Search
   searchPlaceholder: 'Search clipboard...',

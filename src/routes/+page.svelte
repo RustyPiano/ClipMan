@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { flushSync, onMount } from 'svelte';
+  import { flushSync, onMount, untrack } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
@@ -85,6 +85,48 @@
     }
   });
 
+  // Keep the highlight anchored to a specific clip across list mutations:
+  // - When the active query settles to a NEW value (including clearing back to
+  //   the full history), jump to the first row so Enter pastes the top match
+  //   instead of a stale middle item the previous query left selected.
+  // - When the SAME query's list reorders (e.g. copying a row bumps it to the
+  //   top via a live clipboard-changed event), follow the anchored clip so the
+  //   highlight stays on it rather than on whatever now occupies its old index.
+  // anchoredId is updated by the user-driven selection helpers; this effect only
+  // reacts to query/list changes, so it never fights normal keyboard navigation.
+  let anchoredId: string | null = null;
+  let lastSelectionQuery = clipboardStore.activeSearchQuery;
+  $effect(() => {
+    const query = clipboardStore.activeSearchQuery;
+    const items = displayItems;
+
+    if (query !== lastSelectionQuery) {
+      lastSelectionQuery = query;
+      selectionStore.selectedIndex = 0;
+      anchoredId = items[0]?.id ?? null;
+      untrack(() => {
+        if (resultsScroller instanceof globalThis.HTMLElement) {
+          resultsScroller.scrollTop = 0;
+        }
+      });
+      return;
+    }
+
+    if (anchoredId === null) return;
+
+    const currentIndex = untrack(() => selectionStore.selectedIndex);
+    const nextIndex = items.findIndex((item) => item.id === anchoredId);
+    if (nextIndex >= 0) {
+      if (nextIndex !== currentIndex) {
+        selectionStore.selectedIndex = nextIndex;
+      }
+    } else {
+      // Anchored clip is gone (deleted/pruned); re-anchor to whatever now sits
+      // at the current index so later reorders still track the right row.
+      anchoredId = items[clampSelectedIndex(currentIndex, items.length)]?.id ?? null;
+    }
+  });
+
   function isTextInput(element: Element | null) {
     return (
       element instanceof HTMLInputElement ||
@@ -127,8 +169,20 @@
     }
   }
 
+  // Record which clip the highlight is on so the anchor effect can follow it
+  // when the list reorders underneath the user (live copies, refreshes).
+  function anchorToSelection() {
+    anchoredId = displayItems[selectionStore.selectedIndex]?.id ?? null;
+  }
+
+  function selectIndex(index: number, itemCount: number) {
+    selectionStore.setSelectedIndex(index, itemCount);
+    anchorToSelection();
+  }
+
   function selectIndexAndReveal(index: number, itemCount: number) {
     selectionStore.setSelectedIndex(index, itemCount);
+    anchorToSelection();
     flushSync();
     scrollItemIntoView(selectionStore.selectedIndex);
   }
@@ -136,6 +190,7 @@
   function resetPanelAndReveal(panel: QuickBarPanel) {
     selectionStore.reset(panel);
     flushSync();
+    anchorToSelection();
     scrollItemIntoView(0);
   }
 
@@ -467,7 +522,8 @@
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => switchPanel('pinned')}
           >
-            {t.pinned}<span class="ml-1 opacity-60">{clipboardStore.pinnedItems.length}</span>
+            {t.pinned}<span class="ml-1 opacity-60">{clipboardStore.pinnedDisplayItems.length}</span
+            >
           </button>
         </div>
       </div>
@@ -492,9 +548,24 @@
               class="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-muted-foreground"
             >
               {#if clipboardStore.activeSearchQuery.trim()}
-                <Search class="h-8 w-8 opacity-20" />
-                <p class="text-sm font-medium">{t.noSearchResults}</p>
-                <p class="text-xs opacity-70">{t.noSearchResultsHint}</p>
+                {#if selectionStore.panel === 'pinned' && clipboardStore.recentDisplayItems.length > 0}
+                  <!-- Matches exist, just none pinned: point the user to History
+                       instead of implying nothing matched at all. -->
+                  <Pin class="h-8 w-8 opacity-20" />
+                  <p class="text-sm font-medium">{t.noPinnedMatches}</p>
+                  <button
+                    class="text-xs text-primary underline-offset-2 hover:underline cursor-pointer"
+                    onclick={() => switchPanel('recent')}
+                  >
+                    {i18n.format(t.noPinnedMatchesHint, {
+                      n: clipboardStore.recentDisplayItems.length,
+                    })}
+                  </button>
+                {:else}
+                  <Search class="h-8 w-8 opacity-20" />
+                  <p class="text-sm font-medium">{t.noSearchResults}</p>
+                  <p class="text-xs opacity-70">{t.noSearchResultsHint}</p>
+                {/if}
               {:else if selectionStore.panel === 'pinned'}
                 <Pin class="h-8 w-8 opacity-20" />
                 <p class="text-sm font-medium">{t.noPinnedItems}</p>
@@ -516,10 +587,9 @@
                   {item}
                   selected={index === selectedIndex}
                   slotNumber={index < 9 ? index + 1 : null}
-                  onSelect={() => selectionStore.setSelectedIndex(index, displayItems.length)}
+                  onSelect={() => selectIndex(index, displayItems.length)}
                   onHover={() => {
-                    if (hoverSelectArmed)
-                      selectionStore.setSelectedIndex(index, displayItems.length);
+                    if (hoverSelectArmed) selectIndex(index, displayItems.length);
                   }}
                   onUse={() => useItem(item)}
                 />

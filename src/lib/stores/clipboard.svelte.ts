@@ -3,7 +3,11 @@ import { listen } from '@tauri-apps/api/event';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
 import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
-import { applyClipboardChanged, comparePinOrder } from '$lib/utils/clip-items';
+import {
+  applyClipboardChanged,
+  getPinnedDisplayItems,
+  getRecentDisplayItems,
+} from '$lib/utils/clip-items';
 import { RequestSequencer } from '$lib/utils/request-sequencer';
 import { hasTauriRuntime } from '$lib/utils/tauri';
 
@@ -52,15 +56,21 @@ class ClipboardStore {
   private static readonly MAX_CACHEABLE_CONTENT_LENGTH = 256 * 1024;
 
   recentDisplayItems = $derived(
-    this.activeSearchQuery.trim()
-      ? this.searchResults.filter((item) => !item.isPinned)
-      : this.recentItems
+    getRecentDisplayItems({
+      activeSearchQuery: this.activeSearchQuery,
+      searchResults: this.searchResults,
+      recentItems: this.recentItems,
+      pinnedItems: this.pinnedItems,
+    })
   );
 
   pinnedDisplayItems = $derived(
-    this.activeSearchQuery.trim()
-      ? this.searchResults.filter((item) => item.isPinned).sort(comparePinOrder)
-      : this.pinnedItems
+    getPinnedDisplayItems({
+      activeSearchQuery: this.activeSearchQuery,
+      searchResults: this.searchResults,
+      recentItems: this.recentItems,
+      pinnedItems: this.pinnedItems,
+    })
   );
 
   constructor() {
@@ -191,11 +201,16 @@ class ClipboardStore {
     this.isSearchPending = false;
   }
 
-  async search(query: string) {
+  async search(query: string, options: { silent?: boolean } = {}) {
     if (query.trim() && this.searchQuery !== query) {
       return;
     }
 
+    // A silent search refreshes the results of the *same* query in place — e.g.
+    // after a copy bumps a row's timestamp while a query is active. It must not
+    // toggle the pending spinner, otherwise the search icon flickers on every
+    // background refresh even though the user never typed anything.
+    const silent = options.silent ?? false;
     const requestId = this.searchRequests.next();
     this.searchQuery = query;
 
@@ -215,7 +230,9 @@ class ClipboardStore {
       return;
     }
 
-    this.isSearchPending = true;
+    if (!silent) {
+      this.isSearchPending = true;
+    }
     try {
       const results = await invoke<ClipItem[]>('search_clips', { query });
       if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
@@ -227,7 +244,7 @@ class ClipboardStore {
         console.error('Search failed:', error);
       }
     } finally {
-      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+      if (!silent && this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
         this.isSearchPending = false;
       }
     }
@@ -383,10 +400,10 @@ class ClipboardStore {
   }
 
   private async reloadFromBackend() {
+    await this.loadHistory({ showLoading: false });
+
     if (this.searchQuery.trim()) {
-      await this.search(this.searchQuery);
-    } else {
-      await this.loadHistory();
+      await this.search(this.searchQuery, { silent: true });
     }
   }
 
