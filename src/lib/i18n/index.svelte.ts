@@ -168,6 +168,12 @@ export interface Translations {
   details: string;
   errorLabel: string;
 
+  // Accessibility permission (macOS)
+  accessibilityTitle: string;
+  accessibilityDesc: string;
+  accessibilityHint: string;
+  openSettings: string;
+
   // QuickBar footer hints
   paste: string;
   slot: string;
@@ -341,6 +347,12 @@ const zh: Translations = {
   recheck: '重新检查',
   details: '查看详情',
   errorLabel: '错误',
+
+  // Accessibility permission (macOS)
+  accessibilityTitle: '需要无障碍权限',
+  accessibilityDesc: 'ClipMan 无法自动粘贴（模拟 Cmd+V）：“辅助功能”权限已失效，常见于应用更新后。',
+  accessibilityHint: '在系统设置中重新勾选 ClipMan 即可恢复自动粘贴；期间内容仍会复制到剪贴板，可手动粘贴。',
+  openSettings: '打开系统设置',
 
   // QuickBar footer hints
   paste: '粘贴',
@@ -519,6 +531,14 @@ const en: Translations = {
   recheck: 'Re-check',
   details: 'Details',
   errorLabel: 'Error',
+
+  // Accessibility permission (macOS)
+  accessibilityTitle: 'Accessibility permission needed',
+  accessibilityDesc:
+    "ClipMan can't auto-paste (simulate Cmd+V): its Accessibility permission is no longer valid, which often happens after an update.",
+  accessibilityHint:
+    'Re-enable ClipMan under System Settings to restore auto-paste. Until then, content is still copied to the clipboard so you can paste manually.',
+  openSettings: 'Open System Settings',
 
   // QuickBar footer hints
   paste: 'Paste',

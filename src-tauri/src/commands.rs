@@ -253,6 +253,20 @@ pub async fn check_clipboard_permission() -> Result<String, String> {
     }
 }
 
+/// Whether ClipMan currently holds the macOS Accessibility permission needed to
+/// simulate Cmd+V. Always `true` on non-macOS platforms.
+#[tauri::command]
+pub async fn check_accessibility_permission() -> Result<bool, String> {
+    Ok(crate::accessibility::is_trusted())
+}
+
+/// Open System Settings → Privacy & Security → Accessibility so the user can
+/// (re-)grant ClipMan. No-op on non-macOS platforms.
+#[tauri::command]
+pub async fn open_accessibility_settings() -> Result<(), String> {
+    crate::accessibility::open_settings()
+}
+
 #[tauri::command]
 pub async fn clear_non_pinned_history(
     app: AppHandle,

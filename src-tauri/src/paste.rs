@@ -225,6 +225,21 @@ fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
+    // Without the Accessibility permission, the CGEvent post that sends Cmd+V
+    // fails *silently* — enigo returns Ok but nothing is typed. So we cannot
+    // rely on a paste error to detect the problem; check the permission up
+    // front. When it is missing (commonly after an update invalidates the
+    // grant), guide the user to re-authorize and degrade to copy-only: the clip
+    // is already on the clipboard, so they can paste manually.
+    if !crate::accessibility::is_trusted() {
+        log::warn!("Accessibility permission missing; cannot auto-paste");
+        if let Err(e) = app.emit("accessibility-permission-required", ()) {
+            log::error!("Failed to emit accessibility-permission-required event: {e}");
+        }
+        crate::accessibility::guide_reauthorization(app);
+        return Ok(PasteSimulation::CopiedOnly);
+    }
+
     // The QuickBar stole keyboard focus while it was open. It is now hidden, so
     // bring the previously frontmost app back to the front before pressing
     // Cmd+V; otherwise the keystroke is delivered to nothing.
