@@ -72,19 +72,63 @@ jobs:
             echo "notes=See the assets to download this version and install." >> $GITHUB_OUTPUT
           fi
 
+      # macOS code signing with a SELF-SIGNED certificate (no Apple Developer
+      # account). Goal: keep the app's Designated Requirement stable across
+      # releases so users grant Accessibility only once and it survives updates.
+      # We set up the keychain ourselves (rather than let tauri-action import the
+      # cert) because a self-signed cert is untrusted by default and is filtered
+      # out of `security find-identity -v -p codesigning` — which is what the
+      # Tauri bundler uses to resolve the identity ("failed to resolve signing
+      # identity"). Trusting it as a code-signing root fixes that. NOT notarized:
+      # users still see a one-time Gatekeeper prompt on first open. The same cert
+      # MUST be reused for every release, or all users re-grant after the update.
+      - name: Set up self-signed code signing (macOS)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/clipman-signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 24)"
+          CERT_P12="$RUNNER_TEMP/clipman-cert.p12"
+          CERT_PEM="$RUNNER_TEMP/clipman-cert.pem"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_P12"
+
+          # Fresh keychain holding the signing identity.
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"            # no auto-lock during the build
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$CERT_P12" -P "$APPLE_CERTIFICATE_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+
+          # Make it the default and the only keychain in the search list.
+          security list-keychains -d user -s "$KEYCHAIN"
+          security default-keychain -d user -s "$KEYCHAIN"
+
+          # Trust the self-signed cert as a code-signing root so it counts as a
+          # valid identity (otherwise: "failed to resolve signing identity").
+          security find-certificate -c "ClipMan Code Signing" -p "$KEYCHAIN" > "$CERT_PEM"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$CERT_PEM"
+
+          echo "Valid code-signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q '"ClipMan Code Signing"'; then
+            echo "ERROR: 'ClipMan Code Signing' is not a valid codesigning identity after trust setup" >&2
+            exit 1
+          fi
+
       - uses: tauri-apps/tauri-action@dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS code signing with a self-signed certificate (no Apple Developer
-          # account). This keeps the app's Designated Requirement stable across
-          # releases so users only grant Accessibility once — it survives updates.
-          # NOT notarized: users still see a one-time Gatekeeper prompt on first open.
-          # The same certificate MUST be reused for every release, or all users
-          # will have to re-grant Accessibility after the next update.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # The keychain + trusted identity are prepared by the macOS step above;
+          # the Tauri bundler picks this identity up from the default keychain.
+          # No APPLE_CERTIFICATE here on purpose — we manage the keychain ourselves.
           APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'
         with:
           tagName: ${{ github.ref_name }} # Use the tag name that triggered the workflow
