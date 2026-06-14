@@ -77,6 +77,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing with a self-signed certificate (no Apple Developer
+          # account). This keeps the app's Designated Requirement stable across
+          # releases so users only grant Accessibility once — it survives updates.
+          # NOT notarized: users still see a one-time Gatekeeper prompt on first open.
+          # The same certificate MUST be reused for every release, or all users
+          # will have to re-grant Accessibility after the next update.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'
         with:
           tagName: ${{ github.ref_name }} # Use the tag name that triggered the workflow
           releaseName: '${{ github.ref_name }}' # Version number only for Tauri updater compatibility
