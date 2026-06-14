@@ -103,7 +103,7 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 
 ## Platform Notes
 
-- **macOS:** runs as an Accessory (menu-bar) app; clipboard access (and the planned auto-paste) needs **Accessibility permission**. Detect-and-guide rather than failing silently.
+- **macOS:** runs as an Accessory (menu-bar) app; clipboard access and auto-paste (simulating Cmd+V) need **Accessibility permission**. Without it `CGEventPost` fails *silently*, so `accessibility.rs` checks `AXIsProcessTrusted()` before pasting and guides the user to re-grant (native dialog + QuickBar banner) rather than failing silently. Releases are signed with a stable self-signed cert so the grant survives updates (see `.github/RELEASE_GUIDE.md`).
 - **Windows:** `windows` crate features are already enabled for Win32 windowing/dataexchange.
 - **Linux:** auto-paste support is best-effort (Wayland limited); degrade to copy-only, don't error.
 

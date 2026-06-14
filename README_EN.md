@@ -57,11 +57,15 @@ Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) t
 - **macOS (Intel)**: `ClipMan_2.0.1_x64.dmg`
 - **Linux**: `ClipMan_2.0.1_amd64.AppImage`
 
-### macOS Permissions
+### macOS Install & Permissions
 
-Grant Accessibility permission on first run:
+**First launch**: builds are signed with a self-signed certificate but not Apple-notarized, so Gatekeeper may block the first launch (“cannot be opened because the developer cannot be verified”). To open it: right-click ClipMan in **Finder** → **Open**, or go to **System Settings** → **Privacy & Security** and click **Open Anyway** at the bottom. It launches normally afterwards.
 
-**System Settings** → **Privacy & Security** → **Accessibility** → Add ClipMan
+**Accessibility permission**: auto-paste (simulating Cmd+V) requires Accessibility access. Grant it when prompted on first run, or add it manually:
+
+**System Settings** → **Privacy & Security** → **Accessibility** → add and enable ClipMan
+
+> If auto-paste stops working after an update, the permission was most likely lost. ClipMan will prompt you to re-grant it — just re-enable ClipMan in the list above (copying still works in the meantime; content is placed on the clipboard so you can paste manually).
 
 ## 🚀 Usage
 

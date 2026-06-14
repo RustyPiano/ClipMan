@@ -63,8 +63,9 @@ git push origin v1.0.0
 # macOS
 curl -L https://github.com/RustyPiano/ClipMan/releases/download/v1.0.0/ClipMan_1.0.0_aarch64.dmg -o ClipMan.dmg
 
-# 验证签名 (如果已配置代码签名)
-spctl --assess --verbose ClipMan.app
+# 验证签名（自签名证书；spctl 因未公证会判为 rejected，属正常现象）
+codesign -dv --verbose=2 ClipMan.app    # 应显示 Authority=ClipMan Code Signing
+codesign --verify --strict ClipMan.app  # 应输出 "satisfies its Designated Requirement"
 
 # 测试安装
 open ClipMan.dmg
@@ -174,9 +175,12 @@ git tag -d v1.0.0
 **Q: 如何配置代码签名?**
 
 A:
-- **macOS**: 需要 Apple Developer 证书,配置 GitHub Secrets
-- **Windows**: 需要 Code Signing 证书
-- **Linux**: 通常不需要
+- **macOS**: 已配置。Release 构建用**自签名证书**签名（无需 Apple Developer 账号）。目的是让 app 的签名要求（Designated Requirement）在各版本间保持稳定——用户只需授予一次辅助功能权限，更新后也不会失效（ad-hoc 签名每次构建哈希都变，会反复要求重新授权）。涉及：
+  - GitHub Secrets：`APPLE_CERTIFICATE`（`.p12` 的 base64）、`APPLE_CERTIFICATE_PASSWORD`；`release.yml` 中写死 `APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'`。
+  - 证书与私钥保存在仓库之外（本机 `~/ClipMan-signing/`），**必须永久复用同一张**；一旦更换，所有用户在下次更新后都要重新授权辅助功能。务必备份该目录。
+  - **未做公证（notarization）**：用户首次打开仍会遇到 Gatekeeper“无法验证开发者”提示（右键打开 / “仍要打开”一次即可）。要彻底消除该提示，需付费的 Apple Developer ID + 公证。
+- **Windows**: 需要 Code Signing 证书（未配置）。
+- **Linux**: 通常不需要。
 
 参考: https://tauri.app/distribute/
 
