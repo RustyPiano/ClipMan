@@ -1,0 +1,77 @@
+name: 'Prepare Release'
+
+# One-click version bump from the Actions tab: enter a version, and this job
+# runs scripts/release.sh to bump every manifest + README, commits to the
+# default branch, and pushes the v<version> tag — which triggers
+# .github/workflows/release.yml to build, sign, and draft the release.
+#
+# ── Requires a PAT to actually trigger the build ────────────────────────────
+# GitHub deliberately does NOT let the built-in GITHUB_TOKEN trigger further
+# workflow runs, so a tag pushed with it will NOT start the Release build. Add a
+# fine-grained/classic PAT with `contents: write` (repo) as the RELEASE_PAT
+# secret and this job uses it to push. Without RELEASE_PAT the tag is still
+# created, but you must start the Release build yourself (re-push the tag from
+# your machine, or use the local path in docs/dev/RELEASING.md).
+#
+# The release notes file must already be committed — this job will not scaffold
+# it, so the release can't ship with an empty body. Use scripts/release.sh
+# locally to scaffold it, or write it by hand first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release — X.Y.Z, no leading v'
+        required: true
+        type: string
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PAT triggers the downstream Release build; GITHUB_TOKEN is the
+          # graceful fallback (tag created, build must be started manually).
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: validate version input
+        run: |
+          if ! printf '%s' "${{ inputs.version }}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must be X.Y.Z with no leading 'v'" >&2
+            exit 1
+          fi
+
+      - name: require release notes to exist
+        run: |
+          NOTES="release_notes_${{ inputs.version }}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::$NOTES is missing — commit it first (scripts/release.sh scaffolds it locally)" >&2
+            exit 1
+          fi
+
+      - name: bump manifests + README
+        run: bash scripts/release.sh "${{ inputs.version }}"
+
+      - name: verify consistency
+        run: bash scripts/check-versions.sh "${{ inputs.version }}"
+
+      - name: commit, tag & push
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::manifests already at v${VERSION}; tagging existing commit"
+          else
+            git commit -m "release: v${VERSION}"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          echo "::notice::Pushed tag v${VERSION}. With RELEASE_PAT set, the Release build is now running."

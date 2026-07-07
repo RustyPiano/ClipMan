@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap guard (no toolchain): fail fast if package.json / tauri.conf.json /
+  # Cargo.toml / Cargo.lock ever disagree on the app version. Prevents the
+  # stale-version drift that shipped mismatched README/badge versions before.
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: manifest versions agree
+        run: bash scripts/check-versions.sh
+
   frontend:
     runs-on: ubuntu-latest
     steps:

@@ -5,8 +5,32 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*' # Triggers on tags like v1.0.0, v1.2.3
 
+# Don't cancel an in-flight release build if the same tag is re-pushed; let it
+# finish (distinct tags have distinct refs, so they never share this group).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Fast gate (seconds, no build) so a mistagged or notes-less release fails
+  # before four platform runners spin up. Asserts the tag matches every manifest
+  # version and that the release notes file for this version exists.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: manifest versions match the tag
+        run: bash scripts/check-versions.sh "${{ github.ref_name }}"
+      - name: release notes present
+        run: |
+          VERSION_NUM="${GITHUB_REF_NAME#v}"
+          if [ ! -f "release_notes_${VERSION_NUM}.md" ]; then
+            echo "::error::release_notes_${VERSION_NUM}.md is missing — write it before tagging" >&2
+            exit 1
+          fi
+
   publish-tauri:
+    needs: preflight
     permissions:
       contents: write
     strategy:
@@ -68,8 +92,10 @@ jobs:
             echo "$NOTES" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
-            echo "No release notes file found: $NOTES_FILE"
-            echo "notes=See the assets to download this version and install." >> $GITHUB_OUTPUT
+            # preflight already guards this; fail here too rather than ship a
+            # release with a placeholder body.
+            echo "::error::No release notes file found: $NOTES_FILE" >&2
+            exit 1
           fi
 
       # macOS code signing with a SELF-SIGNED certificate (no Apple Developer

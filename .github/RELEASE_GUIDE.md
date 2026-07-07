@@ -4,31 +4,36 @@
 
 ### 1. 准备发布
 
-确保所有更改都已提交并推送到 GitHub:
+确保所有更改都已提交并推送到 `main`：
 
 ```bash
-# 检查状态
-git status
-
-# 确保在 main 分支
-git checkout main
-git pull origin main
+git checkout main && git pull origin main
+git status            # 工作区应干净
 ```
 
-### 2. 创建版本标签
+版本号写在四个文件里（`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`）。**不要手动逐个改** —— 用脚本一次性同步，避免漏改导致的版本漂移（CI 的 `versions` 作业和 release 的 `preflight` 作业都会因此失败）。
 
-使用语义化版本号 (Semantic Versioning):
+### 2. 升级版本号 + 创建标签
+
+版本号遵循语义化版本 (`vMAJOR.MINOR.PATCH`)。有两条路，任选其一：
+
+**路径 A —— 本地脚本（无需 Rust/bun 工具链，纯 sed）**
 
 ```bash
-# 格式: v主版本号.次版本号.修订号
-# 例如: v1.0.0, v1.1.0, v1.0.1
-
-# 创建标签
-git tag -a v1.0.0 -m "Release v1.0.0 - 首个正式版本"
-
-# 推送标签到 GitHub (这会触发 workflow)
-git push origin v1.0.0
+scripts/release.sh 2.2.0        # 同步四个清单 + README 下载文件名 + 生成 release_notes 模板
+$EDITOR release_notes_2.2.0.md  # 填写发布说明（必填，否则 release 会失败）
+git commit -am "release: v2.2.0"
+git tag v2.2.0
+git push --follow-tags          # 推送标签即触发 release.yml 构建
 ```
+
+**路径 B —— GitHub「Prepare Release」工作流（在 Actions 页一键触发）**
+
+1. 先把填好的 `release_notes_2.2.0.md` 提交到 `main`（工作流不会替你生成，避免发出空说明）。
+2. Actions → **Prepare Release** → Run workflow → 填 `2.2.0`。它会跑同一个 `scripts/release.sh`、提交、打标签并推送。
+3. **前置条件：** 必须配置 `RELEASE_PAT` secret（`contents: write` 权限的 PAT）。GitHub 不允许内置 `GITHUB_TOKEN` 触发下游工作流，没有 PAT 时标签能建但不会自动开始构建。
+
+> 版本徽章已改为动态（shields `github/v/release`），README 无需再手动改版本号；下载文件名由 `scripts/release.sh` 自动重写。
 
 ### 3. 等待构建完成
 
@@ -108,15 +113,20 @@ git tag -a v2.0.0 -m "Breaking: 升级到 Tauri 3.0"
 
 ## ⚠️ 注意事项
 
-### 首次发布检查清单
+### 发布检查清单
 
-- [ ] README.md 中的安装链接已更新
-- [ ] 项目截图/GIF 已添加
-- [ ] LICENSE 文件存在
-- [ ] CHANGELOG.md 已更新
-- [ ] 所有已知 bug 已在 Issues 中标记
-- [ ] 文档中的示例代码已测试
-- [ ] 安装包在所有平台上测试通过
+自动化已覆盖的（由 `scripts/release.sh` + CI 保证，无需手动核对）：
+
+- ✅ 四个清单文件版本号一致（CI `versions` + release `preflight` 作业强制）
+- ✅ README 版本徽章（动态）与下载文件名（脚本重写）
+- ✅ 缺失 `release_notes_<版本>.md` 会让 release 失败，而非发出空说明
+
+仍需人工确认：
+
+- [ ] `release_notes_<版本>.md` 内容写实、准确
+- [ ] README 的**功能列表**已随新特性更新（版本号是自动的，特性描述不是）
+- [ ] 安装包在目标平台实测通过
+- [ ] 已知 bug 已在 Issues 中登记
 
 ### 本地发布构建
 
@@ -184,17 +194,15 @@ A:
 
 参考: https://tauri.app/distribute/
 
-## 🚀 自动化发布 (可选)
+## 🚀 发布流程涉及的文件
 
-使用 GitHub Actions 自动发布:
-
-```bash
-# 创建 Release Drafter 配置
-.github/release-drafter.yml
-
-# 自动生成更新日志
-.github/workflows/update-changelog.yml
-```
+| 文件 | 作用 |
+| --- | --- |
+| `scripts/release.sh` | 一键升级四个清单 + README 文件名 + 生成 release notes 模板（纯 sed，无工具链依赖） |
+| `scripts/check-versions.sh` | 断言四个清单版本一致；可选传入期望版本/标签再断言相等 |
+| `.github/workflows/prepare-release.yml` | Actions 页一键升级 + 打标签（需 `RELEASE_PAT`） |
+| `.github/workflows/ci.yml` | `versions` 作业在每次 push/PR 上守护版本一致性 |
+| `.github/workflows/release.yml` | 标签触发；`preflight` 作业先校验标签==清单、release notes 存在，再构建/签名/建草稿 |
 
 ## 📊 发布后
 
