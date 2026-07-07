@@ -23,6 +23,7 @@ tauri-plugin-store = "2.4.3"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-autostart = "2.5.1"
+tauri-plugin-single-instance = "2"
 
 # Clipboard & System
 arboard = "3.4"
@@ -52,6 +53,7 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
 lru = "0.12"
+regex = "1"
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
@@ -68,7 +70,7 @@ objc2-app-kit = { version = "0.3.2", features = [
     "NSWindow",
     "NSWorkspace",
 ] }
-objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSString"] }
+objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSString", "NSURL"] }
 
 [features]
 default = ["custom-protocol"]

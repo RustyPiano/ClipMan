@@ -629,6 +629,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "regex",
  "rusqlite",
  "serde",
  "serde_bytes",
@@ -643,6 +644,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
  "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tauri-plugin-updater",
  "tokio",
@@ -4630,6 +4632,21 @@ dependencies = [
  "tauri-plugin",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8f29386f5e9fdc699182388a33ee80a56de436d91b67459e86afef426282af"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.18",
+ "tracing",
+ "windows-sys 0.60.2",
+ "zbus",
 ]
 
 [[package]]

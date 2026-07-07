@@ -16,7 +16,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::{
     safe_lock,
-    storage::{ClipItem, ContentType, CopyMarker, FrontendClipItem},
+    storage::{
+        join_file_paths, split_file_paths, ClipItem, ContentType, CopyMarker, FrontendClipItem,
+    },
     tray::update_tray_menu,
     AppState,
 };
@@ -59,12 +61,13 @@ pub async fn paste_clip(
     state: &AppState,
     id: String,
     mode: String,
+    plain: bool,
 ) -> Result<(), String> {
     let mode = PasteMode::try_from(mode.as_str())?;
     let item = fetch_clip_and_touch_timestamp(&app, state, id).await?;
     let auto_paste = state.settings.get().auto_paste;
 
-    write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone())?;
+    write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone(), plain, Some(&app))?;
     hide_quickbar(&app)?;
 
     if should_simulate_paste(mode, auto_paste) {
@@ -81,6 +84,115 @@ pub async fn paste_clip(
         log::info!("Copied clip {} without paste simulation", item.id);
     }
 
+    Ok(())
+}
+
+/// Merge several clips into one clipboard write, then paste per `mode` (task #13).
+///
+/// Clips are taken in the caller's `ids` order; each is touched (timestamp +
+/// emit) through the same helper `paste_clip` uses, so the recent list stays in
+/// sync. Text/Files contribute their plain text (Files → newline-joined paths,
+/// D3); Image clips have no text form in v1 and are skipped + counted. The
+/// merged text is written through the shared self-copy marker + TTL path (D5).
+pub async fn paste_clips(
+    app: AppHandle,
+    state: &AppState,
+    ids: Vec<String>,
+    mode: String,
+    separator: String,
+) -> Result<(), String> {
+    let mode = PasteMode::try_from(mode.as_str())?;
+    if ids.is_empty() {
+        return Err("No clips selected for merge paste".to_string());
+    }
+    let auto_paste = state.settings.get().auto_paste;
+
+    // Fetch in selection order, touching each clip's timestamp (task #13: "逐项
+    // touch timestamp") via the same helper paste_clip uses.
+    let mut fetched: Vec<(ContentType, Vec<u8>)> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let item = fetch_clip_and_touch_timestamp(&app, state, id.clone()).await?;
+        fetched.push((item.content_type, item.content));
+    }
+
+    let (merged, skipped_images) = merge_clip_texts(
+        fetched.iter().map(|(ct, content)| (ct, content.as_slice())),
+        &separator,
+    );
+    let merged_count = fetched.len() - skipped_images;
+
+    if skipped_images > 0 {
+        log::info!("Merge paste skipped {skipped_images} image clip(s) (unsupported in v1)");
+    }
+
+    if merged_count == 0 {
+        // Nothing mergeable (e.g. every selected clip was an image): leave the
+        // clipboard untouched rather than clobbering it with an empty write.
+        log::warn!("Merge paste had no text/files clips to merge; skipping clipboard write");
+        return Ok(());
+    }
+
+    write_merged_text_to_system_clipboard(&merged, state.last_copied_by_us.clone())?;
+    hide_quickbar(&app)?;
+
+    if should_simulate_paste(mode, auto_paste) {
+        match simulate_paste(&app, state)? {
+            PasteSimulation::Pasted => log::info!("Merge-pasted {merged_count} clip(s)"),
+            PasteSimulation::CopiedOnly => {
+                log::warn!(
+                    "Paste simulation unavailable; merged {merged_count} clip(s) copied only"
+                );
+            }
+        }
+    } else {
+        log::info!("Merged {merged_count} clip(s) to clipboard without paste simulation");
+    }
+
+    Ok(())
+}
+
+/// Join the plain-text form of clips (in order) with `separator`, skipping and
+/// counting Image clips (v1 has no text form for them). Text uses its bytes;
+/// Files use their newline-joined path text (D3). Pure so the merge order,
+/// image-skip, and separator behaviors are unit-testable without a clipboard.
+fn merge_clip_texts<'a>(
+    clips: impl IntoIterator<Item = (&'a ContentType, &'a [u8])>,
+    separator: &str,
+) -> (String, usize) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut skipped_images = 0usize;
+    for (content_type, content) in clips {
+        match content_type {
+            ContentType::Image => skipped_images += 1,
+            ContentType::Text | ContentType::Files => {
+                parts.push(String::from_utf8_lossy(content).into_owned());
+            }
+        }
+    }
+    (parts.join(separator), skipped_images)
+}
+
+/// Write merged plain text to the clipboard using the same self-copy marker +
+/// TTL cleanup as every other write (D5). Merge paste never carries html, so
+/// this is the plain-text write path only.
+fn write_merged_text_to_system_clipboard(
+    merged: &str,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) -> Result<(), String> {
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    let marker = CopyMarker::from_payload(ContentType::Text, merged.as_bytes());
+    set_copy_marker(&marker_state, &marker);
+
+    if let Err(e) = clipboard.set_text(merged.to_string()) {
+        clear_marker_if_current(&marker_state, &marker);
+        return Err(format!("Failed to write merged text clipboard: {e}"));
+    }
+
+    log::info!(
+        "Copied merged clip text to clipboard: {} chars",
+        merged.len()
+    );
+    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
@@ -130,11 +242,14 @@ fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
 pub fn write_clip_to_system_clipboard(
     item: &ClipItem,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    plain_text_only: bool,
+    app: Option<&AppHandle>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     match &item.content_type {
-        ContentType::Text => write_text(&mut clipboard, item, marker_state)?,
+        ContentType::Text => write_text(&mut clipboard, item, marker_state, plain_text_only)?,
         ContentType::Image => write_image(&mut clipboard, item, marker_state)?,
+        ContentType::Files => write_files(&mut clipboard, item, marker_state, app)?,
     };
 
     Ok(())
@@ -144,23 +259,200 @@ fn write_text(
     clipboard: &mut Clipboard,
     item: &ClipItem,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    plain_text_only: bool,
 ) -> Result<(), String> {
     let text = String::from_utf8_lossy(&item.content).into_owned();
+    // D5: the marker is always the plain-text hash, never the html — the monitor
+    // reads back the plain-text alt after a self-paste and must still match.
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
     set_copy_marker(&marker_state, &marker);
 
-    if let Err(e) = clipboard.set_text(text.clone()) {
+    let use_html = !plain_text_only && item.html.as_deref().is_some_and(|html| !html.is_empty());
+    let write_result = if use_html {
+        // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
+        let html = item.html.as_deref().unwrap_or_default();
+        clipboard.set().html(html, Some(text.as_str()))
+    } else {
+        clipboard.set_text(text.clone())
+    };
+
+    if let Err(e) = write_result {
         clear_marker_if_current(&marker_state, &marker);
         return Err(format!("Failed to write text clipboard: {e}"));
     }
 
     log::info!(
-        "Copied text clip {} to clipboard: {} chars",
+        "Copied text clip {} to clipboard: {} chars (html: {})",
         item.id,
-        text.len()
+        text.len(),
+        use_html
     );
     schedule_marker_clear(marker_state, marker);
     Ok(())
+}
+
+fn write_files(
+    clipboard: &mut Clipboard,
+    item: &ClipItem,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    let content = String::from_utf8_lossy(&item.content).into_owned();
+    let paths = split_file_paths(&content);
+    // The self-copy marker must hash exactly the path list the monitor reads
+    // back after our write, so resolve the platform's "effective" list first.
+    let paths = effective_file_paths(paths);
+    let joined = join_file_paths(&paths);
+    let marker = CopyMarker::from_payload(ContentType::Files, joined.as_bytes());
+    set_copy_marker(&marker_state, &marker);
+
+    if let Err(e) = write_file_list(clipboard, &paths) {
+        // Degrade to the path text so the user still gets a usable clipboard,
+        // and tell them why the real files didn't make it (macOS quietly
+        // rejecting the URLs looks like "paste did nothing" otherwise).
+        log::warn!(
+            "Failed to write file list for clip {} ({e}); falling back to text",
+            item.id
+        );
+        notify_file_paste_blocked(app);
+        let text_marker = CopyMarker::from_payload(ContentType::Text, joined.as_bytes());
+        set_copy_marker(&marker_state, &text_marker);
+        if let Err(text_err) = clipboard.set_text(joined.clone()) {
+            clear_marker_if_current(&marker_state, &text_marker);
+            return Err(format!(
+                "Failed to write file list clipboard: {e}; text fallback failed: {text_err}"
+            ));
+        }
+        log::info!(
+            "Copied {} file path(s) as text for clip {}",
+            paths.len(),
+            item.id
+        );
+        schedule_marker_clear(marker_state, text_marker);
+        return Ok(());
+    }
+
+    log::info!(
+        "Copied {} file(s) to clipboard for clip {}",
+        paths.len(),
+        item.id
+    );
+    schedule_marker_clear(marker_state, marker);
+    Ok(())
+}
+
+/// The path list as the clipboard monitor will read it back after our write.
+/// macOS writes NSURLs built from the stored paths and `NSURL.path()` returns
+/// them unchanged. Other platforms go through arboard, which canonicalizes
+/// every path and drops unresolvable ones — mirror that so the marker matches.
+#[cfg(target_os = "macos")]
+fn effective_file_paths(paths: Vec<String>) -> Vec<String> {
+    paths
+}
+
+#[cfg(not(target_os = "macos"))]
+fn effective_file_paths(paths: Vec<String>) -> Vec<String> {
+    let canonical: Vec<String> = paths
+        .iter()
+        .filter_map(|p| std::fs::canonicalize(p).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if canonical.is_empty() {
+        // Every stored path is gone; keep the originals so the text fallback
+        // still gives the user something pasteable.
+        paths
+    } else {
+        canonical
+    }
+}
+
+/// Put a file list on the system clipboard.
+///
+/// macOS writes NSURLs to NSPasteboard directly instead of going through
+/// arboard (whose `file_list` canonicalizes every path and drops any it can't
+/// `stat`). Two macOS 26 (Tahoe) behaviors shape this function:
+///
+/// 1. The pasteboard server validates that the writing process can access the
+///    file behind each URL; unauthorized items are dropped **silently** —
+///    `writeObjects` still returns `true`. Verified empirically: a Desktop
+///    file wrote `items=0` while `/Users/Shared` wrote `items=1` and pasted.
+/// 2. Opening the file first surfaces the one-time "Files and Folders" TCC
+///    prompt (Desktop/Documents/Downloads) and, once granted, the write
+///    passes validation. Terminal-launched processes inherit the terminal's
+///    grants, which is why this only failed for Finder-launched instances.
+#[cfg(target_os = "macos")]
+fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), String> {
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    // Pre-flight: trigger the TCC file-access prompt where one exists. The
+    // result is deliberately ignored — a denied/unpromptable path (e.g.
+    // another app's container, which needs Full Disk Access) is caught by the
+    // landed-items check below.
+    for path in paths {
+        let _ = std::fs::File::open(path);
+    }
+
+    let urls: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+        .iter()
+        .map(|path| {
+            let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+            ProtocolObject::from_retained(url)
+        })
+        .collect();
+    if urls.is_empty() {
+        return Err("No file paths to write".to_string());
+    }
+
+    let objects = NSArray::from_retained_slice(&urls);
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+    if !pasteboard.writeObjects(&objects) {
+        return Err("NSPasteboard writeObjects returned false".to_string());
+    }
+
+    // Tahoe drops unauthorized file URLs without reporting an error, so
+    // "success" must be confirmed by the items actually being on the board.
+    let landed = pasteboard
+        .pasteboardItems()
+        .map(|items| items.count())
+        .unwrap_or(0);
+    if landed == 0 {
+        return Err("macOS rejected the file URLs (missing file access permission)".to_string());
+    }
+
+    Ok(())
+}
+
+/// Shown when macOS blocks a file paste: without it the rejected write looks
+/// like "pressing Enter did nothing". Non-fatal, fire-and-forget.
+fn notify_file_paste_blocked(app: Option<&AppHandle>) {
+    #[cfg(not(target_os = "linux"))]
+    if let Some(app) = app {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app
+            .notification()
+            .builder()
+            .title("文件粘贴受限")
+            .body(
+                "macOS 未授予 ClipMan 访问该文件的权限，已改为复制文件路径文本。\
+                 可在 系统设置 → 隐私与安全性 → 完全磁盘访问权限 中启用 ClipMan 后重试。",
+            )
+            .show();
+    }
+    #[cfg(target_os = "linux")]
+    let _ = app;
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_file_list(clipboard: &mut Clipboard, paths: &[String]) -> Result<(), String> {
+    let path_bufs: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    clipboard
+        .set()
+        .file_list(&path_bufs)
+        .map_err(|e| e.to_string())
 }
 
 fn write_image(
@@ -349,5 +641,73 @@ mod tests {
         assert!(!should_simulate_paste(PasteMode::Copy, false));
         assert!(!should_simulate_paste(PasteMode::Opposite, true));
         assert!(should_simulate_paste(PasteMode::Opposite, false));
+    }
+
+    fn clip(content_type: ContentType, content: &[u8]) -> (ContentType, Vec<u8>) {
+        (content_type, content.to_vec())
+    }
+
+    #[test]
+    fn merge_preserves_selection_order() {
+        let clips = [
+            clip(ContentType::Text, b"first"),
+            clip(ContentType::Text, b"second"),
+            clip(ContentType::Text, b"third"),
+        ];
+        let (merged, skipped) =
+            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        assert_eq!(merged, "first\nsecond\nthird");
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn merge_skips_and_counts_image_clips() {
+        let clips = [
+            clip(ContentType::Text, b"a"),
+            clip(ContentType::Image, b"\x89PNG-bytes"),
+            clip(ContentType::Text, b"b"),
+            clip(ContentType::Image, b"more-png"),
+        ];
+        let (merged, skipped) =
+            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        // Images are dropped from the merge; only text survives, in order.
+        assert_eq!(merged, "a\nb");
+        assert_eq!(skipped, 2);
+    }
+
+    #[test]
+    fn merge_uses_the_given_separator_verbatim() {
+        let clips = [clip(ContentType::Text, b"a"), clip(ContentType::Text, b"b")];
+        let make = || clips.iter().map(|(ct, c)| (ct, c.as_slice()));
+        assert_eq!(merge_clip_texts(make(), "\n").0, "a\nb");
+        assert_eq!(merge_clip_texts(make(), "\t").0, "a\tb");
+        assert_eq!(merge_clip_texts(make(), "").0, "ab");
+    }
+
+    #[test]
+    fn merge_includes_files_paths_as_text() {
+        // Files store their absolute paths newline-joined (D3); they merge as
+        // that text, indistinguishable from a plain-text clip.
+        let clips = [
+            clip(ContentType::Files, b"/a/one.txt\n/a/two.txt"),
+            clip(ContentType::Text, b"tail"),
+        ];
+        let (merged, skipped) =
+            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        assert_eq!(merged, "/a/one.txt\n/a/two.txt\ntail");
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn merge_of_only_images_yields_empty_text_and_full_skip_count() {
+        let clips = [
+            clip(ContentType::Image, b"one"),
+            clip(ContentType::Image, b"two"),
+            clip(ContentType::Image, b"three"),
+        ];
+        let (merged, skipped) =
+            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        assert_eq!(merged, "");
+        assert_eq!(skipped, 3);
     }
 }

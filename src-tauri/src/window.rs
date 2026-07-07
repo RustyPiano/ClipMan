@@ -107,6 +107,7 @@ pub fn show_quickbar_with_panel(
     quickbar.unminimize().map_err(to_string)?;
     quickbar.show().map_err(to_string)?;
     focus_quickbar(&quickbar)?;
+    invalidate_quickbar_shadow(&quickbar);
     app.emit(
         "quickbar-opened",
         QuickBarOpenedPayload {
@@ -200,6 +201,20 @@ fn register_quickbar_events(window: &WebviewWindow) {
         _ => {}
     });
 }
+
+/// Recompute the native shadow after the window is shown/resized: with a
+/// transparent window the shadow is derived from the rendered alpha shape,
+/// which can be stale after a size change on another monitor.
+#[cfg(target_os = "macos")]
+fn invalidate_quickbar_shadow(window: &WebviewWindow) {
+    match ns_window(window) {
+        Ok(ns_window) => ns_window.invalidateShadow(),
+        Err(e) => log::warn!("Failed to invalidate QuickBar shadow: {e}"),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn invalidate_quickbar_shadow(_window: &WebviewWindow) {}
 
 fn hide_quickbar_window(window: &WebviewWindow) -> Result<(), String> {
     window.hide().map_err(to_string)?;
@@ -298,6 +313,12 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
 
     let ns_window = ns_window(window)?;
     let policy = mac_quickbar_window_policy();
+
+    // macOS-only native shadow: the window server draws it around the opaque
+    // rounded panel, outside the window bounds, so it can't be clipped like a
+    // CSS box-shadow. Windows keeps `shadow: false` (tauri.conf.json) because
+    // DWM shadows follow the rectangular frame, not the panel shape.
+    window.set_shadow(true).map_err(to_string)?;
 
     window
         .set_visible_on_all_workspaces(policy.visible_on_all_workspaces)

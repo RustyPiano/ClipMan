@@ -112,15 +112,23 @@ impl Drop for ClipboardMonitorPause<'_> {
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
     limit: Option<usize>,
+    before_timestamp: Option<i64>,
+    before_id: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
     let storage = state.storage.clone();
     let limit = limit.unwrap_or(100);
 
     tauri::async_runtime::spawn_blocking(move || {
         let items = {
+            // Both cursor parts must be present to page; a missing pair (the old
+            // signature, or a first-page request) falls back to the first page.
+            let before = match (before_timestamp, before_id.as_deref()) {
+                (Some(timestamp), Some(id)) => Some((timestamp, id)),
+                _ => None,
+            };
             let storage = safe_lock(&storage);
             storage
-                .get_recent_clip_previews(limit)
+                .get_recent_clip_previews_page(limit, before)
                 .map_err(|e| e.to_string())?
         };
         Ok(items
@@ -306,7 +314,12 @@ pub async fn copy_clip_to_clipboard_internal(
         crate::paste::fetch_clip_and_touch_timestamp(app, state.inner(), clip_id.to_string())
             .await?;
 
-    crate::paste::write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone())?;
+    crate::paste::write_clip_to_system_clipboard(
+        &item,
+        state.last_copied_by_us.clone(),
+        false,
+        Some(app),
+    )?;
 
     if show_notification {
         notify_copied(app, &item.content_type);
@@ -320,6 +333,7 @@ fn notify_copied(app: &AppHandle, content_type: &ContentType) {
     let body = match content_type {
         ContentType::Text => "文本已复制到剪贴板",
         ContentType::Image => "图片已复制到剪贴板",
+        ContentType::Files => "文件已复制到剪贴板",
     };
     let _ = app
         .notification()
@@ -352,8 +366,25 @@ pub async fn paste_clip(
     state: State<'_, AppState>,
     id: String,
     mode: String,
+    plain: Option<bool>,
 ) -> Result<(), String> {
-    crate::paste::paste_clip(app, state.inner(), id, mode).await
+    // `plain` is optional so a not-yet-upgraded frontend (no ⌥Enter) keeps
+    // working: absent => rich paste, identical to previous behavior.
+    crate::paste::paste_clip(app, state.inner(), id, mode, plain.unwrap_or(false)).await
+}
+
+/// Merge several clips (in `ids` order) into a single `separator`-joined text
+/// write, then paste per `mode` (task #13 multi-select). Image clips are skipped
+/// (v1). The frontend only sends `"\n"` today; the separator is honored verbatim.
+#[tauri::command]
+pub async fn paste_clips(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    mode: String,
+    separator: String,
+) -> Result<(), String> {
+    crate::paste::paste_clips(app, state.inner(), ids, mode, separator).await
 }
 
 pub fn register_quickbar_shortcut(
@@ -973,7 +1004,8 @@ pub async fn migrate_data_location(
         storage_guard
             .backup_to_path(std::path::Path::new(new_db_path))
             .map_err(|e| format!("Failed to back up database: {}", e))?;
-        let new_storage = ClipStorage::new(new_db_path).map_err(|e| e.to_string())?;
+        let new_storage =
+            ClipStorage::new(std::path::Path::new(new_db_path)).map_err(|e| e.to_string())?;
 
         let mut new_settings = settings.clone();
         new_settings.custom_data_path = Some(new_path.clone());

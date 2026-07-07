@@ -11,7 +11,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::storage::{ClipItem, ContentType, CopyMarker};
+use crate::storage::{join_file_paths, ClipItem, ContentType, CopyMarker};
 
 type MonitorReadySender = mpsc::Sender<Result<(), String>>;
 const MONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -36,14 +36,92 @@ struct Handler {
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
     running: Arc<AtomicBool>,
-    last_text: String,
-    last_image_marker: Option<CopyMarker>,
+    last_marker: Option<CopyMarker>,
 }
 
 struct ProcessedClipboardImage {
     content_png: Vec<u8>,
     thumbnail_png: Vec<u8>,
     marker: CopyMarker,
+}
+
+/// A single representative view of the current clipboard, chosen by priority so
+/// one clipboard change yields exactly one record: `Files > Text(+html) > Image`
+/// (D1). Finder's file copies also expose a filename string and an icon image;
+/// taking the file list first discards that derived noise.
+enum ClipboardSnapshot {
+    Files(Vec<String>),
+    Text { text: String, html: Option<String> },
+    Image(ImageData<'static>),
+}
+
+/// Reads the clipboard once and returns its single representative format.
+///
+/// Image decoding copies the full bitmap and is expensive, so it is only
+/// attempted when neither files nor text are present (§2.1 laziness).
+fn read_clipboard_snapshot(clipboard: &mut Clipboard) -> Option<ClipboardSnapshot> {
+    if let Ok(paths) = clipboard.get().file_list() {
+        let paths: Vec<String> = paths
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .filter(|path| !path.is_empty())
+            .collect();
+        if !paths.is_empty() {
+            return Some(ClipboardSnapshot::Files(paths));
+        }
+    }
+
+    if let Ok(text) = clipboard.get_text() {
+        if !text.is_empty() {
+            // HTML is an optional companion; a missing or empty value is normal.
+            let html = clipboard.get().html().ok().filter(|html| !html.is_empty());
+            return Some(ClipboardSnapshot::Text { text, html });
+        }
+    }
+
+    if let Ok(image) = clipboard.get_image() {
+        return Some(ClipboardSnapshot::Image(image));
+    }
+
+    None
+}
+
+/// Self-copy/dedup marker for a snapshot, hashing only the primary content (D5).
+/// Text hashes the plain text (never the html), because after a self-paste the
+/// monitor reads back the plain-text alt and must still recognize our write.
+fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
+    match snapshot {
+        ClipboardSnapshot::Files(paths) => {
+            CopyMarker::from_payload(ContentType::Files, join_file_paths(paths).as_bytes())
+        }
+        ClipboardSnapshot::Text { text, .. } => {
+            CopyMarker::from_payload(ContentType::Text, text.as_bytes())
+        }
+        ClipboardSnapshot::Image(image) => {
+            CopyMarker::from_normalized_image_parts(image.width, image.height, image.bytes.as_ref())
+        }
+    }
+}
+
+/// Decides whether a freshly observed clipboard marker should be dispatched to
+/// storage, advancing `last_marker` as a side effect.
+///
+/// Returns false when the marker is unchanged (already recorded) or when it is
+/// our own write. Crucially, a self-copy skip still advances `last_marker`, so a
+/// later genuine copy of *different* content is never compared against stale
+/// state — matching the pre-refactor behavior where `last_text` was updated even
+/// on a self-copy skip (§2.2). `is_self_copied` is only evaluated when the
+/// marker actually changed, avoiding a needless lock on unchanged clipboards.
+fn record_marker_and_decide_dispatch(
+    marker: &CopyMarker,
+    last_marker: &mut Option<CopyMarker>,
+    is_self_copied: impl FnOnce() -> bool,
+) -> bool {
+    if last_marker.as_ref() == Some(marker) {
+        return false;
+    }
+    *last_marker = Some(marker.clone());
+    !is_self_copied()
 }
 
 impl ClipboardHandler for Handler {
@@ -65,32 +143,13 @@ impl ClipboardHandler for Handler {
             return CallbackResult::Next;
         }
 
-        // Check for text changes
-        if let Ok(text) = clipboard.get_text() {
-            if text != self.last_text && !text.is_empty() {
-                ClipboardMonitor::process_text_change(
-                    &self.app_handle,
-                    &self.last_copied_by_us,
-                    &text,
-                );
-                self.last_text = text;
-            }
-        }
-
-        // Check for image changes
-        if let Ok(image) = clipboard.get_image() {
-            let marker = ClipboardMonitor::image_marker(&image);
-            if self.last_image_marker.as_ref() != Some(&marker) {
-                ClipboardMonitor::process_image_change(
-                    &self.app_handle,
-                    &self.last_copied_by_us,
-                    &self.running,
-                    &image,
-                    &marker,
-                );
-                self.last_image_marker = Some(marker);
-            }
-        }
+        ClipboardMonitor::handle_clipboard_event(
+            &self.app_handle,
+            &self.last_copied_by_us,
+            &self.running,
+            &mut clipboard,
+            &mut self.last_marker,
+        );
 
         CallbackResult::Next
     }
@@ -128,8 +187,7 @@ impl ClipboardMonitor {
                 app_handle: app_handle.clone(),
                 last_copied_by_us: last_copied_by_us.clone(),
                 running: running.clone(),
-                last_text: String::new(),
-                last_image_marker: None,
+                last_marker: None,
             };
 
             // Start the clipboard master - this blocks until the application exits
@@ -225,8 +283,7 @@ impl ClipboardMonitor {
             let _ = ready_sender.send(Ok(()));
         }
 
-        let mut last_text = String::new();
-        let mut last_image_marker: Option<CopyMarker> = None;
+        let mut last_marker: Option<CopyMarker> = None;
         let mut last_ignored_concealed = false;
 
         while running.load(Ordering::SeqCst) {
@@ -243,43 +300,124 @@ impl ClipboardMonitor {
 
             last_ignored_concealed = false;
 
-            // Check for text changes
-            if let Ok(text) = clipboard.get_text() {
-                if text != last_text && !text.is_empty() {
-                    Self::process_text_change(&app_handle, &last_copied_by_us, &text);
-                    last_text = text;
-                }
-            }
-
-            // Check for image changes
-            if let Ok(image) = clipboard.get_image() {
-                let marker = Self::image_marker(&image);
-                if last_image_marker.as_ref() != Some(&marker) {
-                    Self::process_image_change(
-                        &app_handle,
-                        &last_copied_by_us,
-                        &running,
-                        &image,
-                        &marker,
-                    );
-                    last_image_marker = Some(marker);
-                }
-            }
+            Self::handle_clipboard_event(
+                &app_handle,
+                &last_copied_by_us,
+                &running,
+                &mut clipboard,
+                &mut last_marker,
+            );
 
             thread::sleep(Duration::from_millis(500));
         }
     }
 
-    fn process_text_change(
+    /// Unified entry point shared by the event handler and the polling loop:
+    /// read one representative snapshot, dedup against `last_marker`, skip our
+    /// own writes, then dispatch a single record for the winning format.
+    fn handle_clipboard_event(
         app_handle: &AppHandle,
         last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
-        text: &str,
+        running: &Arc<AtomicBool>,
+        clipboard: &mut Clipboard,
+        last_marker: &mut Option<CopyMarker>,
     ) {
-        let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
-        if Self::is_self_copied(last_copied_by_us, &marker) {
-            log::info!("⏭️ Skipping self-copied text ({} chars)", text.len());
+        // Early-out, alongside the concealed-content check: while capture is
+        // paused we must not observe the clipboard at all (SPEC-4 §3), so
+        // `last_marker` intentionally does not advance here — the first
+        // snapshot taken after resuming is compared against whatever was last
+        // recorded before the pause, which is exactly the "resume behaves
+        // normally" contract.
+        if Self::capture_is_paused(app_handle) {
             return;
         }
+
+        let Some(snapshot) = read_clipboard_snapshot(clipboard) else {
+            return;
+        };
+        let marker = snapshot_marker(&snapshot);
+
+        let dispatch = record_marker_and_decide_dispatch(&marker, last_marker, || {
+            Self::is_self_copied(last_copied_by_us, &marker)
+        });
+        if !dispatch {
+            return;
+        }
+
+        // Read the frontmost app once, before dispatching to a per-format
+        // process_*_change function, instead of each of them calling
+        // NSWorkspace independently. This single read is also what
+        // process_image_change needs to snapshot *before* its async
+        // processing runs, so placing it here (synchronously, pre-dispatch)
+        // preserves that ordering for free.
+        let source_app = frontmost_app_name();
+
+        // The ignored-apps check runs after record_marker_and_decide_dispatch
+        // has already advanced `last_marker`, mirroring the self-copy skip
+        // above: an ignored-app skip must not leave `last_marker` stale, or a
+        // later genuine copy of different content from a *non*-ignored app
+        // would be compared against outdated state (§2.2's rationale applies
+        // here too).
+        if let Some(app_name) = source_app.as_deref() {
+            if Self::is_ignored_app(app_handle, app_name) {
+                log::info!("Skipping clipboard change from ignored app: {}", app_name);
+                return;
+            }
+        }
+
+        match snapshot {
+            ClipboardSnapshot::Files(paths) => {
+                Self::process_files_change(app_handle, paths, source_app)
+            }
+            ClipboardSnapshot::Text { text, html } => {
+                Self::process_text_change(app_handle, &text, html, source_app)
+            }
+            ClipboardSnapshot::Image(image) => {
+                Self::process_image_change(app_handle, running, &image, &marker, source_app)
+            }
+        }
+    }
+
+    /// Whether the clipboard monitor is currently paused (SPEC-4 §3).
+    fn capture_is_paused(app_handle: &AppHandle) -> bool {
+        use crate::AppState;
+        app_handle.state::<AppState>().settings.get().capture_paused
+    }
+
+    /// Whether `app_name` (the frontmost app captured just before dispatch)
+    /// is on the configured ignore list (SPEC-4 §3).
+    fn is_ignored_app(app_handle: &AppHandle, app_name: &str) -> bool {
+        use crate::AppState;
+        let ignored_apps = app_handle.state::<AppState>().settings.get().ignored_apps;
+        app_name_matches_ignore_list(app_name, &ignored_apps)
+    }
+
+    fn process_text_change(
+        app_handle: &AppHandle,
+        text: &str,
+        html: Option<String>,
+        source_app: Option<String>,
+    ) {
+        use crate::AppState;
+
+        let settings = app_handle.state::<AppState>().settings.get();
+        let max_text_bytes = settings.max_text_bytes;
+
+        if !content_within_size_limit(text.len(), max_text_bytes) {
+            log::info!(
+                "Skipping text clip: {} bytes exceeds max_text_bytes ({})",
+                text.len(),
+                max_text_bytes
+            );
+            return;
+        }
+
+        if let Some(kind) = secret_skip_reason(text, settings.skip_secrets) {
+            log::info!("🔒 Skipping captured secret ({kind})");
+            return;
+        }
+
+        let html = clamp_html_to_size_limit(html, max_text_bytes);
 
         log::info!("📋 Text clipboard changed: {} chars", text.len());
         let item = ClipItem {
@@ -292,26 +430,55 @@ impl ClipboardMonitor {
             pin_order: None,
             label: None,
             group_name: None,
+            source_app,
+            html,
+        };
+        Self::save_to_storage(app_handle, item);
+    }
+
+    fn process_files_change(
+        app_handle: &AppHandle,
+        paths: Vec<String>,
+        source_app: Option<String>,
+    ) {
+        use crate::AppState;
+
+        let max_text_bytes = app_handle.state::<AppState>().settings.get().max_text_bytes;
+        let content = join_file_paths(&paths).into_bytes();
+
+        if !content_within_size_limit(content.len(), max_text_bytes) {
+            log::info!(
+                "Skipping files clip: {} bytes exceeds max_text_bytes ({})",
+                content.len(),
+                max_text_bytes
+            );
+            return;
+        }
+
+        log::info!("📁 Files clipboard changed: {} path(s)", paths.len());
+        let item = ClipItem {
+            id: Uuid::new_v4().to_string(),
+            content,
+            thumbnail: None,
+            content_type: ContentType::Files,
+            timestamp: Utc::now().timestamp(),
+            is_pinned: false,
+            pin_order: None,
+            label: None,
+            group_name: None,
+            source_app,
+            html: None,
         };
         Self::save_to_storage(app_handle, item);
     }
 
     fn process_image_change(
         app_handle: &AppHandle,
-        last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
         running: &Arc<AtomicBool>,
         image: &ImageData,
         marker: &CopyMarker,
+        source_app: Option<String>,
     ) {
-        if Self::is_self_copied(last_copied_by_us, marker) {
-            log::info!(
-                "⏭️ Skipping self-copied image ({}x{})",
-                image.width,
-                image.height
-            );
-            return;
-        }
-
         let width = image.width;
         let height = image.height;
         let rgba_bytes = image.bytes.to_vec();
@@ -323,11 +490,30 @@ impl ClipboardMonitor {
             rgba_bytes.len()
         );
 
+        // The caller (handle_clipboard_event) already captured `source_app`
+        // synchronously, before this image processing — which runs on a
+        // background task below — has a chance to run. That preserves the
+        // original "snapshot before async" guarantee even though the read
+        // itself now happens one level up.
+        let max_image_dimension = {
+            use crate::AppState;
+            app_handle
+                .state::<AppState>()
+                .settings
+                .get()
+                .max_image_dimension
+        };
         let app_handle = app_handle.clone();
         let running = running.clone();
         tauri::async_runtime::spawn(async move {
             let processed = tauri::async_runtime::spawn_blocking(move || {
-                Self::process_clipboard_image(width, height, rgba_bytes, marker)
+                Self::process_clipboard_image(
+                    width,
+                    height,
+                    rgba_bytes,
+                    marker,
+                    max_image_dimension,
+                )
             })
             .await;
 
@@ -348,6 +534,8 @@ impl ClipboardMonitor {
                         pin_order: None,
                         label: None,
                         group_name: None,
+                        source_app,
+                        html: None,
                     };
                     Self::save_to_storage(&app_handle, item);
                 }
@@ -382,10 +570,6 @@ impl ClipboardMonitor {
         };
 
         marker == expected_marker
-    }
-
-    fn image_marker(image: &ImageData) -> CopyMarker {
-        CopyMarker::from_normalized_image_parts(image.width, image.height, image.bytes.as_ref())
     }
 
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
@@ -441,12 +625,14 @@ impl ClipboardMonitor {
         height: usize,
         rgba_bytes: Vec<u8>,
         marker: CopyMarker,
+        max_image_dimension: u32,
     ) -> Result<ProcessedClipboardImage, String> {
         const THUMBNAIL_SIZE: u32 = 256;
 
         let image: RgbaImage = ImageBuffer::from_raw(width as u32, height as u32, rgba_bytes)
             .ok_or_else(|| "Invalid clipboard image buffer dimensions".to_string())?;
         let image = DynamicImage::ImageRgba8(image);
+        let image = Self::downscale_if_oversized(image, max_image_dimension);
 
         let thumbnail = image.resize(
             THUMBNAIL_SIZE,
@@ -481,6 +667,82 @@ impl ClipboardMonitor {
             .map_err(|e| format!("Failed to encode PNG: {}", e))?;
         Ok(buffer)
     }
+
+    /// Downsamples an oversized clipboard image so its longest side fits
+    /// within `max_dimension` (§5), preserving aspect ratio. `0` is a
+    /// deliberate escape hatch that disables downscaling entirely. Images
+    /// already within the limit are returned untouched.
+    fn downscale_if_oversized(image: DynamicImage, max_dimension: u32) -> DynamicImage {
+        if max_dimension == 0 {
+            return image;
+        }
+
+        let longest_side = image.width().max(image.height());
+        if longest_side <= max_dimension {
+            return image;
+        }
+
+        log::info!(
+            "Downsampling oversized clipboard image {}x{} to fit within {}px",
+            image.width(),
+            image.height(),
+            max_dimension
+        );
+        image.resize(
+            max_dimension,
+            max_dimension,
+            image::imageops::FilterType::Lanczos3,
+        )
+    }
+}
+
+/// Whether Text/Files content of `content_len` bytes is small enough to
+/// capture under `max_text_bytes` (§5). Oversized content is skipped
+/// entirely rather than truncated, since a truncated path list or partial
+/// text is worse than no clip at all.
+fn content_within_size_limit(content_len: usize, max_text_bytes: usize) -> bool {
+    content_len <= max_text_bytes
+}
+
+/// Whether `text` should be skipped because it matches a high-confidence
+/// secret pattern (SPEC-4 §2), and if so, the kind for logging. Only Text
+/// content is checked — Files/Image never reach this function. Kept pure and
+/// separate from `crate::secrets::detect_secret` itself so the `skip_secrets`
+/// gate is unit-testable without a running `AppState`.
+fn secret_skip_reason(text: &str, skip_secrets: bool) -> Option<&'static str> {
+    if !skip_secrets {
+        return None;
+    }
+    crate::secrets::detect_secret(text)
+}
+
+/// Whether `app_name` case-insensitively matches (after trimming) any entry
+/// in `ignored_apps` (SPEC-4 §3). `settings.rs` already normalizes stored
+/// entries, but trimming/lowercasing again here is cheap and keeps this
+/// function correct independent of that invariant.
+fn app_name_matches_ignore_list(app_name: &str, ignored_apps: &[String]) -> bool {
+    let app_name = app_name.trim().to_lowercase();
+    ignored_apps
+        .iter()
+        .any(|ignored| ignored.trim().to_lowercase() == app_name)
+}
+
+/// Drops an html companion that exceeds `max_text_bytes` (§5), keeping only
+/// the plain text. HTML is optional metadata, so an oversized html on an
+/// otherwise-fine text clip degrades to plain text rather than skipping the
+/// whole clip.
+fn clamp_html_to_size_limit(html: Option<String>, max_text_bytes: usize) -> Option<String> {
+    html.filter(|html| {
+        let within_limit = content_within_size_limit(html.len(), max_text_bytes);
+        if !within_limit {
+            log::debug!(
+                "Dropping oversized html companion: {} bytes exceeds max_text_bytes ({})",
+                html.len(),
+                max_text_bytes
+            );
+        }
+        within_limit
+    })
 }
 
 fn join_monitor_thread_with_timeout(handle: JoinHandle<()>) {
@@ -623,6 +885,27 @@ fn clipboard_has_sensitive_marker() -> bool {
     false
 }
 
+/// Localized name of the app that was frontmost at capture time — the source
+/// the clip was copied from. Returns None when ClipMan itself is frontmost or
+/// the name is unavailable.
+// ponytail: reads NSWorkspace off the monitor thread, same as window.rs does
+// off the command thread; AppKit's frontmostApplication tolerates it.
+#[cfg(target_os = "macos")]
+fn frontmost_app_name() -> Option<String> {
+    use objc2_app_kit::NSWorkspace;
+
+    let front = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    if front.processIdentifier() == std::process::id() as i32 {
+        return None;
+    }
+    front.localizedName().map(|name| name.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn frontmost_app_name() -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,7 +916,7 @@ mod tests {
         let marker = CopyMarker::from_normalized_image_parts(1, 1, &rgba_bytes);
 
         let processed =
-            ClipboardMonitor::process_clipboard_image(1, 1, rgba_bytes, marker.clone()).unwrap();
+            ClipboardMonitor::process_clipboard_image(1, 1, rgba_bytes, marker.clone(), 0).unwrap();
 
         assert_eq!(marker, processed.marker);
         assert!(!processed.content_png.is_empty());
@@ -647,11 +930,194 @@ mod tests {
         let rgba_bytes = vec![255; width * height * 4];
         let marker = CopyMarker::from_normalized_image_parts(width, height, &rgba_bytes);
 
+        // max_image_dimension = 0 disables downscaling, so this only exercises
+        // PNG encoding fidelity, independent of the §5 size-limit feature.
         let processed =
-            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker).unwrap();
+            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker, 0)
+                .unwrap();
         let content = image::load_from_memory(&processed.content_png).unwrap();
 
         assert_eq!(width as u32, content.width());
         assert_eq!(height as u32, content.height());
+    }
+
+    #[test]
+    fn oversized_image_is_downsampled_to_max_dimension() {
+        let width = 2000;
+        let height = 1000;
+        let rgba_bytes = vec![200u8; width * height * 4];
+        let marker = CopyMarker::from_normalized_image_parts(width, height, &rgba_bytes);
+
+        let processed =
+            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker, 500)
+                .unwrap();
+        let content = image::load_from_memory(&processed.content_png).unwrap();
+
+        assert_eq!(500, content.width());
+        assert_eq!(250, content.height());
+
+        // The (unrelated) thumbnail pipeline still runs on the downsampled
+        // image and stays within its own 256px bound.
+        let thumbnail = image::load_from_memory(&processed.thumbnail_png).unwrap();
+        assert!(thumbnail.width() <= 256 && thumbnail.height() <= 256);
+    }
+
+    #[test]
+    fn image_within_max_dimension_is_not_resized() {
+        let width = 100;
+        let height = 50;
+        let rgba_bytes = vec![5u8; width * height * 4];
+        let marker = CopyMarker::from_normalized_image_parts(width, height, &rgba_bytes);
+
+        let processed =
+            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker, 4096)
+                .unwrap();
+        let content = image::load_from_memory(&processed.content_png).unwrap();
+
+        assert_eq!(width as u32, content.width());
+        assert_eq!(height as u32, content.height());
+    }
+
+    #[test]
+    fn max_image_dimension_zero_disables_downscaling() {
+        let width = 3000;
+        let height = 1;
+        let rgba_bytes = vec![10u8; width * height * 4];
+        let marker = CopyMarker::from_normalized_image_parts(width, height, &rgba_bytes);
+
+        let processed =
+            ClipboardMonitor::process_clipboard_image(width, height, rgba_bytes, marker, 0)
+                .unwrap();
+        let content = image::load_from_memory(&processed.content_png).unwrap();
+
+        assert_eq!(width as u32, content.width());
+    }
+
+    #[test]
+    fn text_and_files_content_size_limit_rejects_only_oversized_content() {
+        assert!(content_within_size_limit(100, 100));
+        assert!(!content_within_size_limit(101, 100));
+    }
+
+    #[test]
+    fn oversized_html_is_dropped_but_undersized_html_and_missing_html_are_kept() {
+        let big_html = "x".repeat(101);
+        assert_eq!(None, clamp_html_to_size_limit(Some(big_html), 100));
+
+        let small_html = "x".repeat(100);
+        assert_eq!(
+            Some(small_html.clone()),
+            clamp_html_to_size_limit(Some(small_html), 100)
+        );
+
+        assert_eq!(None, clamp_html_to_size_limit(None, 100));
+    }
+
+    #[test]
+    fn secret_skip_reason_flags_detected_secrets_only_when_enabled() {
+        let secret = "AKIAIOSFODNN7EXAMPLE";
+
+        assert_eq!(
+            Some("AWS access key"),
+            secret_skip_reason(secret, true),
+            "skip_secrets=true must surface the detected kind"
+        );
+        assert_eq!(
+            None,
+            secret_skip_reason(secret, false),
+            "skip_secrets=false must never intercept, even for a clear secret match"
+        );
+    }
+
+    #[test]
+    fn secret_skip_reason_is_none_for_ordinary_text() {
+        assert_eq!(None, secret_skip_reason("just some ordinary text", true));
+    }
+
+    #[test]
+    fn app_name_matches_ignore_list_is_case_insensitive_and_trims_both_sides() {
+        let ignored = vec![" Safari ".to_string(), "1Password".to_string()];
+
+        assert!(app_name_matches_ignore_list("safari", &ignored));
+        assert!(app_name_matches_ignore_list("SAFARI", &ignored));
+        assert!(app_name_matches_ignore_list(" Safari", &ignored));
+        assert!(app_name_matches_ignore_list("1password", &ignored));
+    }
+
+    #[test]
+    fn app_name_matches_ignore_list_is_false_for_unlisted_or_empty_list() {
+        let ignored = vec!["Safari".to_string()];
+
+        assert!(!app_name_matches_ignore_list("Notes", &ignored));
+        assert!(!app_name_matches_ignore_list("Safari", &[]));
+    }
+
+    #[test]
+    fn snapshot_marker_matches_primary_content_and_ignores_html() {
+        // Files hash the newline-joined path text.
+        let paths = vec!["/a/b.txt".to_string(), "/c/d.png".to_string()];
+        assert_eq!(
+            CopyMarker::from_payload(ContentType::Files, join_file_paths(&paths).as_bytes()),
+            snapshot_marker(&ClipboardSnapshot::Files(paths.clone()))
+        );
+
+        // Text hashes only the plain text: identical text with different html
+        // produces the same marker (D5).
+        let plain = snapshot_marker(&ClipboardSnapshot::Text {
+            text: "hello".to_string(),
+            html: None,
+        });
+        let rich = snapshot_marker(&ClipboardSnapshot::Text {
+            text: "hello".to_string(),
+            html: Some("<b>hello</b>".to_string()),
+        });
+        assert_eq!(CopyMarker::from_payload(ContentType::Text, b"hello"), plain);
+        assert_eq!(plain, rich);
+
+        // Image hashes normalized dimensions + RGBA bytes.
+        let bytes = vec![1u8, 2, 3, 4];
+        let image = ImageData {
+            width: 1,
+            height: 1,
+            bytes: std::borrow::Cow::Owned(bytes.clone()),
+        };
+        assert_eq!(
+            CopyMarker::from_normalized_image_parts(1, 1, &bytes),
+            snapshot_marker(&ClipboardSnapshot::Image(image))
+        );
+    }
+
+    #[test]
+    fn self_copy_skip_still_advances_last_marker() {
+        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
+        let mut last_marker = None;
+
+        // The first observation is our own paste: skip dispatch, but still record
+        // the marker so the next genuine copy of *different* content is not
+        // compared against stale None state (§2.2).
+        assert!(!record_marker_and_decide_dispatch(
+            &marker,
+            &mut last_marker,
+            || true
+        ));
+        assert_eq!(Some(&marker), last_marker.as_ref());
+
+        // Observing the same content again deduplicates without even consulting
+        // the self-copy check.
+        assert!(!record_marker_and_decide_dispatch(
+            &marker,
+            &mut last_marker,
+            || panic!("unchanged marker must not re-check self-copy")
+        ));
+        assert_eq!(Some(&marker), last_marker.as_ref());
+
+        // Genuinely new content we did not copy: dispatch and advance.
+        let next = CopyMarker::from_payload(ContentType::Text, b"world");
+        assert!(record_marker_and_decide_dispatch(
+            &next,
+            &mut last_marker,
+            || false
+        ));
+        assert_eq!(Some(&next), last_marker.as_ref());
     }
 }

@@ -2,7 +2,7 @@
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use tauri::menu::{IconMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+use tauri::menu::{CheckMenuItemBuilder, IconMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::{AppHandle, Manager};
 
 use crate::storage::{ClipPreviewItem, ContentType};
@@ -18,6 +18,7 @@ pub struct TrayI18n {
     pub recent_header: &'static str,
     pub image: &'static str,
     pub clear: &'static str,
+    pub pause_capture: &'static str,
     pub settings: &'static str,
     pub quit: &'static str,
 }
@@ -30,6 +31,7 @@ impl TrayI18n {
                 recent_header: "最近复制",
                 image: "图片",
                 clear: "清除",
+                pause_capture: "暂停采集",
                 settings: "设置",
                 quit: "退出",
             }
@@ -39,6 +41,7 @@ impl TrayI18n {
                 recent_header: "Recent",
                 image: "Image",
                 clear: "Clear",
+                pause_capture: "Pause Capture",
                 settings: "Settings",
                 quit: "Quit",
             }
@@ -125,7 +128,9 @@ pub fn truncate_content(
     i18n: &TrayI18n,
 ) -> String {
     match content_type {
-        ContentType::Text => {
+        // Files store their paths as newline-joined text; the newline→space
+        // collapse below makes the path list render on one readable line.
+        ContentType::Text | ContentType::Files => {
             let text = String::from_utf8_lossy(content);
             // Replace newlines and carriage returns, then collapse whitespace
             let text: String = text
@@ -252,10 +257,17 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
         }
     }
 
-    // Bottom actions
+    // Bottom actions. The pause-capture item is a checkbox reflecting
+    // `capture_paused`; main.rs's menu event handler flips the setting,
+    // persists it, and rebuilds this menu so the check mark stays in sync.
+    let pause_capture_item = CheckMenuItemBuilder::with_id("pause_capture", i18n.pause_capture)
+        .checked(settings.capture_paused)
+        .build(app)?;
+
     menu_builder = menu_builder
         .separator()
         .item(&MenuItemBuilder::with_id("clear_non_pinned", i18n.clear).build(app)?)
+        .item(&pause_capture_item)
         .item(&MenuItemBuilder::with_id("settings", i18n.settings).build(app)?)
         .item(&MenuItemBuilder::with_id("quit", i18n.quit).build(app)?);
 
@@ -285,6 +297,7 @@ mod tests {
         let i18n = TrayI18n::new("zh-CN");
         assert_eq!(i18n.pinned_header, "置顶项");
         assert_eq!(i18n.recent_header, "最近复制");
+        assert_eq!(i18n.pause_capture, "暂停采集");
         assert_eq!(i18n.quit, "退出");
     }
 
@@ -335,6 +348,17 @@ mod tests {
 
         assert_eq!(result_zh, "图片");
         assert_eq!(result_en, "Image");
+    }
+
+    #[test]
+    fn test_truncate_content_files_renders_path_text() {
+        let i18n = TrayI18n::new("en");
+        let content = b"/Users/alice/a.txt\n/Users/alice/b.png";
+        let result = truncate_content(content, &ContentType::Files, 100, &i18n);
+
+        // Path list is shown as readable text (newline collapsed to a space),
+        // not the generic image placeholder.
+        assert_eq!("/Users/alice/a.txt /Users/alice/b.png", result);
     }
 
     #[test]
