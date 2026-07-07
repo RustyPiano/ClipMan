@@ -50,3 +50,14 @@ Thumbs.db
 
 # Misc
 *.local
+
+# Code-signing material — NEVER commit (private keys, p12, base64-encoded cert).
+# These live in GitHub Actions secrets for release; the local copy is a backup.
+ClipMan-signing/
+*.p12
+*.pem
+*_CERTIFICATE.base64.txt
+
+# Locally installed Claude skill copies (like node_modules; skills-lock.json is
+# the committed manifest that reproduces them).
+.agents/
