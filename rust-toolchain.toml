@@ -2,4 +2,8 @@
 channel = "1.96.0"
 profile = "default"
 components = ["clippy", "rustfmt"]
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+# Only the two darwin targets are pre-installed for local builds. Cross targets
+# for release are added on-demand by the release workflow (dtolnay/rust-toolchain
+# does not read this file, so it installs the host target plus whatever the
+# workflow's `targets:` input / explicit `rustup target add` requests).
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

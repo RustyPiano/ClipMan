@@ -54,7 +54,10 @@ jobs:
       - name: build frontend (for frontendDist)
         run: bun run build
 
-      - name: install Rust (rust-toolchain.toml pinned)
+      # dtolnay/rust-toolchain@stable installs the `stable` toolchain and does
+      # NOT read rust-toolchain.toml. cargo invocations below still resolve to
+      # the channel pinned in rust-toolchain.toml (1.96.0) via rustup's override.
+      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
@@ -73,3 +76,43 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
+
+  # The macOS `rust` job above never compiles the `#[cfg(windows)]` clipboard /
+  # window FFI, so it can silently rot. Lint it natively on a Windows runner:
+  # the MSVC target can't be cross-compiled from macOS because rusqlite's
+  # bundled SQLite (C) needs the MSVC toolchain.
+  rust-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # cargo clippy builds the Tauri app, which requires frontendDist (dist/)
+      # to exist even though the frontend isn't otherwise exercised here.
+      - name: build frontend (for frontendDist)
+        run: bun run build
+
+      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: add Windows MSVC target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # No `-D warnings` here: the goal is to keep the `#[cfg(windows)]` code
+      # *compiling* in CI (it never was before). Style lints in that long-untested
+      # FFI are surfaced as warnings rather than hard-failing this new job.
+      - name: cargo clippy (windows target)
+        working-directory: src-tauri
+        run: cargo clippy --target x86_64-pc-windows-msvc --all-targets

@@ -48,7 +48,7 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: install frontend dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Extract release notes
         id: release_notes
@@ -121,7 +121,12 @@ jobs:
             exit 1
           fi
 
-      - uses: tauri-apps/tauri-action@dev
+      # Pinned to the exact `dev` branch head (as of 2026-07-07) instead of the
+      # floating `@dev` ref: freezes the action code for reproducible releases
+      # and follows the SHA-pinning supply-chain practice for third-party
+      # actions. Bump deliberately (ideally to a published release tag) when a
+      # newer tauri-action is validated against this release pipeline.
+      - uses: tauri-apps/tauri-action@7f1a1fc1989f3d1e114195e2a9624d147de78612 # dev @ 2026-07-07
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
