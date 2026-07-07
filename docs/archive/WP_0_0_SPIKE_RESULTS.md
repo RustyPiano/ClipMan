@@ -1,3 +1,5 @@
+> ⚠️ **已归档（2026-07-07）**：本文档是 2026-06 v2.0 重设计时期的历史记录，部分断言已与现状矛盾（如"仅 text/image 类型""不做富文本"——Files 类型、HTML 富文本、键集分页、秘密检测等均已落地）。**不要作为当前指导**。当前状态见 `docs/dev/STATUS.md`，近期执行记录见 `docs/dev/PLAN.md`。
+
 # WP-0.0 Spike Results
 
 Phase 1 is proceeding under a project-owner gate override. Runtime spike validation is deferred until platform QA after implementation.
