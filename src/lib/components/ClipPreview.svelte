@@ -2,8 +2,8 @@
   import type { ClipItem } from '$lib/types';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import { decodeClipText } from '$lib/utils/clip-items';
-  import { FileText, Image as ImageIcon, Pin, Clock } from 'lucide-svelte';
+  import { decodeClipText, decodeFilePaths } from '$lib/utils/clip-items';
+  import { FileText, Image as ImageIcon, Files, Pin, Clock } from 'lucide-svelte';
 
   interface Props {
     item: ClipItem | undefined;
@@ -22,10 +22,11 @@
   $effect(() => {
     const current = item;
 
-    // Only text needs a full fetch (the list preview truncates it to 4096 bytes).
-    // Images reuse the 256px thumbnail already on the list item — no full-res
-    // fetch, so large image payloads never cross IPC or sit in the cache.
-    if (!current || current.contentType !== 'text') {
+    // Text and files need a full fetch (the list preview truncates content to
+    // 4096 bytes) so the pane can show the complete text / path list. Images
+    // reuse the 256px thumbnail already on the list item — no full-res fetch, so
+    // large image payloads never cross IPC or sit in the cache.
+    if (!current || (current.contentType !== 'text' && current.contentType !== 'files')) {
       fullItem = null;
       return;
     }
@@ -56,6 +57,7 @@
   // read from the live list item.
   const contentItem = $derived(fullItem && item && fullItem.id === item.id ? fullItem : item);
   const isImage = $derived(item?.contentType === 'image');
+  const isFiles = $derived(item?.contentType === 'files');
   const imageUrl = $derived(
     isImage && typeof contentItem?.content === 'string' ? contentItem.content : ''
   );
@@ -65,6 +67,9 @@
       : ''
   );
   const charCount = $derived(Array.from(fullText).length);
+  const filePaths = $derived(
+    contentItem && contentItem.contentType === 'files' ? decodeFilePaths(contentItem) : []
+  );
   const trimmedLabel = $derived((item?.label ?? '').trim());
 
   function formatFullTime(timestamp: number): string {
@@ -85,6 +90,8 @@
     <div class="flex flex-none items-center gap-2 border-b border-border/60 px-3 py-2">
       {#if isImage}
         <ImageIcon class="h-3.5 w-3.5 flex-none text-muted-foreground" />
+      {:else if isFiles}
+        <Files class="h-3.5 w-3.5 flex-none text-muted-foreground" />
       {:else}
         <FileText class="h-3.5 w-3.5 flex-none text-muted-foreground" />
       {/if}
@@ -94,7 +101,7 @@
         >
       {:else}
         <span class="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground"
-          >{isImage ? t.image : t.text}</span
+          >{isImage ? t.image : isFiles ? t.files : t.text}</span
         >
       {/if}
       {#if item.isPinned}
@@ -112,6 +119,12 @@
             class="mx-auto max-w-full rounded-md border border-border bg-muted/40 object-contain"
           />
         {/if}
+      {:else if isFiles}
+        <ul class="m-0 flex flex-col gap-1 font-mono text-[12px] leading-relaxed text-foreground">
+          {#each filePaths as path (path)}
+            <li class="break-all selection:bg-primary/20">{path}</li>
+          {/each}
+        </ul>
       {:else}
         <pre
           class="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-foreground selection:bg-primary/20">{fullText}</pre>
@@ -122,12 +135,18 @@
     <div
       class="flex flex-none items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 text-[10px] text-muted-foreground"
     >
-      <span class="flex items-center gap-1">
-        <Clock class="h-3 w-3" />
-        {formatFullTime(item.timestamp)}
+      <span class="flex min-w-0 items-center gap-1">
+        <Clock class="h-3 w-3 flex-none" />
+        <span class="truncate">{formatFullTime(item.timestamp)}</span>
+        {#if item.sourceApp}
+          <span class="truncate opacity-70">· {t.source} {item.sourceApp}</span>
+        {/if}
       </span>
-      {#if !isImage}
-        <span class="tabular-nums">{i18n.format(t.charCount, { n: charCount })}</span>
+      {#if isFiles}
+        <span class="flex-none tabular-nums">{i18n.format(t.fileCount, { n: filePaths.length })}</span
+        >
+      {:else if !isImage}
+        <span class="flex-none tabular-nums">{i18n.format(t.charCount, { n: charCount })}</span>
       {/if}
     </div>
   {/if}

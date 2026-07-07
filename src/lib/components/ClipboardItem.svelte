@@ -4,29 +4,60 @@
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import type { ClipItem } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import { decodeClipText } from '$lib/utils/clip-items';
+  import { decodeClipText, decodeFilePaths } from '$lib/utils/clip-items';
+  import { getNow } from '$lib/utils/now.svelte';
   import Button from './ui/Button.svelte';
-  import { Copy, Check, Pin, Trash2, FileText, Image as ImageIcon, Pencil, X } from 'lucide-svelte';
+  import {
+    Copy,
+    Check,
+    Pin,
+    Trash2,
+    FileText,
+    Image as ImageIcon,
+    File,
+    Files,
+    Folder,
+    Pencil,
+    X,
+  } from 'lucide-svelte';
 
   interface Props {
     item: ClipItem;
     selected?: boolean;
+    /** ⌘/Ctrl-click multi-select membership (distinct from keyboard highlight). */
+    multiSelected?: boolean;
     slotNumber?: number | null;
     onSelect?: () => void;
     /** Hover-driven selection; falls back to onSelect when not provided. */
     onHover?: () => void;
+    /** Toggle multi-select membership (⌘/Ctrl-click). */
+    onToggleSelect?: () => void;
     onUse?: () => void | Promise<void>;
   }
 
-  let { item, selected = false, slotNumber = null, onSelect, onHover, onUse }: Props = $props();
+  let {
+    item,
+    selected = false,
+    multiSelected = false,
+    slotNumber = null,
+    onSelect,
+    onHover,
+    onToggleSelect,
+    onUse,
+  }: Props = $props();
 
   const t = $derived(i18n.t);
+  // Multi-select wins the visual: a stronger primary border + ring plus a check
+  // badge, so it reads distinctly from the keyboard highlight (subtle bg + left
+  // accent bar).
   const cardClass = $derived(
-    selected
-      ? 'border border-primary/15 bg-primary/8 shadow-sm'
-      : item.isPinned
-        ? 'bg-secondary/40 border border-border/40 shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
-        : 'border border-transparent hover:bg-secondary/20'
+    multiSelected
+      ? 'border border-primary/40 bg-primary/12 shadow-sm ring-1 ring-inset ring-primary/40'
+      : selected
+        ? 'border border-primary/15 bg-primary/8 shadow-sm'
+        : item.isPinned
+          ? 'bg-secondary/40 border border-border/40 shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
+          : 'border border-transparent hover:bg-secondary/20'
   );
 
   let isCopied = $state(false);
@@ -42,7 +73,29 @@
   const imageDataUrl = $derived(
     item.contentType === 'image' && typeof item.content === 'string' ? item.content : ''
   );
+  // Files preview is a small (≤4096 byte) path list, so decode eagerly rather
+  // than gating on visibility like the text branch does.
+  const filePaths = $derived(item.contentType === 'files' ? decodeFilePaths(item) : []);
   const trimmedLabel = $derived((item.label ?? '').trim());
+
+  // Pure string helpers (no disk access) for rendering Files clips.
+  function fileBasename(path: string): string {
+    const trimmed = path.replace(/\/+$/, '');
+    const slash = trimmed.lastIndexOf('/');
+    return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  }
+
+  function fileDirname(path: string): string {
+    const trimmed = path.replace(/\/+$/, '');
+    const slash = trimmed.lastIndexOf('/');
+    return slash > 0 ? trimmed.slice(0, slash) : '';
+  }
+
+  // A trailing slash or an extensionless basename reads as a directory.
+  function looksLikeDirectory(path: string): boolean {
+    if (path.endsWith('/')) return true;
+    return !fileBasename(path).includes('.');
+  }
   const showPinnedLabel = $derived(item.isPinned && trimmedLabel.length > 0 && !isEditingLabel);
 
   const observeVisibility: Attachment = (element) => {
@@ -76,8 +129,7 @@
 
   function formatTime(timestamp: number): string {
     const date = new Date(timestamp * 1000);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
+    const diff = getNow() - date.getTime();
 
     if (diff < 60000) {
       return t.justNow;
@@ -97,6 +149,18 @@
   async function handleUse() {
     onSelect?.();
     await onUse?.();
+  }
+
+  function handleClick(event: MouseEvent) {
+    // ⌘Click (Ctrl+Click on Windows) toggles multi-select instead of pasting;
+    // a plain click uses the clip as before.
+    if (event.metaKey || event.ctrlKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleSelect?.();
+      return;
+    }
+    void handleUse();
   }
 
   async function handleCopy(event: MouseEvent) {
@@ -166,13 +230,23 @@
 >
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="relative cursor-pointer overflow-hidden rounded-lg {cardClass}" onclick={handleUse}>
+  <div class="relative cursor-pointer overflow-hidden rounded-lg {cardClass}" onclick={handleClick}>
     <!-- Left Accent Indicator -->
     <div
       class="absolute left-0 top-[25%] bottom-[25%] w-[3px] rounded-r-full bg-primary {selected
         ? 'opacity-100'
         : 'opacity-0'}"
     ></div>
+
+    <!-- Multi-select check badge -->
+    {#if multiSelected}
+      <div
+        class="absolute right-1.5 top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+        aria-hidden="true"
+      >
+        <Check class="h-3 w-3" />
+      </div>
+    {/if}
 
     <div class="flex gap-2.5 p-2 pl-3.5">
       <div class="flex w-6 flex-none flex-col items-center gap-0.5 pt-0.5 text-muted-foreground">
@@ -188,6 +262,14 @@
 
         {#if item.contentType === 'image'}
           <ImageIcon class="h-3.5 w-3.5" />
+        {:else if item.contentType === 'files'}
+          {#if filePaths.length > 1}
+            <Files class="h-3.5 w-3.5" />
+          {:else if looksLikeDirectory(filePaths[0] ?? '')}
+            <Folder class="h-3.5 w-3.5" />
+          {:else}
+            <File class="h-3.5 w-3.5" />
+          {/if}
         {:else}
           <FileText class="h-3.5 w-3.5" />
         {/if}
@@ -244,6 +326,36 @@
           >
             {decodedText}
           </p>
+        {:else if item.contentType === 'files'}
+          {#if filePaths.length <= 1}
+            {@const path = filePaths[0] ?? ''}
+            <p class="line-clamp-1 break-all font-mono text-[13px] leading-relaxed text-foreground">
+              {fileBasename(path) || path}
+            </p>
+            {#if fileDirname(path)}
+              <p class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/60">
+                {fileDirname(path)}
+              </p>
+            {/if}
+          {:else}
+            <div class="flex flex-col gap-0.5">
+              {#each filePaths.slice(0, 2) as path (path)}
+                <p
+                  class="line-clamp-1 break-all font-mono text-[13px] leading-relaxed text-foreground"
+                >
+                  {fileBasename(path) || path}
+                </p>
+              {/each}
+              {#if filePaths.length > 2}
+                <span
+                  class="mt-0.5 inline-flex w-fit flex-none items-center rounded border border-border/50 bg-muted/50 px-1.5 text-[10px] font-semibold text-muted-foreground/70"
+                  title={i18n.format(t.fileCount, { n: filePaths.length })}
+                >
+                  +{filePaths.length - 2}
+                </span>
+              {/if}
+            </div>
+          {/if}
         {:else}
           <div
             class="group/image relative max-h-20 w-fit overflow-hidden rounded-lg border border-border bg-muted/40 shadow-sm transition-all duration-200 hover:shadow-md"
@@ -263,9 +375,21 @@
           </div>
         {/if}
 
-        <div class="mt-1 flex items-center justify-between">
-          <span class="text-[11px] font-medium text-muted-foreground/60">
-            {formatTime(item.timestamp)}
+        <div class="mt-1 flex items-center justify-between gap-2">
+          <span class="flex min-w-0 items-center gap-1.5">
+            <span class="truncate text-[11px] font-medium text-muted-foreground/60">
+              {formatTime(item.timestamp)}{#if item.sourceApp}
+                <span class="text-muted-foreground/45"> · {item.sourceApp}</span>
+              {/if}
+            </span>
+            {#if item.contentType === 'text' && item.hasHtml}
+              <span
+                class="flex-none rounded border border-border/50 bg-muted/50 px-1 text-[9px] font-semibold leading-tight text-muted-foreground/70"
+                title={t.richTextBadge}
+              >
+                Aa
+              </span>
+            {/if}
           </span>
 
           <div

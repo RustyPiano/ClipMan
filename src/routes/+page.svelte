@@ -47,9 +47,15 @@
 
   const SEARCH_INPUT_ID = 'quickbar-search';
   const SCROLL_EDGE_PADDING = 6;
+  // Prefetch the next recent page when scrolled within this many viewport
+  // heights of the bottom, or when the keyboard selection lands within this
+  // many rows of the loaded tail — so continuation feels seamless.
+  const LOAD_MORE_SCROLL_SCREENS = 2;
+  const LOAD_MORE_KEYBOARD_THRESHOLD = 10;
   const isMac =
     typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
   const shortcutModifierLabel = isMac ? '⌘' : 'Ctrl';
+  const altModifierLabel = isMac ? '⌥' : 'Alt';
 
   interface QuickBarOpenedPayload {
     panel?: QuickBarPanel;
@@ -102,6 +108,9 @@
 
     if (query !== lastSelectionQuery) {
       lastSelectionQuery = query;
+      // A changed query (including clearing back to full history) drops any
+      // multi-selection (task #13).
+      clipboardStore.clearSelection();
       selectionStore.selectedIndex = 0;
       anchoredId = items[0]?.id ?? null;
       untrack(() => {
@@ -188,10 +197,35 @@
   }
 
   function resetPanelAndReveal(panel: QuickBarPanel) {
+    // Landing on the recent list (quickbar open, tab switch) resets keyset
+    // pagination to the first page (§1 reset points).
+    if (panel === 'recent') {
+      clipboardStore.resetRecentPagination();
+    }
+    // Panel switch / quickbar refresh drops any multi-selection (task #13).
+    clipboardStore.clearSelection();
     selectionStore.reset(panel);
     flushSync();
     anchorToSelection();
     scrollItemIntoView(0);
+  }
+
+  // Continuation loading only applies to the live recent list — never the
+  // pinned panel (fully loaded) or search results (their own capped set).
+  function maybeLoadMoreRecent() {
+    if (selectionStore.panel !== 'recent') return;
+    if (clipboardStore.activeSearchQuery.trim()) return;
+    void clipboardStore.loadMoreRecent();
+  }
+
+  function handleResultsScroll(event: Event) {
+    const scroller = event.currentTarget;
+    if (!(scroller instanceof globalThis.HTMLElement)) return;
+
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (remaining <= scroller.clientHeight * LOAD_MORE_SCROLL_SCREENS) {
+      maybeLoadMoreRecent();
+    }
   }
 
   const attachResultsScroller: Attachment = (element) => {
@@ -245,15 +279,19 @@
     return opposite ? 'opposite' : 'default';
   }
 
-  async function useItem(item: ClipItem | undefined, mode: PasteMode = modeForDefault()) {
+  async function useItem(
+    item: ClipItem | undefined,
+    mode: PasteMode = modeForDefault(),
+    plain = false
+  ) {
     if (!item) return;
     if (clipboardStore.isSearchPending) return;
 
-    await clipboardStore.useClip(item, mode);
+    await clipboardStore.useClip(item, mode, { plain });
   }
 
-  async function useSelectedItem(opposite = false) {
-    await useItem(getSelectedItem(), modeForDefault(opposite));
+  async function useSelectedItem(opposite = false, plain = false) {
+    await useItem(getSelectedItem(), modeForDefault(opposite), plain);
   }
 
   async function useSlot(slotNumber: number) {
@@ -359,6 +397,14 @@
       } else {
         const nextIndex = movedIndex(event.key === 'ArrowUp' ? -1 : 1, displayItems.length);
         selectIndexAndReveal(nextIndex, displayItems.length);
+        // Arrowing toward the loaded tail prefetches the next page before the
+        // user reaches the bottom.
+        if (
+          event.key === 'ArrowDown' &&
+          nextIndex >= displayItems.length - LOAD_MORE_KEYBOARD_THRESHOLD
+        ) {
+          maybeLoadMoreRecent();
+        }
       }
 
       return;
@@ -374,12 +420,28 @@
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      void useSelectedItem(hasModifier);
+      if (clipboardStore.selectedIds.size >= 2) {
+        // A real multi-selection (≥2) merge-pastes the selected clips
+        // (newline-joined), honoring the ⌘ paste/copy swap like a single paste.
+        // Below 2 the footer still shows the single-paste hints, so Enter keeps
+        // acting on the keyboard-highlighted row.
+        void clipboardStore.useSelectedClips(modeForDefault(hasModifier));
+      } else {
+        // ⌥Enter forces a plain-text paste (strips rich HTML). Harmless for
+        // non-text clips — the backend ignores `plain` for them.
+        void useSelectedItem(hasModifier, event.altKey);
+      }
       return;
     }
 
     if (event.key === 'Escape') {
       event.preventDefault();
+      // Esc clears an active multi-selection first; a second Esc (or Esc with
+      // no selection) falls through to the original hide behavior.
+      if (clipboardStore.selectedIds.size > 0) {
+        clipboardStore.clearSelection();
+        return;
+      }
       void clipboardStore.hideQuickbar();
       return;
     }
@@ -473,7 +535,10 @@
     <SettingsPage />
   </div>
 {:else}
-  <div class="flex h-screen flex-col p-3" {@attach syncTheme(themeStore.current)}>
+  <!-- No transparent margin: the panel fills the window so its rounded shape
+       IS the window's alpha shape, and the native macOS shadow hugs it exactly
+       (translucent CSS pixels around the panel would distort that shape). -->
+  <div class="flex h-screen flex-col" {@attach syncTheme(themeStore.current)}>
     <div class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
       <PermissionCheck />
 
@@ -581,13 +646,16 @@
               {@attach attachResultsScroller}
               role="list"
               class="flex-1 space-y-1 overflow-y-auto p-2"
+              onscroll={handleResultsScroll}
             >
               {#each displayItems as item, index (item.id)}
                 <ClipboardItem
                   {item}
                   selected={index === selectedIndex}
+                  multiSelected={clipboardStore.isSelected(item.id)}
                   slotNumber={index < 9 ? index + 1 : null}
                   onSelect={() => selectIndex(index, displayItems.length)}
+                  onToggleSelect={() => clipboardStore.toggleSelected(item.id)}
                   onHover={() => {
                     if (hoverSelectArmed) selectIndex(index, displayItems.length);
                   }}
@@ -610,43 +678,64 @@
         class="flex flex-none items-center justify-between gap-2 border-t border-border/60 bg-muted/15 px-2.5 py-1.5 text-[11px] text-muted-foreground animate-in fade-in duration-300"
       >
         <div class="flex min-w-0 items-center gap-3 overflow-hidden select-none">
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
-            {clipboardStore.autoPaste ? t.paste : t.copy}
-          </span>
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}↵</kbd>
-            {clipboardStore.autoPaste ? t.copy : t.paste}
-          </span>
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-10 h-4 scale-95">{shortcutModifierLabel}1-9</kbd
-            >
-            {t.slot}
-          </span>
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}P</kbd>
-            {t.pin}
-          </span>
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}⌫</kbd>
-            {t.delete}
-          </span>
-          {#if selectionStore.panel === 'pinned'}
+          {#if clipboardStore.selectedIds.size >= 2}
+            <span class="flex flex-none items-center gap-1.5 font-medium text-foreground">
+              {i18n.format(t.selectedCount, { n: clipboardStore.selectedIds.size })}
+            </span>
             <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-12 h-4 scale-95"
-                >{shortcutModifierLabel}⇧↑↓</kbd
+              <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
+              {t.mergePasteHint}
+            </span>
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
+              {t.clearSelection}
+            </span>
+          {:else}
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
+              {clipboardStore.autoPaste ? t.paste : t.copy}
+            </span>
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}↵</kbd>
+              {clipboardStore.autoPaste ? t.copy : t.paste}
+            </span>
+            {#if selectedItem?.contentType === 'text'}
+              <span class="flex flex-none items-center gap-1.5">
+                <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{altModifierLabel}↵</kbd>
+                {t.pastePlain}
+              </span>
+            {/if}
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-10 h-4 scale-95"
+                >{shortcutModifierLabel}1-9</kbd
               >
-              {t.reorder}
+              {t.slot}
+            </span>
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}P</kbd>
+              {t.pin}
+            </span>
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}⌫</kbd>
+              {t.delete}
+            </span>
+            {#if selectionStore.panel === 'pinned'}
+              <span class="flex flex-none items-center gap-1.5">
+                <kbd class="kbd-keycap text-[9px] min-w-12 h-4 scale-95"
+                  >{shortcutModifierLabel}⇧↑↓</kbd
+                >
+                {t.reorder}
+              </span>
+            {/if}
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
+              {t.switchPanel}
+            </span>
+            <span class="flex flex-none items-center gap-1.5">
+              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
+              {t.close}
             </span>
           {/if}
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
-            {t.switchPanel}
-          </span>
-          <span class="flex flex-none items-center gap-1.5">
-            <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
-            {t.close}
-          </span>
         </div>
 
         <div class="flex flex-none items-center gap-0.5">

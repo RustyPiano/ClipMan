@@ -35,6 +35,11 @@
     customDataPath: null,
     enableAutostart: false,
     locale: 'zh-CN',
+    ignoredApps: [],
+    skipSecrets: true,
+    maxTextBytes: 2000000,
+    maxImageDimension: 4096,
+    capturePaused: false,
   });
 
   let loading = $state(true);
@@ -138,6 +143,12 @@
       customDataPath: null,
       enableAutostart: false,
       locale: 'zh-CN',
+      ignoredApps: [],
+      skipSecrets: true,
+      maxTextBytes: 2000000,
+      maxImageDimension: 4096,
+      // Reset restores capture; the tray toggle owns this at runtime.
+      capturePaused: false,
     };
     await saveSettings();
   }

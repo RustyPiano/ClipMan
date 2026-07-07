@@ -69,11 +69,13 @@
 
   --radius: 0.6rem;
 
-  /* Custom Floating Panel & Keycaps Styles for Light Mode */
+  /* Custom Floating Panel & Keycaps Styles for Light Mode.
+     No CSS drop shadow on the panel: elevation comes entirely from the native
+     macOS window shadow (window.rs). Any translucent CSS pixels painted around
+     the panel become part of the window's alpha shape, so the window server
+     draws its shadow around *their* outline — that rendered as a gray halo
+     hugging the corners. Keep the panel fully opaque with a plain border. */
   --quickbar-border: rgba(15, 23, 42, 0.08);
-  --quickbar-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.02), 0 20px 40px -12px rgba(15, 23, 42, 0.12),
-    0 0 0 1px rgba(0, 0, 0, 0.01);
   --quickbar-bg: rgb(250 250 250);
 
   --bg-kbd: hsl(220 13% 92%);
@@ -110,11 +112,9 @@
   --input: hsla(217, 30%, 18%, 0.6);
   --ring: hsl(0 0% 100%);
 
-  /* Custom Floating Panel & Keycaps Styles for Dark Mode */
+  /* Custom Floating Panel & Keycaps Styles for Dark Mode.
+     Same rule as light mode: no CSS drop shadow — native window shadow only. */
   --quickbar-border: rgba(255, 255, 255, 0.08);
-  --quickbar-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.03), 0 24px 60px -15px rgba(0, 0, 0, 0.7),
-    0 0 0 1px rgba(255, 255, 255, 0.02);
   --quickbar-bg: rgb(10 13 20);
 
   --bg-kbd: hsl(217 30% 13%);
@@ -153,11 +153,9 @@
 
   --radius: 0.6rem;
 
-  /* Custom Floating Panel & Keycaps Styles for Light Pink Mode */
+  /* Custom Floating Panel & Keycaps Styles for Light Pink Mode.
+     Same rule: no CSS drop shadow — native window shadow only. */
   --quickbar-border: rgba(212, 140, 140, 0.15);
-  --quickbar-shadow:
-    0 0 0 1px rgba(212, 140, 140, 0.05), 0 18px 36px -10px rgba(139, 92, 92, 0.1),
-    0 0 0 1px rgba(212, 140, 140, 0.03);
   --quickbar-bg: rgb(253 251 251);
 
   --bg-kbd: hsl(343 30% 93%);
@@ -186,10 +184,10 @@ html.quickbar-window body {
   background: transparent;
 }
 
-/* Custom Floating Panel with shadow and border */
+/* Custom Floating Panel: opaque, bordered, shadowless (see note above —
+   the native macOS window shadow supplies all elevation). */
 .quickbar-panel {
   border: 1px solid var(--quickbar-border) !important;
-  box-shadow: var(--quickbar-shadow) !important;
   background: var(--quickbar-bg) !important;
 }
 

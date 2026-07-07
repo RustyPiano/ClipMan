@@ -3,6 +3,7 @@ import {
   applyClipboardChanged,
   comparePinOrder,
   decodeClipText,
+  decodeFilePaths,
   getRecentDisplayItems,
 } from '../../src/lib/utils/clip-items';
 import type { ClipItem } from '../../src/lib/types';
@@ -46,6 +47,17 @@ describe('clip item helpers', () => {
     } finally {
       console.error = originalError;
     }
+  });
+
+  test('decodes newline-joined file paths, dropping blank trailing lines', () => {
+    const content = encodeText('/Users/me/文档/报告.pdf\n/Users/me/photos/img.png\n');
+    const paths = decodeFilePaths(clip({ contentType: 'files', content }));
+    expect(paths).toEqual(['/Users/me/文档/报告.pdf', '/Users/me/photos/img.png']);
+  });
+
+  test('returns no file paths for non-files clips or empty content', () => {
+    expect(decodeFilePaths(clip({ contentType: 'text', content: encodeText('hi') }))).toEqual([]);
+    expect(decodeFilePaths(clip({ contentType: 'files', content: '' }))).toEqual([]);
   });
 
   test('incrementally inserts a new recent item at the top', () => {

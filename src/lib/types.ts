@@ -6,7 +6,7 @@ export type { Locale };
 /**
  * Clipboard item content types
  */
-export type ContentType = 'text' | 'image';
+export type ContentType = 'text' | 'image' | 'files';
 
 /**
  * Clipboard item from backend
@@ -22,6 +22,10 @@ export interface ClipItem {
   pinOrder: number | null;
   label: string | null;
   groupName: string | null;
+  /** App that was frontmost when the clip was captured (copy source). */
+  sourceApp: string | null;
+  /** Whether a text clip carries an HTML (rich-text) companion. */
+  hasHtml: boolean;
 }
 
 /**
@@ -39,6 +43,16 @@ export interface Settings {
   customDataPath: string | null;
   enableAutostart: boolean;
   locale: Locale;
+  /** App names whose copies are never captured (matched case-insensitively). */
+  ignoredApps: string[];
+  /** Skip capturing Text clips that look like a high-confidence secret. */
+  skipSecrets: boolean;
+  /** Text/Files clips larger than this many bytes are skipped at capture time. */
+  maxTextBytes: number;
+  /** Images whose longest side exceeds this many pixels are downsampled; 0 disables downscaling. */
+  maxImageDimension: number;
+  /** Capture is fully paused (toggled from the tray menu; not shown in Settings UI). */
+  capturePaused: boolean;
 }
 
 export type PasteMode = 'default' | 'opposite' | 'paste' | 'copy';

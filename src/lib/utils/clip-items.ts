@@ -76,6 +76,22 @@ export function decodeClipText(item: ClipItem, emptyContent: string, decodeFaile
   return text;
 }
 
+/**
+ * Decode a Files clip's base64 content into its path list. The backend stores
+ * paths as newline-joined UTF-8 text (mirrors `split_file_paths` in storage.rs),
+ * so blank lines from a trailing newline are dropped. Returns [] for non-files
+ * clips or when decoding fails.
+ */
+export function decodeFilePaths(item: ClipItem): string[] {
+  if (item.contentType !== 'files') return [];
+  if (!item.content) return [];
+
+  const text = decodeBase64Text(item.content);
+  if (text === null) return [];
+
+  return text.split('\n').filter((line) => line.length > 0);
+}
+
 function decodeBase64Text(content: string) {
   try {
     const binaryString = atob(content);

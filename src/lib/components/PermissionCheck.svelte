@@ -97,90 +97,69 @@
   });
 </script>
 
+<!-- Permission banners: quiet, token-driven cards that sit inside the panel
+     and adapt to all three themes. The amber accent is confined to the icon so
+     the banner reads as a notice, not an alarm. -->
 {#if !hasPermission}
-  <div
-    class="bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 p-4 mb-4 mx-4 rounded-r shadow-sm"
-  >
-    <div class="flex items-start">
-      <div class="flex-shrink-0">
-        <AlertTriangle class="h-5 w-5 text-amber-500" />
-      </div>
-      <div class="ml-3 w-full">
-        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-200">
-          {t.clipboardAccessTitle}
-        </h3>
-        <div class="mt-2 text-sm text-amber-700 dark:text-amber-300">
-          <p>{t.clipboardAccessDesc}</p>
-          <p class="mt-2">{t.clipboardAccessHint}</p>
-        </div>
-
-        <details class="mt-3">
-          <summary
-            class="text-xs text-amber-600 dark:text-amber-400 cursor-pointer hover:underline"
-          >
-            {t.details}
-          </summary>
-          {#if errorMessage}
-            <p
-              class="mt-2 p-2 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 rounded text-xs font-mono break-all"
-            >
+  <div class="mx-3 mt-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
+    <div class="flex items-start gap-3">
+      <AlertTriangle class="mt-0.5 h-4 w-4 flex-none text-amber-500/90" />
+      <div class="min-w-0 flex-1 text-[13px] leading-relaxed">
+        <p>
+          <span class="font-semibold text-foreground">{t.clipboardAccessTitle}</span>
+          <span class="text-muted-foreground"> · {t.clipboardAccessDesc}</span>
+        </p>
+        <p class="mt-0.5 text-muted-foreground">{t.clipboardAccessHint}</p>
+        {#if errorMessage}
+          <details class="mt-1.5">
+            <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+              {t.details}
+            </summary>
+            <p class="mt-1.5 rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all text-destructive">
               {t.errorLabel}: {errorMessage}
             </p>
-          {/if}
-        </details>
-
-        <div class="mt-4">
-          <Button
-            onclick={checkPermission}
-            disabled={isChecking}
-            class="bg-amber-500 hover:bg-amber-600 text-white border-none"
-            size="sm"
-          >
-            <RefreshCw class="h-4 w-4 mr-2 {isChecking ? 'animate-spin' : ''}" />
-            {isChecking ? t.checking : t.recheck}
-          </Button>
-        </div>
+          </details>
+        {/if}
       </div>
+      <Button
+        onclick={checkPermission}
+        disabled={isChecking}
+        variant="outline"
+        size="sm"
+        class="flex-none"
+      >
+        <RefreshCw class="mr-1.5 h-3.5 w-3.5 {isChecking ? 'animate-spin' : ''}" />
+        {isChecking ? t.checking : t.recheck}
+      </Button>
     </div>
   </div>
 {/if}
 
 {#if isMac && !hasAccessibility}
-  <div
-    class="bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 p-4 mb-4 mx-4 rounded-r shadow-sm"
-  >
-    <div class="flex items-start">
-      <div class="flex-shrink-0">
-        <AlertTriangle class="h-5 w-5 text-amber-500" />
+  <div class="mx-3 mt-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
+    <div class="flex items-start gap-3">
+      <AlertTriangle class="mt-0.5 h-4 w-4 flex-none text-amber-500/90" />
+      <div class="min-w-0 flex-1 text-[13px] leading-relaxed">
+        <p>
+          <span class="font-semibold text-foreground">{t.accessibilityTitle}</span>
+          <span class="text-muted-foreground"> · {t.accessibilityDesc}</span>
+        </p>
+        <p class="mt-0.5 text-muted-foreground">{t.accessibilityHint}</p>
       </div>
-      <div class="ml-3 w-full">
-        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-200">
-          {t.accessibilityTitle}
-        </h3>
-        <div class="mt-2 text-sm text-amber-700 dark:text-amber-300">
-          <p>{t.accessibilityDesc}</p>
-          <p class="mt-2">{t.accessibilityHint}</p>
-        </div>
-
-        <div class="mt-4 flex flex-wrap gap-2">
-          <Button
-            onclick={openAccessibilitySettings}
-            class="bg-amber-500 hover:bg-amber-600 text-white border-none"
-            size="sm"
-          >
-            <Settings class="h-4 w-4 mr-2" />
-            {t.openSettings}
-          </Button>
-          <Button
-            onclick={checkAccessibility}
-            disabled={isCheckingAccessibility}
-            variant="outline"
-            size="sm"
-          >
-            <RefreshCw class="h-4 w-4 mr-2 {isCheckingAccessibility ? 'animate-spin' : ''}" />
-            {isCheckingAccessibility ? t.checking : t.recheck}
-          </Button>
-        </div>
+      <div class="flex flex-none items-center gap-1.5">
+        <Button onclick={openAccessibilitySettings} size="sm">
+          <Settings class="mr-1.5 h-3.5 w-3.5" />
+          {t.openSettings}
+        </Button>
+        <Button
+          onclick={checkAccessibility}
+          disabled={isCheckingAccessibility}
+          variant="outline"
+          size="sm"
+        >
+          <RefreshCw class="mr-1.5 h-3.5 w-3.5 {isCheckingAccessibility ? 'animate-spin' : ''}" />
+          {isCheckingAccessibility ? t.checking : t.recheck}
+        </Button>
       </div>
     </div>
   </div>

@@ -78,8 +78,11 @@ function resetStore() {
   clipboardStore.searchQuery = '';
   clipboardStore.activeSearchQuery = '';
   clipboardStore.isLoading = false;
+  clipboardStore.hasMoreRecent = false;
+  clipboardStore.isLoadingMore = false;
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
+  clipboardStore.selectedIds.clear();
 }
 
 describe('clipboard store races', () => {
@@ -258,6 +261,96 @@ describe('clipboard store races', () => {
     expect(clipboardStore.isSearchPending).toBe(false);
   });
 
+  test('useClip forwards the plain flag to paste_clip (⌥Enter → plain: true)', async () => {
+    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    installTauriInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+
+    const item = clip({ id: 'c1' });
+    await clipboardStore.useClip(item, 'default', { plain: true });
+    await clipboardStore.useClip(item, 'default');
+
+    const pastes = calls.filter((entry) => entry.cmd === 'paste_clip');
+    expect(pastes).toHaveLength(2);
+    expect(pastes[0].args).toEqual({ id: 'c1', mode: 'default', plain: true });
+    expect(pastes[1].args).toEqual({ id: 'c1', mode: 'default', plain: false });
+  });
+
+  test('toggleSelected preserves selection order and clears cleanly', () => {
+    clipboardStore.toggleSelected('a');
+    clipboardStore.toggleSelected('b');
+    clipboardStore.toggleSelected('c');
+    expect([...clipboardStore.selectedIds]).toEqual(['a', 'b', 'c']);
+
+    // Toggling an existing id removes it; re-adding appends at the end.
+    clipboardStore.toggleSelected('b');
+    expect([...clipboardStore.selectedIds]).toEqual(['a', 'c']);
+    clipboardStore.toggleSelected('b');
+    expect([...clipboardStore.selectedIds]).toEqual(['a', 'c', 'b']);
+
+    clipboardStore.clearSelection();
+    expect(clipboardStore.selectedIds.size).toBe(0);
+  });
+
+  test('useSelectedClips merges selected ids in order then clears the selection', async () => {
+    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    installTauriInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+
+    clipboardStore.toggleSelected('first');
+    clipboardStore.toggleSelected('second');
+    clipboardStore.toggleSelected('third');
+
+    await clipboardStore.useSelectedClips();
+
+    const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
+    expect(pastes).toHaveLength(1);
+    // Ids preserve selection order; separator is a newline; default mode.
+    expect(pastes[0].args).toEqual({
+      ids: ['first', 'second', 'third'],
+      mode: 'default',
+      separator: '\n',
+    });
+    // Paste clears the selection (task #13).
+    expect(clipboardStore.selectedIds.size).toBe(0);
+  });
+
+  test('useSelectedClips forwards the resolved mode and is a no-op with no selection', async () => {
+    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    installTauriInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+
+    // No selection: nothing is invoked.
+    await clipboardStore.useSelectedClips();
+    expect(calls.filter((entry) => entry.cmd === 'paste_clips')).toHaveLength(0);
+
+    // ⌘Enter resolves to the opposite paste mode, passed straight through.
+    clipboardStore.toggleSelected('x');
+    await clipboardStore.useSelectedClips('opposite');
+    const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
+    expect(pastes).toHaveLength(1);
+    expect(pastes[0].args).toEqual({ ids: ['x'], mode: 'opposite', separator: '\n' });
+  });
+
+  test('deleting a clip drops it from the multi-selection', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'delete_clip') return null;
+      return null;
+    });
+
+    clipboardStore.toggleSelected('keep');
+    clipboardStore.toggleSelected('gone');
+    await clipboardStore.deleteItem('gone');
+
+    expect([...clipboardStore.selectedIds]).toEqual(['keep']);
+  });
+
   test('silent search refreshes results without toggling the pending spinner', async () => {
     const match = clip({ id: 'match', timestamp: 5 });
     installTauriInvoke((cmd) => {
@@ -274,5 +367,115 @@ describe('clipboard store races', () => {
     expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['match']);
     expect(clipboardStore.activeSearchQuery).toBe('needle');
     expect(clipboardStore.isSearchPending).toBe(false);
+  });
+
+  test('loadMoreRecent pages by the last item cursor and appends older rows', async () => {
+    const calls: Array<Record<string, unknown> | undefined> = [];
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'get_recent_clips') {
+        calls.push(args);
+        return [clip({ id: 'p2a', timestamp: 3 }), clip({ id: 'p2b', timestamp: 2 })];
+      }
+      return null;
+    });
+
+    clipboardStore.recentItems = [
+      clip({ id: 'p1a', timestamp: 5 }),
+      clip({ id: 'p1b', timestamp: 4 }),
+    ];
+    clipboardStore.hasMoreRecent = true;
+
+    await clipboardStore.loadMoreRecent();
+
+    // Cursor is the (timestamp, id) of the last loaded row.
+    expect(calls).toEqual([{ limit: 100, beforeTimestamp: 4, beforeId: 'p1b' }]);
+    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual([
+      'p1a',
+      'p1b',
+      'p2a',
+      'p2b',
+    ]);
+    // A short page (2 < PAGE_SIZE) marks the end.
+    expect(clipboardStore.hasMoreRecent).toBe(false);
+    expect(clipboardStore.isLoadingMore).toBe(false);
+  });
+
+  test('loadMoreRecent dedupes a row a live event bumped to the top mid-fetch', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'get_recent_clips') {
+        return [clip({ id: 'dup', timestamp: 9 }), clip({ id: 'p2', timestamp: 2 })];
+      }
+      return null;
+    });
+
+    clipboardStore.recentItems = [
+      clip({ id: 'dup', timestamp: 9 }),
+      clip({ id: 'p1', timestamp: 4 }),
+    ];
+    clipboardStore.hasMoreRecent = true;
+
+    await clipboardStore.loadMoreRecent();
+
+    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['dup', 'p1', 'p2']);
+  });
+
+  test('loadMoreRecent is a no-op without more pages or while searching', async () => {
+    let calls = 0;
+    installTauriInvoke((cmd) => {
+      if (cmd === 'get_recent_clips') calls += 1;
+      return [];
+    });
+
+    clipboardStore.recentItems = [clip({ id: 'only' })];
+
+    clipboardStore.hasMoreRecent = false;
+    await clipboardStore.loadMoreRecent();
+    expect(calls).toBe(0);
+
+    clipboardStore.hasMoreRecent = true;
+    clipboardStore.searchQuery = 'needle';
+    clipboardStore.activeSearchQuery = 'needle';
+    await clipboardStore.loadMoreRecent();
+    expect(calls).toBe(0);
+  });
+
+  test('resetRecentPagination collapses accumulated pages to the first page', () => {
+    const many = Array.from({ length: 150 }, (_, index) =>
+      clip({ id: `item-${index}`, timestamp: 1000 - index })
+    );
+    clipboardStore.recentItems = many;
+    clipboardStore.hasMoreRecent = false;
+    clipboardStore.isLoadingMore = true;
+
+    clipboardStore.resetRecentPagination();
+
+    expect(clipboardStore.recentItems.length).toBe(100);
+    expect(clipboardStore.recentItems[0].id).toBe('item-0');
+    expect(clipboardStore.recentItems[99].id).toBe('item-99');
+    // Dropping pages means there is definitely more to re-fetch on scroll.
+    expect(clipboardStore.hasMoreRecent).toBe(true);
+    expect(clipboardStore.isLoadingMore).toBe(false);
+  });
+
+  test('loadHistory fetches only the first page on a fresh load', async () => {
+    const calls: Array<Record<string, unknown> | undefined> = [];
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'get_recent_clips') {
+        calls.push(args);
+        return Array.from({ length: 100 }, (_, index) =>
+          clip({ id: `r-${index}`, timestamp: 1000 - index })
+        );
+      }
+      if (cmd === 'get_pinned_clips') return [];
+      return null;
+    });
+
+    await clipboardStore.loadHistory({ showLoading: false });
+
+    // Fresh load (recentItems empty) requests exactly PAGE_SIZE, no cursor.
+    expect(calls).toEqual([{ limit: 100 }]);
+    // A full page back means more pages may exist.
+    expect(clipboardStore.hasMoreRecent).toBe(true);
+    expect(clipboardStore.recentItems.length).toBe(100);
   });
 });

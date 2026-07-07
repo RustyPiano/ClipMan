@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { SvelteSet } from 'svelte/reactivity';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
 import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
@@ -37,8 +38,19 @@ class ClipboardStore {
   activeSearchQuery = $state('');
   isLoading = $state(false);
   isSearchPending = $state(false);
+  // Keyset pagination of the recent list: `recentItems` accumulates pages of
+  // unpinned clips ordered (timestamp DESC, id DESC). `hasMoreRecent` gates the
+  // scroll/keyboard "load more" trigger; `isLoadingMore` debounces it.
+  hasMoreRecent = $state(false);
+  isLoadingMore = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
+  // Multi-select set for merge paste (task #13). Insertion order == selection
+  // order, which the backend merge preserves. SvelteSet makes membership/size
+  // reads reactive so the list and footer update as items toggle. Cleared at the
+  // deliberate reset points (panel switch / quickbar refresh / search / hide).
+  selectedIds = new SvelteSet<string>();
+  private static readonly PAGE_SIZE = 100;
   private unlisten?: () => void;
   private historyRequests = new RequestSequencer();
   private searchRequests = new RequestSequencer();
@@ -106,10 +118,12 @@ class ClipboardStore {
 
     const unlistenHistoryCleared = await listen('history-cleared', async () => {
       this.fullClipCache.clear();
+      this.clearSelection();
       await this.reloadFromBackend();
     });
 
     const unlistenQuickbarHidden = await listen(QUICKBAR_HIDDEN_EVENT, () => {
+      this.clearSelection();
       void this.clearSearch({ reload: false });
     });
 
@@ -138,9 +152,14 @@ class ClipboardStore {
       this.isLoading = true;
     }
 
+    // Fetch only the first page on a fresh load; on a reload (pin/delete/label/
+    // clear) preserve however many pages the user already scrolled through, so
+    // those actions don't snap the list back to the top.
+    const limit = Math.max(ClipboardStore.PAGE_SIZE, this.recentItems.length);
+
     try {
       const [recent, pinned] = await Promise.all([
-        invoke<ClipItem[]>('get_recent_clips', { limit: this.maxHistoryItems }),
+        invoke<ClipItem[]>('get_recent_clips', { limit }),
         invoke<ClipItem[]>('get_pinned_clips'),
       ]);
 
@@ -153,6 +172,9 @@ class ClipboardStore {
 
         this.recentItems = nextItems.recentItems;
         this.pinnedItems = nextItems.pinnedItems;
+        // A full page back means the DB may hold older rows past what we loaded.
+        this.hasMoreRecent = recent.length >= limit;
+        this.isLoadingMore = false;
         if (!this.searchQuery.trim()) {
           this.searchResults = [];
         }
@@ -165,6 +187,71 @@ class ClipboardStore {
       if (this.historyRequests.isCurrent(requestId) && !this.searchQuery.trim()) {
         this.isLoading = false;
       }
+    }
+  }
+
+  /**
+   * Load the next keyset page of recent clips, using the last loaded item's
+   * (timestamp, id) as the cursor. Debounced by `isLoadingMore` and gated by
+   * `hasMoreRecent`; never runs while a search is active (search keeps its own
+   * capped result set). Triggered by scrolling near the bottom or arrowing past
+   * the loaded tail.
+   */
+  async loadMoreRecent() {
+    if (!hasTauriRuntime()) return;
+    if (this.isLoadingMore || !this.hasMoreRecent) return;
+    if (this.searchQuery.trim() || this.activeSearchQuery.trim()) return;
+
+    const cursor = this.recentItems[this.recentItems.length - 1];
+    if (!cursor) {
+      this.hasMoreRecent = false;
+      return;
+    }
+
+    this.isLoadingMore = true;
+    // Share the history sequencer so a reset (loadHistory / resetRecentPagination)
+    // that lands mid-fetch supersedes this page and it drops its stale write.
+    const requestId = this.historyRequests.next();
+
+    try {
+      const page = await invoke<ClipItem[]>('get_recent_clips', {
+        limit: ClipboardStore.PAGE_SIZE,
+        beforeTimestamp: cursor.timestamp,
+        beforeId: cursor.id,
+      });
+
+      if (!this.historyRequests.isCurrent(requestId)) return;
+
+      // Append older rows, deduping by id: a live clipboard-changed event may
+      // have bumped one of these rows to the top mid-fetch, and it must not
+      // reappear lower in the list.
+      const existingIds = new Set(this.recentItems.map((item) => item.id));
+      const olderItems = page.filter((item) => !existingIds.has(item.id));
+      this.recentItems = [...this.recentItems, ...olderItems];
+      this.hasMoreRecent = page.length >= ClipboardStore.PAGE_SIZE;
+    } catch (error) {
+      if (this.historyRequests.isCurrent(requestId)) {
+        console.error('[ERROR] Failed to load more clipboard history:', error);
+      }
+    } finally {
+      if (this.historyRequests.isCurrent(requestId)) {
+        this.isLoadingMore = false;
+      }
+    }
+  }
+
+  /**
+   * Collapse accumulated pages back to the first page (§1 reset points: panel
+   * switch to recent, quickbar-opened). No IPC — the live clipboard-changed
+   * stream keeps page 1 fresh while hidden; this only drops the extra pages a
+   * scroll accumulated, and supersedes any in-flight page load.
+   */
+  resetRecentPagination() {
+    this.historyRequests.next();
+    this.isLoadingMore = false;
+    if (this.recentItems.length > ClipboardStore.PAGE_SIZE) {
+      this.recentItems = this.recentItems.slice(0, ClipboardStore.PAGE_SIZE);
+      this.hasMoreRecent = true;
     }
   }
 
@@ -325,11 +412,51 @@ class ClipboardStore {
     }
   }
 
-  async useClip(item: ClipItem, mode: PasteMode = 'default') {
+  async useClip(item: ClipItem, mode: PasteMode = 'default', options: { plain?: boolean } = {}) {
     try {
-      await invoke('paste_clip', { id: item.id, mode });
+      // `plain` (⌥Enter) forces a plain-text paste. The backend ignores it for
+      // non-text clips, so it is passed through without a frontend type branch.
+      await invoke('paste_clip', { id: item.id, mode, plain: options.plain ?? false });
     } catch (error) {
       console.error(`[ERROR] Failed to ${mode} clip:`, error);
+      if (mode === 'copy') {
+        toastStore.add(i18n.t.copyFailed, 'error');
+      }
+    }
+  }
+
+  isSelected(id: string): boolean {
+    return this.selectedIds.has(id);
+  }
+
+  toggleSelected(id: string) {
+    if (this.selectedIds.has(id)) {
+      this.selectedIds.delete(id);
+    } else {
+      this.selectedIds.add(id);
+    }
+  }
+
+  clearSelection() {
+    if (this.selectedIds.size > 0) {
+      this.selectedIds.clear();
+    }
+  }
+
+  /**
+   * Merge the multi-selected clips (in selection order) into a single clipboard
+   * write and paste them, newline-separated (task #13). No-op when nothing is
+   * selected; clears the selection once the paste is dispatched.
+   */
+  async useSelectedClips(mode: PasteMode = 'default') {
+    const ids = [...this.selectedIds];
+    if (ids.length === 0) return;
+
+    try {
+      await invoke('paste_clips', { ids, mode, separator: '\n' });
+      this.clearSelection();
+    } catch (error) {
+      console.error('[ERROR] Failed to merge-paste clips:', error);
       if (mode === 'copy') {
         toastStore.add(i18n.t.copyFailed, 'error');
       }
@@ -366,10 +493,10 @@ class ClipboardStore {
   }
 
   /**
-   * Fetch the full, untruncated text clip by id for the preview pane. Images use
-   * list thumbnails and are ignored here so full image payloads never cross IPC.
-   * Results are cached; callers should guard against stale selections since this
-   * resolves asynchronously.
+   * Fetch the full, untruncated text or files clip by id for the preview pane.
+   * Both carry small newline-joined text payloads. Images use list thumbnails and
+   * are ignored here so full image payloads never cross IPC. Results are cached;
+   * callers should guard against stale selections since this resolves async.
    */
   async fetchFullClip(id: string): Promise<ClipItem | null> {
     const cached = this.getCachedFullClip(id);
@@ -378,7 +505,7 @@ class ClipboardStore {
 
     try {
       const full = await invoke<ClipItem | null>('get_clip', { id });
-      if (full?.contentType !== 'text') return null;
+      if (full?.contentType !== 'text' && full?.contentType !== 'files') return null;
       if (full) this.cacheFullClip(full);
       return full;
     } catch (error) {
@@ -388,7 +515,7 @@ class ClipboardStore {
   }
 
   private cacheFullClip(item: ClipItem) {
-    if (item.contentType !== 'text') return;
+    if (item.contentType !== 'text' && item.contentType !== 'files') return;
     if (item.content.length > ClipboardStore.MAX_CACHEABLE_CONTENT_LENGTH) return;
 
     this.fullClipCache.set(item.id, item);
@@ -425,6 +552,7 @@ class ClipboardStore {
     this.historyRequests.next();
     this.searchRequests.next();
     this.fullClipCache.delete(id);
+    this.selectedIds.delete(id);
     this.recentItems = this.recentItems.filter((item) => item.id !== id);
     this.pinnedItems = this.pinnedItems.filter((item) => item.id !== id);
     this.searchResults = this.searchResults.filter((item) => item.id !== id);
