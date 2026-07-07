@@ -7,6 +7,7 @@
   import { Keyboard, X } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
+  import { isMac } from '$lib/utils/platform';
   import type { Settings } from '$lib/types';
 
   let { settings = $bindable() } = $props<{
@@ -14,9 +15,6 @@
   }>();
 
   const t = $derived(i18n.t);
-
-  // Detect OS
-  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
   // Dynamic shortcut presets based on OS
   const shortcutPresets = [
@@ -96,7 +94,7 @@
       recordingWarning = '';
     } catch (err) {
       console.error('Failed to disable shortcut:', err);
-      recordingWarning = '无法禁用快捷键';
+      recordingWarning = t.disableHotkeyFailed;
     }
   }
 

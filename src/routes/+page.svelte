@@ -6,12 +6,14 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { router } from '$lib/stores/router.svelte';
-  import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
+  import { clampIndex, selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { i18n } from '$lib/i18n';
   import { hasTauriRuntime } from '$lib/utils/tauri';
+  import { isMac } from '$lib/utils/platform';
+  import { SEARCH_INPUT_ID } from '$lib/constants';
   import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
@@ -45,15 +47,12 @@
   let isSettings = $state(initialSettingsCheck);
   let resultsScroller: Element | null = $state(null);
 
-  const SEARCH_INPUT_ID = 'quickbar-search';
   const SCROLL_EDGE_PADDING = 6;
   // Prefetch the next recent page when scrolled within this many viewport
   // heights of the bottom, or when the keyboard selection lands within this
   // many rows of the loaded tail — so continuation feels seamless.
   const LOAD_MORE_SCROLL_SCREENS = 2;
   const LOAD_MORE_KEYBOARD_THRESHOLD = 10;
-  const isMac =
-    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
   const shortcutModifierLabel = isMac ? '⌘' : 'Ctrl';
   const altModifierLabel = isMac ? '⌥' : 'Alt';
 
@@ -67,9 +66,7 @@
       ? clipboardStore.pinnedDisplayItems
       : clipboardStore.recentDisplayItems
   );
-  const selectedIndex = $derived(
-    clampSelectedIndex(selectionStore.selectedIndex, displayItems.length)
-  );
+  const selectedIndex = $derived(clampIndex(selectionStore.selectedIndex, displayItems.length));
   const selectedItem = $derived(displayItems[selectedIndex]);
 
   // Master-detail: show the preview pane only when the window is wide enough and
@@ -84,11 +81,11 @@
   // navigation isn't hijacked when the list scrolls under a stationary cursor.
   let hoverSelectArmed = $state(true);
 
+  // Keep the stored selection index in range as the list length changes. The
+  // store owns the clamp (single owner of the selection semantics); assigning an
+  // unchanged value is a reactive no-op, so this settles without looping.
   $effect(() => {
-    const clampedIndex = selectedIndex;
-    if (clampedIndex !== selectionStore.selectedIndex) {
-      selectionStore.selectedIndex = clampedIndex;
-    }
+    selectionStore.clamp(displayItems.length);
   });
 
   // Keep the highlight anchored to a specific clip across list mutations:
@@ -132,7 +129,7 @@
     } else {
       // Anchored clip is gone (deleted/pruned); re-anchor to whatever now sits
       // at the current index so later reorders still track the right row.
-      anchoredId = items[clampSelectedIndex(currentIndex, items.length)]?.id ?? null;
+      anchoredId = items[clampIndex(currentIndex, items.length)]?.id ?? null;
     }
   });
 
@@ -143,18 +140,6 @@
       element instanceof HTMLSelectElement ||
       element?.hasAttribute('contenteditable')
     );
-  }
-
-  function clampSelectedIndex(index: number, itemCount: number) {
-    if (itemCount <= 0) return 0;
-    return Math.min(Math.max(index, 0), itemCount - 1);
-  }
-
-  function movedIndex(delta: number, itemCount: number) {
-    if (itemCount <= 0) return 0;
-
-    const currentIndex = clampSelectedIndex(selectionStore.selectedIndex, itemCount);
-    return (((currentIndex + delta) % itemCount) + itemCount) % itemCount;
   }
 
   function scrollItemIntoView(index: number) {
@@ -189,11 +174,22 @@
     anchorToSelection();
   }
 
-  function selectIndexAndReveal(index: number, itemCount: number) {
-    selectionStore.setSelectedIndex(index, itemCount);
+  function revealSelection() {
     anchorToSelection();
     flushSync();
     scrollItemIntoView(selectionStore.selectedIndex);
+  }
+
+  function selectIndexAndReveal(index: number, itemCount: number) {
+    selectionStore.setSelectedIndex(index, itemCount);
+    revealSelection();
+  }
+
+  // Wrap-around move through the store (single owner of the clamp/wrap), then
+  // anchor + scroll the new selection into view.
+  function moveSelectionAndReveal(delta: number) {
+    selectionStore.move(delta, displayItems.length);
+    revealSelection();
   }
 
   function resetPanelAndReveal(panel: QuickBarPanel) {
@@ -205,6 +201,13 @@
     // Panel switch / quickbar refresh drops any multi-selection (task #13).
     clipboardStore.clearSelection();
     selectionStore.reset(panel);
+    // Drop the stale anchor BEFORE flushSync: the reset changes displayItems
+    // (a tracked dep), so the anchor effect re-runs here. With the old anchor
+    // still set it would find that clip at a non-zero index and drag the
+    // selection back off row 0 while the viewport scrolls to the top —
+    // highlight offscreen, Enter pastes an invisible row (§10). Nulling it lets
+    // the effect no-op; anchorToSelection() below re-anchors to the new row 0.
+    anchoredId = null;
     flushSync();
     anchorToSelection();
     scrollItemIntoView(0);
@@ -227,18 +230,6 @@
       maybeLoadMoreRecent();
     }
   }
-
-  const attachResultsScroller: Attachment = (element) => {
-    if (!(element instanceof globalThis.HTMLDivElement)) return;
-
-    resultsScroller = element;
-
-    return () => {
-      if (resultsScroller === element) {
-        resultsScroller = null;
-      }
-    };
-  };
 
   function focusSearchInput() {
     const input = document.getElementById(SEARCH_INPUT_ID);
@@ -271,19 +262,7 @@
     focusSearchInput();
   }
 
-  function getSelectedItem() {
-    return selectedItem;
-  }
-
-  function modeForDefault(opposite = false): PasteMode {
-    return opposite ? 'opposite' : 'default';
-  }
-
-  async function useItem(
-    item: ClipItem | undefined,
-    mode: PasteMode = modeForDefault(),
-    plain = false
-  ) {
+  async function useItem(item: ClipItem | undefined, mode: PasteMode = 'default', plain = false) {
     if (!item) return;
     if (clipboardStore.isSearchPending) return;
 
@@ -291,7 +270,7 @@
   }
 
   async function useSelectedItem(opposite = false, plain = false) {
-    await useItem(getSelectedItem(), modeForDefault(opposite), plain);
+    await useItem(selectedItem, opposite ? 'opposite' : 'default', plain);
   }
 
   async function useSlot(slotNumber: number) {
@@ -305,13 +284,13 @@
   }
 
   async function toggleSelectedPin() {
-    const item = getSelectedItem();
+    const item = selectedItem;
     if (!item) return;
     await clipboardStore.togglePin(item.id);
   }
 
   async function deleteSelectedItem() {
-    const item = getSelectedItem();
+    const item = selectedItem;
     if (!item) return;
     await clipboardStore.deleteItem(item.id);
   }
@@ -319,7 +298,7 @@
   async function reorderSelectedPinned(direction: ReorderDirection) {
     if (selectionStore.panel !== 'pinned') return;
 
-    const item = getSelectedItem();
+    const item = selectedItem;
     if (!item?.isPinned) return;
 
     await clipboardStore.reorderPinned(item.id, direction);
@@ -360,20 +339,85 @@
   function syncTheme(theme: typeof themeStore.current): Attachment {
     return () => {
       const root = globalThis.document.documentElement;
-      const isDark =
-        theme === 'dark' ||
-        (theme === 'system' && globalThis.matchMedia('(prefers-color-scheme: dark)').matches);
+      const media = globalThis.matchMedia('(prefers-color-scheme: dark)');
 
-      root.classList.remove('dark', 'light-pink');
+      const apply = () => {
+        const isDark = theme === 'dark' || (theme === 'system' && media.matches);
 
-      if (theme === 'light-pink') {
-        root.classList.add('light-pink');
-      } else if (isDark) {
-        root.classList.add('dark');
-      }
+        root.classList.remove('dark', 'light-pink');
 
+        if (theme === 'light-pink') {
+          root.classList.add('light-pink');
+        } else if (isDark) {
+          root.classList.add('dark');
+        }
+      };
+
+      apply();
       globalThis.localStorage.setItem('theme', theme);
+
+      // In 'system' mode the effective theme tracks the OS appearance, so follow
+      // live light/dark switches; fixed modes need no listener. The attachment is
+      // re-run whenever themeStore.current changes, so this cleanup detaches the
+      // listener as soon as the user leaves 'system'.
+      if (theme === 'system') {
+        media.addEventListener('change', apply);
+        return () => media.removeEventListener('change', apply);
+      }
     };
+  }
+
+  function handleArrowNavigation(event: KeyboardEvent, hasModifier: boolean) {
+    event.preventDefault();
+    hoverSelectArmed = false;
+
+    if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
+      void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
+      return;
+    }
+
+    moveSelectionAndReveal(event.key === 'ArrowUp' ? -1 : 1);
+    // Arrowing toward the loaded tail prefetches the next page before the user
+    // reaches the bottom.
+    if (
+      event.key === 'ArrowDown' &&
+      selectionStore.selectedIndex >= displayItems.length - LOAD_MORE_KEYBOARD_THRESHOLD
+    ) {
+      maybeLoadMoreRecent();
+    }
+  }
+
+  function handleTabNavigation(event: KeyboardEvent) {
+    event.preventDefault();
+    hoverSelectArmed = false;
+    resetPanelAndReveal(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
+    focusSearchInput();
+  }
+
+  function handleEnter(event: KeyboardEvent, hasModifier: boolean) {
+    event.preventDefault();
+    if (clipboardStore.selectedIds.size >= 2) {
+      // A real multi-selection (≥2) merge-pastes the selected clips
+      // (newline-joined), honoring the ⌘ paste/copy swap like a single paste.
+      // Below 2 the footer still shows the single-paste hints, so Enter keeps
+      // acting on the keyboard-highlighted row.
+      void clipboardStore.useSelectedClips(hasModifier ? 'opposite' : 'default');
+    } else {
+      // ⌥Enter forces a plain-text paste (strips rich HTML). Harmless for
+      // non-text clips — the backend ignores `plain` for them.
+      void useSelectedItem(hasModifier, event.altKey);
+    }
+  }
+
+  function handleEscape(event: KeyboardEvent) {
+    event.preventDefault();
+    // Esc clears an active multi-selection first; a second Esc (or Esc with no
+    // selection) falls through to the original hide behavior.
+    if (clipboardStore.selectedIds.size > 0) {
+      clipboardStore.clearSelection();
+      return;
+    }
+    void clipboardStore.hideQuickbar();
   }
 
   function handleQuickBarKeydown(event: KeyboardEvent) {
@@ -389,60 +433,22 @@
     if (activeTextInput && !activeSearchInput) return;
 
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      hoverSelectArmed = false;
-
-      if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
-        void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
-      } else {
-        const nextIndex = movedIndex(event.key === 'ArrowUp' ? -1 : 1, displayItems.length);
-        selectIndexAndReveal(nextIndex, displayItems.length);
-        // Arrowing toward the loaded tail prefetches the next page before the
-        // user reaches the bottom.
-        if (
-          event.key === 'ArrowDown' &&
-          nextIndex >= displayItems.length - LOAD_MORE_KEYBOARD_THRESHOLD
-        ) {
-          maybeLoadMoreRecent();
-        }
-      }
-
+      handleArrowNavigation(event, hasModifier);
       return;
     }
 
     if (event.key === 'Tab') {
-      event.preventDefault();
-      hoverSelectArmed = false;
-      resetPanelAndReveal(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
-      focusSearchInput();
+      handleTabNavigation(event);
       return;
     }
 
     if (event.key === 'Enter') {
-      event.preventDefault();
-      if (clipboardStore.selectedIds.size >= 2) {
-        // A real multi-selection (≥2) merge-pastes the selected clips
-        // (newline-joined), honoring the ⌘ paste/copy swap like a single paste.
-        // Below 2 the footer still shows the single-paste hints, so Enter keeps
-        // acting on the keyboard-highlighted row.
-        void clipboardStore.useSelectedClips(modeForDefault(hasModifier));
-      } else {
-        // ⌥Enter forces a plain-text paste (strips rich HTML). Harmless for
-        // non-text clips — the backend ignores `plain` for them.
-        void useSelectedItem(hasModifier, event.altKey);
-      }
+      handleEnter(event, hasModifier);
       return;
     }
 
     if (event.key === 'Escape') {
-      event.preventDefault();
-      // Esc clears an active multi-selection first; a second Esc (or Esc with
-      // no selection) falls through to the original hide behavior.
-      if (clipboardStore.selectedIds.size > 0) {
-        clipboardStore.clearSelection();
-        return;
-      }
-      void clipboardStore.hideQuickbar();
+      handleEscape(event);
       return;
     }
 
@@ -488,13 +494,15 @@
     // only). The panel stays opaque — no frosted glass.
     document.documentElement.classList.add('quickbar-window');
 
+    // Boot the clipboard store here rather than in its constructor: the settings
+    // window imports the same singleton and must NOT load history or subscribe
+    // to events. `initialize` also refreshes settings, so no separate fetch here.
     selectionStore.reset('recent');
+    void clipboardStore.initialize();
     focusSearchInput();
-    window.addEventListener('keydown', handleQuickBarKeydown, true);
 
     if (!tauriAvailable) {
       return () => {
-        window.removeEventListener('keydown', handleQuickBarKeydown, true);
         document.documentElement.classList.remove('quickbar-window');
       };
     }
@@ -512,10 +520,7 @@
       unlistenQuickbarOpened = unlisten;
     });
 
-    void clipboardStore.refreshSettings();
-
     return () => {
-      window.removeEventListener('keydown', handleQuickBarKeydown, true);
       unlistenQuickbarOpened?.();
       document.documentElement.classList.remove('quickbar-window');
     };
@@ -523,6 +528,7 @@
 </script>
 
 <svelte:window
+  onkeydowncapture={handleQuickBarKeydown}
   onresize={() => (viewportWidth = window.innerWidth)}
   onpointermove={() => (hoverSelectArmed = true)}
 />
@@ -643,7 +649,7 @@
             </div>
           {:else}
             <div
-              {@attach attachResultsScroller}
+              bind:this={resultsScroller}
               role="list"
               class="flex-1 space-y-1 overflow-y-auto p-2"
               onscroll={handleResultsScroll}

@@ -1,0 +1,16 @@
+{
+  // Standalone type-check for the bun:test suites. Kept separate from the app
+  // config because these files mock the Svelte runes ($state/$derived) as plain
+  // globals for the bun runtime — types that svelte-check injects for real, so
+  // the suites must be checked with plain `tsc`, not svelte-check. Run with:
+  //   tsc -p tests/tsconfig.json
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // bun's runtime has Array.prototype.toSorted / .at (ES2023); the app itself
+    // targets ES2020, so bump the lib only for the tests.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Ambient externals (bun:test, Buffer) come from env.d.ts, not @types/*.
+    "types": []
+  },
+  "include": ["**/*.ts"]
+}

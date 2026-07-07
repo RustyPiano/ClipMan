@@ -2,7 +2,9 @@
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use tauri::menu::{CheckMenuItemBuilder, IconMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+use tauri::menu::{
+    CheckMenuItemBuilder, IconMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder,
+};
 use tauri::{AppHandle, Manager};
 
 use crate::storage::{ClipPreviewItem, ContentType};
@@ -11,6 +13,9 @@ use crate::AppState;
 // Tray configuration constants
 pub const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
+/// Stable id for the single system tray icon; used both to build it and to
+/// look it up when rebuilding the menu.
+pub const TRAY_ID: &str = "main";
 
 /// Tray menu translations
 pub struct TrayI18n {
@@ -70,7 +75,7 @@ impl TrayIconCache {
     pub fn get_or_create(&self, id: &str, content: &[u8]) -> Option<tauri::image::Image<'static>> {
         // Check cache first
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = crate::safe_lock(&self.cache);
             if let Some(icon) = cache.get(id) {
                 log::debug!("🎯 Icon cache hit for {}", id);
                 return Some(icon.clone());
@@ -100,7 +105,7 @@ impl TrayIconCache {
 
                 // Cache it
                 {
-                    let mut cache = self.cache.lock().unwrap();
+                    let mut cache = crate::safe_lock(&self.cache);
                     cache.put(id.to_string(), icon.clone());
                 }
 
@@ -114,7 +119,7 @@ impl TrayIconCache {
     }
 
     pub fn clear(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = crate::safe_lock(&self.cache);
         cache.clear();
         log::info!("Icon cache cleared");
     }
@@ -274,10 +279,82 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
     menu_builder.build()
 }
 
+/// Handle a tray menu selection. Lives in this module (not `main.rs`) so all
+/// tray behavior — menu construction and menu events — sits together.
+pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
+    let event_id = event.id().as_ref();
+    log::debug!("Menu event: {}", event_id);
+
+    match event_id {
+        "quit" => {
+            log::info!("Quit menu clicked");
+            app.exit(0);
+        }
+        "clear_non_pinned" => {
+            log::info!("Clear non-pinned menu clicked");
+            let app_clone = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    crate::commands::clear_non_pinned_history(app_clone.clone(), app_clone.state())
+                        .await
+                {
+                    log::error!("Failed to clear non-pinned history: {}", e);
+                }
+            });
+        }
+        "settings" => {
+            log::info!("Settings menu clicked");
+            if let Err(e) = crate::window::open_settings_window(app) {
+                log::error!("Failed to open settings window: {}", e);
+            }
+        }
+        "pause_capture" => {
+            let state: tauri::State<AppState> = app.state();
+            // Serialize against `update_settings` so a settings-page save and
+            // this tray toggle can't race each other and clobber one another's
+            // change. `capture_paused` is owned exclusively by this toggle.
+            let _settings_write_guard = crate::safe_lock(&state.settings_write_lock);
+
+            let mut settings = state.settings.get();
+            settings.capture_paused = !settings.capture_paused;
+            let now_paused = settings.capture_paused;
+            state.settings.set(settings);
+
+            if let Err(e) = state.settings.save(app) {
+                log::error!("Failed to persist capture_paused toggle: {}", e);
+            }
+            log::info!(
+                "Clipboard capture {} via tray menu",
+                if now_paused { "paused" } else { "resumed" }
+            );
+
+            update_tray_menu(app);
+        }
+        id if id.starts_with("clip:") => {
+            let clip_id = id.strip_prefix("clip:").unwrap().to_string();
+            log::info!("Clip item clicked: {}", clip_id);
+
+            let app_clone = app.clone();
+            tauri::async_runtime::spawn(async move {
+                // Use unified copy function with notification
+                if let Err(e) =
+                    crate::commands::copy_clip_to_clipboard_internal(&app_clone, &clip_id, true)
+                        .await
+                {
+                    log::error!("Failed to copy clip: {}", e);
+                }
+            });
+        }
+        _ => {
+            log::debug!("Unhandled menu event: {}", event_id);
+        }
+    }
+}
+
 /// Update tray menu
 pub fn update_tray_menu(app: &AppHandle) {
     if let Ok(new_menu) = build_tray_menu(app) {
-        if let Some(tray) = app.tray_by_id("main") {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
             if let Err(e) = tray.set_menu(Some(new_menu)) {
                 log::error!("Failed to update tray menu: {}", e);
             } else {

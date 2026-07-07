@@ -373,7 +373,7 @@ impl ClipboardMonitor {
                 Self::process_text_change(app_handle, &text, html, source_app)
             }
             ClipboardSnapshot::Image(image) => {
-                Self::process_image_change(app_handle, running, &image, &marker, source_app)
+                Self::process_image_change(app_handle, running, image, &marker, source_app)
             }
         }
     }
@@ -475,13 +475,16 @@ impl ClipboardMonitor {
     fn process_image_change(
         app_handle: &AppHandle,
         running: &Arc<AtomicBool>,
-        image: &ImageData,
+        image: ImageData<'static>,
         marker: &CopyMarker,
         source_app: Option<String>,
     ) {
         let width = image.width;
         let height = image.height;
-        let rgba_bytes = image.bytes.to_vec();
+        // The snapshot already owns its RGBA buffer (arboard hands back a
+        // `Cow::Owned`), so `into_owned` takes it by move — no 33MB re-copy
+        // like the previous `to_vec` (#34).
+        let rgba_bytes = image.bytes.into_owned();
         let marker = marker.clone();
         log::info!(
             "Image clipboard changed: {}x{}, {} RGBA bytes",
@@ -560,16 +563,7 @@ impl ClipboardMonitor {
         last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
         expected_marker: &CopyMarker,
     ) -> bool {
-        let Ok(last_copied) = last_copied_by_us.lock() else {
-            log::warn!("Failed to lock self-copy marker");
-            return false;
-        };
-
-        let Some(marker) = last_copied.as_ref() else {
-            return false;
-        };
-
-        marker == expected_marker
+        crate::safe_lock(last_copied_by_us).as_ref() == Some(expected_marker)
     }
 
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
@@ -581,10 +575,7 @@ impl ClipboardMonitor {
         let max_history_items = state.settings.get().max_history_items;
 
         let result = {
-            let storage = state.storage.lock().unwrap_or_else(|poisoned| {
-                log::warn!("⚠️ Recovered from poisoned lock in clipboard monitor");
-                poisoned.into_inner()
-            });
+            let storage = crate::safe_lock(&state.storage);
 
             storage
                 .insert(&item, max_history_items)

@@ -244,8 +244,15 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         return Err("Source and destination are the same".to_string());
     }
 
-    let test_file = to.join(".clipman_test");
-    fs::write(&test_file, "test")
+    // Use a unique name + exclusive create so the probe can never overwrite a
+    // pre-existing user file in the destination directory: a fixed name written
+    // with `fs::write` would clobber (and then delete) an unrelated file that
+    // happened to share the name.
+    let test_file = to.join(format!(".clipman_test_{}", uuid::Uuid::new_v4()));
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&test_file)
         .map_err(|e| format!("Destination directory is not writable: {}", e))?;
     fs::remove_file(&test_file).map_err(|e| format!("Failed to remove test file: {}", e))?;
     Ok(())

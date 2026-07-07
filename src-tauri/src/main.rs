@@ -15,20 +15,20 @@ mod window;
 use clipboard::ClipboardMonitor;
 use commands::{
     check_accessibility_permission, check_clipboard_permission, check_for_updates,
-    clear_non_pinned_history, copy_clip_to_clipboard_internal, copy_to_system_clipboard,
-    delete_clip, disable_global_shortcut, enable_global_shortcut, get_clip, get_current_data_path,
-    get_pinned_clips, get_recent_clips, get_settings, hide_quickbar, install_update,
-    migrate_data_location, open_accessibility_settings, open_folder, open_settings_window,
-    paste_clip, paste_clips, register_quickbar_shortcut, reorder_pinned, search_clips,
-    set_clip_label, show_quickbar, toggle_pin, update_settings,
+    clear_non_pinned_history, copy_to_system_clipboard, delete_clip, disable_global_shortcut,
+    enable_global_shortcut, get_clip, get_current_data_path, get_pinned_clips, get_recent_clips,
+    get_settings, hide_quickbar, install_update, migrate_data_location,
+    open_accessibility_settings, open_folder, open_settings_window, paste_clip, paste_clips,
+    register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, show_quickbar,
+    toggle_pin, update_settings,
 };
 use settings::SettingsManager;
 use storage::{ClipStorage, CopyMarker};
-use tray::{build_tray_menu, update_tray_menu, TrayIconCache};
+use tray::{build_tray_menu, TrayIconCache, TRAY_ID};
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
 /// Helper function: safely acquire Mutex even if poisoned
@@ -231,30 +231,18 @@ fn spawn_fatal_storage_alert(app: &tauri::AppHandle, error: &str) {
 }
 
 fn main() {
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Debug)
-        .init();
+    // Respect RUST_LOG when set; otherwise default to debug in dev builds and
+    // info in release (previously forced Debug unconditionally, which both
+    // ignored RUST_LOG and shipped a chatty release binary).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "info"
+        },
+    ))
+    .init();
     log::info!("ClipMan starting...");
-
-    #[cfg(target_os = "macos")]
-    {
-        use arboard::Clipboard;
-        log::info!("Running on macOS - checking clipboard access");
-
-        match Clipboard::new() {
-            Ok(mut clipboard) => match clipboard.get_text() {
-                Ok(text) => log::info!(
-                    "✅ Clipboard access OK, current content: {} chars",
-                    text.len()
-                ),
-                Err(e) => log::warn!(
-                    "⚠️ Cannot read clipboard: {}. May need accessibility permission.",
-                    e
-                ),
-            },
-            Err(e) => log::error!("❌ Failed to create clipboard instance: {}", e),
-        }
-    }
 
     tauri::Builder::default()
         // Must be the first plugin: a second launch (double-clicking the app
@@ -264,16 +252,24 @@ fn main() {
         // Surface the QuickBar in the existing instance instead.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             log::info!("Second app instance launch detected; showing QuickBar");
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Err(e) = window::show_quickbar(app, &state.quickbar_foreground_window) {
-                    log::error!("Failed to show QuickBar for second-instance launch: {e}");
+            // show_quickbar touches AppKit (NSWorkspace / orderFront /
+            // invalidateShadow), all main-thread-only, but this callback runs
+            // on a tokio worker thread — dispatch the work back to the main
+            // thread instead of calling AppKit off-thread.
+            let app_for_main = app.clone();
+            if let Err(e) = app.run_on_main_thread(move || {
+                if let Some(state) = app_for_main.try_state::<AppState>() {
+                    if let Err(e) =
+                        window::show_quickbar(&app_for_main, &state.quickbar_foreground_window)
+                    {
+                        log::error!("Failed to show QuickBar for second-instance launch: {e}");
+                    }
                 }
+            }) {
+                log::error!("Failed to schedule QuickBar for second-instance launch: {e}");
             }
         }))
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -350,89 +346,11 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             let tray_icon = app.default_window_icon().unwrap().clone();
 
-            let _tray = TrayIconBuilder::with_id("main")
+            let _tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(tray_icon)
                 .icon_as_template(cfg!(target_os = "macos"))
                 .menu(&menu)
-                .on_menu_event(move |app, event| {
-                    let event_id = event.id().as_ref();
-                    log::debug!("Menu event: {}", event_id);
-
-                    match event_id {
-                        "quit" => {
-                            log::info!("Quit menu clicked");
-                            app.exit(0);
-                        }
-                        "clear_non_pinned" => {
-                            log::info!("Clear non-pinned menu clicked");
-                            let app_clone = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) =
-                                    clear_non_pinned_history(app_clone.clone(), app_clone.state())
-                                        .await
-                                {
-                                    log::error!("Failed to clear non-pinned history: {}", e);
-                                }
-                            });
-                        }
-                        "settings" => {
-                            log::info!("Settings menu clicked");
-                            if let Err(e) = window::open_settings_window(app) {
-                                log::error!("Failed to open settings window: {}", e);
-                            }
-                        }
-                        "pause_capture" => {
-                            let state: tauri::State<AppState> = app.state();
-                            // Serialize against `update_settings` so a settings-page
-                            // save and this tray toggle can't race each other and
-                            // clobber one another's change.
-                            let _settings_write_guard = safe_lock(&state.settings_write_lock);
-
-                            let mut settings = state.settings.get();
-                            settings.capture_paused = !settings.capture_paused;
-                            let now_paused = settings.capture_paused;
-                            state.settings.set(settings);
-
-                            if let Err(e) = state.settings.save(app) {
-                                log::error!("Failed to persist capture_paused toggle: {}", e);
-                            }
-                            log::info!(
-                                "Clipboard capture {} via tray menu",
-                                if now_paused { "paused" } else { "resumed" }
-                            );
-
-                            update_tray_menu(app);
-                        }
-                        id if id.starts_with("clip:") => {
-                            let clip_id = id.strip_prefix("clip:").unwrap().to_string();
-                            log::info!("Clip item clicked: {}", clip_id);
-
-                            let app_clone = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                // Use unified copy function with notification
-                                if let Err(e) =
-                                    copy_clip_to_clipboard_internal(&app_clone, &clip_id, true)
-                                        .await
-                                {
-                                    log::error!("Failed to copy clip: {}", e);
-                                }
-                            });
-                        }
-                        _ => {
-                            log::debug!("Unhandled menu event: {}", event_id);
-                        }
-                    }
-                })
-                .on_tray_icon_event(|_tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        log::debug!("Tray left-clicked - menu will show automatically");
-                    }
-                })
+                .on_menu_event(tray::handle_tray_menu_event)
                 .build(app)?;
 
             log::info!("System tray initialized");
@@ -554,7 +472,7 @@ mod storage_init_tests {
         );
 
         let storage = result.expect("should recover using the default directory");
-        assert!(storage.get_recent_clips(10).is_ok());
+        assert!(storage.get_recent_clip_previews(10).is_ok());
         assert!(
             fallback_notified,
             "expected the custom-dir fallback notification to fire"
@@ -583,7 +501,7 @@ mod storage_init_tests {
         );
 
         let storage = result.expect("should recover with a freshly rebuilt database");
-        assert!(storage.get_recent_clips(10).is_ok());
+        assert!(storage.get_recent_clip_previews(10).is_ok());
 
         let backup_path =
             reset_backup_path.expect("expected the corrupt-db reset notification to fire");

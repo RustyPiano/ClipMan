@@ -1,22 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeSettingsLocale } from '../../src/lib/utils/settings';
+import { createDefaultSettings, normalizeSettingsLocale } from '../../src/lib/utils/settings';
 import type { Settings } from '../../src/lib/types';
 
+// Base on the real defaults so new Settings fields can't silently drift out of
+// this fixture.
 function settings(overrides: Partial<Settings> = {}): Settings {
-  return {
-    globalShortcut: 'CommandOrControl+Shift+V',
-    autoPaste: true,
-    ignoreConcealed: true,
-    pinnedShortcut: null,
-    maxHistoryItems: 100,
-    trayTextLength: 70,
-    maxPinnedInTray: 5,
-    maxRecentInTray: 20,
-    customDataPath: null,
-    enableAutostart: false,
-    locale: 'zh-CN',
-    ...overrides,
-  };
+  return { ...createDefaultSettings(), ...overrides };
 }
 
 describe('settings helpers', () => {

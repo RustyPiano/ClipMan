@@ -224,13 +224,13 @@
 
   .markdown-content :global(h1) {
     font-size: 1.5em;
-    border-bottom: 1px solid hsl(var(--border));
+    border-bottom: 1px solid var(--border);
     padding-bottom: 0.3em;
   }
 
   .markdown-content :global(h2) {
     font-size: 1.3em;
-    border-bottom: 1px solid hsl(var(--border));
+    border-bottom: 1px solid var(--border);
     padding-bottom: 0.3em;
   }
 
@@ -298,7 +298,7 @@
   }
 
   .markdown-content :global(code) {
-    background-color: hsl(var(--muted));
+    background-color: var(--muted);
     padding: 0.2em 0.4em;
     border-radius: 4px;
     font-family:
@@ -307,12 +307,12 @@
   }
 
   .markdown-content :global(pre) {
-    background-color: hsl(var(--muted));
+    background-color: var(--muted);
     padding: 1em;
     border-radius: 6px;
     overflow-x: auto;
     margin: 1em 0;
-    border: 1px solid hsl(var(--border));
+    border: 1px solid var(--border);
   }
 
   .markdown-content :global(pre code) {
@@ -323,30 +323,30 @@
   }
 
   .markdown-content :global(blockquote) {
-    border-left: 4px solid hsl(var(--primary));
+    border-left: 4px solid var(--primary);
     padding-left: 1em;
     margin: 1em 0;
-    color: hsl(var(--muted-foreground));
-    background-color: hsl(var(--muted) / 0.3);
+    color: var(--muted-foreground);
+    background-color: color-mix(in srgb, var(--muted) 30%, transparent);
     padding: 0.5em 1em;
     border-radius: 4px;
   }
 
   .markdown-content :global(a) {
-    color: hsl(var(--primary));
+    color: var(--primary);
     text-decoration: underline;
-    text-decoration-color: hsl(var(--primary) / 0.3);
+    text-decoration-color: color-mix(in srgb, var(--primary) 30%, transparent);
     transition: text-decoration-color 0.2s;
     word-break: break-all;
   }
 
   .markdown-content :global(a:hover) {
-    text-decoration-color: hsl(var(--primary));
+    text-decoration-color: var(--primary);
   }
 
   .markdown-content :global(strong) {
     font-weight: 700;
-    color: hsl(var(--foreground));
+    color: var(--foreground);
   }
 
   .markdown-content :global(em) {
@@ -355,7 +355,7 @@
 
   .markdown-content :global(hr) {
     border: none;
-    border-top: 1px solid hsl(var(--border));
+    border-top: 1px solid var(--border);
     margin: 1.5em 0;
   }
 
@@ -367,13 +367,13 @@
 
   .markdown-content :global(th),
   .markdown-content :global(td) {
-    border: 1px solid hsl(var(--border));
+    border: 1px solid var(--border);
     padding: 0.5em;
     text-align: left;
   }
 
   .markdown-content :global(th) {
-    background-color: hsl(var(--muted));
+    background-color: var(--muted);
     font-weight: 700;
   }
 

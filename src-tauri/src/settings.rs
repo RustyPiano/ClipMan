@@ -4,6 +4,25 @@ use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "zh-CN";
+const SETTINGS_KEY: &str = "settings";
+const LEGACY_SETTINGS_KEYS: [&str; 16] = [
+    "global_shortcut",
+    "auto_paste",
+    "ignore_concealed",
+    "pinned_shortcut",
+    "max_history_items",
+    "tray_text_length",
+    "max_pinned_in_tray",
+    "max_recent_in_tray",
+    "custom_data_path",
+    "enable_autostart",
+    "locale",
+    "max_text_bytes",
+    "max_image_dimension",
+    "skip_secrets",
+    "ignored_apps",
+    "capture_paused",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -70,25 +89,11 @@ impl Settings {
             return Err("Global shortcut cannot be empty".to_string());
         }
 
-        self.pinned_shortcut = self
-            .pinned_shortcut
-            .take()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        self.normalize_common();
 
         if self.pinned_shortcut.as_deref() == Some(self.global_shortcut.as_str()) {
             return Err("Pinned shortcut cannot match the main global shortcut".to_string());
         }
-
-        self.max_history_items = self.max_history_items.clamp(1, 10_000);
-        self.tray_text_length = self.tray_text_length.clamp(10, 200);
-        self.max_pinned_in_tray = self.max_pinned_in_tray.clamp(0, 50);
-        self.max_recent_in_tray = self.max_recent_in_tray.clamp(0, 100);
-        self.max_text_bytes = self.max_text_bytes.clamp(4096, 50_000_000);
-        self.max_image_dimension = clamp_max_image_dimension(self.max_image_dimension);
-        self.ignored_apps = normalize_ignored_apps(self.ignored_apps);
-
-        self.locale = normalize_locale(&self.locale);
 
         Ok(self)
     }
@@ -99,16 +104,22 @@ impl Settings {
             self.global_shortcut = Settings::default().global_shortcut;
         }
 
-        self.pinned_shortcut = self
-            .pinned_shortcut
-            .take()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        self.normalize_common();
 
         if self.pinned_shortcut.as_deref() == Some(self.global_shortcut.as_str()) {
             log::warn!("Pinned shortcut matches main shortcut on load; clearing pinned shortcut");
             self.pinned_shortcut = None;
         }
+
+        self
+    }
+
+    fn normalize_common(&mut self) {
+        self.pinned_shortcut = self
+            .pinned_shortcut
+            .take()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
 
         self.max_history_items = self.max_history_items.clamp(1, 10_000);
         self.tray_text_length = self.tray_text_length.clamp(10, 200);
@@ -116,11 +127,9 @@ impl Settings {
         self.max_recent_in_tray = self.max_recent_in_tray.clamp(0, 100);
         self.max_text_bytes = self.max_text_bytes.clamp(4096, 50_000_000);
         self.max_image_dimension = clamp_max_image_dimension(self.max_image_dimension);
-        self.ignored_apps = normalize_ignored_apps(self.ignored_apps);
+        self.ignored_apps = normalize_ignored_apps(std::mem::take(&mut self.ignored_apps));
 
         self.locale = normalize_locale(&self.locale);
-
-        self
     }
 }
 
@@ -160,6 +169,82 @@ fn normalize_ignored_apps(apps: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Value>) -> Settings {
+    let mut candidate = Settings::default();
+
+    if let Some(v) = get("global_shortcut").and_then(|v| v.as_str().map(String::from)) {
+        candidate.global_shortcut = v;
+    }
+
+    if let Some(v) = get("auto_paste").and_then(|v| v.as_bool()) {
+        candidate.auto_paste = v;
+    }
+
+    if let Some(v) = get("ignore_concealed").and_then(|v| v.as_bool()) {
+        candidate.ignore_concealed = v;
+    }
+
+    if let Some(v) = get("pinned_shortcut") {
+        candidate.pinned_shortcut = v.as_str().map(String::from);
+    }
+
+    if let Some(v) = get("max_history_items").and_then(|v| v.as_u64()) {
+        candidate.max_history_items = v as usize;
+    }
+
+    if let Some(v) = get("tray_text_length").and_then(|v| v.as_u64()) {
+        candidate.tray_text_length = v as usize;
+    }
+
+    if let Some(v) = get("max_pinned_in_tray").and_then(|v| v.as_u64()) {
+        candidate.max_pinned_in_tray = v as usize;
+    }
+
+    if let Some(v) = get("max_recent_in_tray").and_then(|v| v.as_u64()) {
+        candidate.max_recent_in_tray = v as usize;
+    }
+
+    if let Some(v) = get("custom_data_path").and_then(|v| v.as_str().map(String::from)) {
+        candidate.custom_data_path = Some(v);
+    }
+
+    if let Some(v) = get("enable_autostart").and_then(|v| v.as_bool()) {
+        candidate.enable_autostart = v;
+    }
+
+    if let Some(v) = get("locale").and_then(|v| v.as_str().map(String::from)) {
+        candidate.locale = v;
+    }
+
+    if let Some(v) = get("max_text_bytes").and_then(|v| v.as_u64()) {
+        candidate.max_text_bytes = v as usize;
+    }
+
+    if let Some(v) = get("max_image_dimension").and_then(|v| v.as_u64()) {
+        // Saturate to u32::MAX *before* narrowing so a stored value above
+        // u32::MAX can't wrap around (e.g. 2^32 -> 0, which would silently
+        // disable downscaling). normalize_for_load then clamps to range.
+        candidate.max_image_dimension = v.min(u32::MAX as u64) as u32;
+    }
+
+    if let Some(v) = get("skip_secrets").and_then(|v| v.as_bool()) {
+        candidate.skip_secrets = v;
+    }
+
+    if let Some(v) = get("ignored_apps").and_then(|v| v.as_array().cloned()) {
+        candidate.ignored_apps = v
+            .into_iter()
+            .filter_map(|entry| entry.as_str().map(String::from))
+            .collect();
+    }
+
+    if let Some(v) = get("capture_paused").and_then(|v| v.as_bool()) {
+        candidate.capture_paused = v;
+    }
+
+    candidate
+}
+
 pub struct SettingsManager {
     settings: Arc<Mutex<Settings>>,
 }
@@ -181,86 +266,11 @@ impl SettingsManager {
         let store = app
             .store("settings.json")
             .map_err(|e| format!("Failed to access store: {}", e))?;
-        let mut candidate = Settings::default();
-
-        if let Some(v) = store
-            .get("global_shortcut")
-            .and_then(|v| v.as_str().map(String::from))
-        {
-            candidate.global_shortcut = v;
-        }
-
-        if let Some(v) = store.get("auto_paste").and_then(|v| v.as_bool()) {
-            candidate.auto_paste = v;
-        }
-
-        if let Some(v) = store.get("ignore_concealed").and_then(|v| v.as_bool()) {
-            candidate.ignore_concealed = v;
-        }
-
-        if let Some(v) = store.get("pinned_shortcut") {
-            candidate.pinned_shortcut = v.as_str().map(String::from);
-        }
-
-        if let Some(v) = store.get("max_history_items").and_then(|v| v.as_u64()) {
-            candidate.max_history_items = v as usize;
-        }
-
-        if let Some(v) = store.get("tray_text_length").and_then(|v| v.as_u64()) {
-            candidate.tray_text_length = v as usize;
-        }
-
-        if let Some(v) = store.get("max_pinned_in_tray").and_then(|v| v.as_u64()) {
-            candidate.max_pinned_in_tray = v as usize;
-        }
-
-        if let Some(v) = store.get("max_recent_in_tray").and_then(|v| v.as_u64()) {
-            candidate.max_recent_in_tray = v as usize;
-        }
-
-        if let Some(v) = store
-            .get("custom_data_path")
-            .and_then(|v| v.as_str().map(String::from))
-        {
-            candidate.custom_data_path = Some(v);
-        }
-
-        if let Some(v) = store.get("enable_autostart").and_then(|v| v.as_bool()) {
-            candidate.enable_autostart = v;
-        }
-
-        if let Some(v) = store
-            .get("locale")
-            .and_then(|v| v.as_str().map(String::from))
-        {
-            candidate.locale = v;
-        }
-
-        if let Some(v) = store.get("max_text_bytes").and_then(|v| v.as_u64()) {
-            candidate.max_text_bytes = v as usize;
-        }
-
-        if let Some(v) = store.get("max_image_dimension").and_then(|v| v.as_u64()) {
-            candidate.max_image_dimension = v as u32;
-        }
-
-        if let Some(v) = store.get("skip_secrets").and_then(|v| v.as_bool()) {
-            candidate.skip_secrets = v;
-        }
-
-        if let Some(v) = store
-            .get("ignored_apps")
-            .and_then(|v| v.as_array().cloned())
-        {
-            candidate.ignored_apps = v
-                .into_iter()
-                .filter_map(|entry| entry.as_str().map(String::from))
-                .collect();
-        }
-
-        if let Some(v) = store.get("capture_paused").and_then(|v| v.as_bool()) {
-            candidate.capture_paused = v;
-        }
+        let candidate = match store.get(SETTINGS_KEY) {
+            Some(value) => serde_json::from_value(value)
+                .map_err(|e| format!("Failed to parse settings store: {}", e))?,
+            None => settings_from_legacy_store(|key| store.get(key)),
+        };
 
         let normalized = candidate.normalize_for_load();
         *crate::safe_lock(&self.settings) = normalized;
@@ -288,52 +298,12 @@ impl SettingsManager {
             .store("settings.json")
             .map_err(|e| format!("Failed to access store: {}", e))?;
 
-        store.set(
-            "global_shortcut",
-            serde_json::json!(settings.global_shortcut),
-        );
-        store.set("auto_paste", serde_json::json!(settings.auto_paste));
-        store.set(
-            "ignore_concealed",
-            serde_json::json!(settings.ignore_concealed),
-        );
-        store.set(
-            "pinned_shortcut",
-            serde_json::json!(settings.pinned_shortcut),
-        );
-        store.set(
-            "max_history_items",
-            serde_json::json!(settings.max_history_items),
-        );
-        store.set(
-            "tray_text_length",
-            serde_json::json!(settings.tray_text_length),
-        );
-        store.set(
-            "max_pinned_in_tray",
-            serde_json::json!(settings.max_pinned_in_tray),
-        );
-        store.set(
-            "max_recent_in_tray",
-            serde_json::json!(settings.max_recent_in_tray),
-        );
-        store.set(
-            "custom_data_path",
-            serde_json::json!(settings.custom_data_path),
-        );
-        store.set(
-            "enable_autostart",
-            serde_json::json!(settings.enable_autostart),
-        );
-        store.set("locale", serde_json::json!(settings.locale));
-        store.set("max_text_bytes", serde_json::json!(settings.max_text_bytes));
-        store.set(
-            "max_image_dimension",
-            serde_json::json!(settings.max_image_dimension),
-        );
-        store.set("skip_secrets", serde_json::json!(settings.skip_secrets));
-        store.set("ignored_apps", serde_json::json!(settings.ignored_apps));
-        store.set("capture_paused", serde_json::json!(settings.capture_paused));
+        let value = serde_json::to_value(settings)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+        store.set(SETTINGS_KEY, value);
+        for key in LEGACY_SETTINGS_KEYS {
+            store.delete(key);
+        }
 
         store
             .save()
@@ -596,5 +566,79 @@ mod tests {
             saved_then_reloaded.ignored_apps
         );
         assert!(saved_then_reloaded.capture_paused);
+    }
+
+    #[test]
+    fn settings_store_format_loads_new_object_and_legacy_keys() {
+        let new_json = serde_json::json!({
+            "globalShortcut": " CommandOrControl+Alt+V ",
+            "autoPaste": false,
+            "ignoreConcealed": false,
+            "pinnedShortcut": " CommandOrControl+Shift+P ",
+            "maxHistoryItems": 200,
+            "trayTextLength": 80,
+            "maxPinnedInTray": 7,
+            "maxRecentInTray": 30,
+            "customDataPath": "/tmp/clipman-data",
+            "enableAutostart": true,
+            "locale": " en ",
+            "maxTextBytes": 123456,
+            "maxImageDimension": 2048,
+            "skipSecrets": false,
+            "ignoredApps": [" Terminal ", "terminal", "Safari"],
+            "capturePaused": true
+        });
+        let legacy_json = serde_json::json!({
+            "global_shortcut": " CommandOrControl+Alt+V ",
+            "auto_paste": false,
+            "ignore_concealed": false,
+            "pinned_shortcut": " CommandOrControl+Shift+P ",
+            "max_history_items": 200,
+            "tray_text_length": 80,
+            "max_pinned_in_tray": 7,
+            "max_recent_in_tray": 30,
+            "custom_data_path": "/tmp/clipman-data",
+            "enable_autostart": true,
+            "locale": " en ",
+            "max_text_bytes": 123456,
+            "max_image_dimension": 2048,
+            "skip_secrets": false,
+            "ignored_apps": [" Terminal ", "terminal", "Safari"],
+            "capture_paused": true
+        });
+
+        let new_loaded = serde_json::from_value::<Settings>(new_json)
+            .unwrap()
+            .normalize_for_load();
+        let legacy_loaded =
+            settings_from_legacy_store(|key| legacy_json.get(key).cloned()).normalize_for_load();
+
+        for loaded in [new_loaded, legacy_loaded] {
+            assert_eq!("CommandOrControl+Alt+V", loaded.global_shortcut);
+            assert!(!loaded.auto_paste);
+            assert!(!loaded.ignore_concealed);
+            assert_eq!(
+                Some("CommandOrControl+Shift+P".to_string()),
+                loaded.pinned_shortcut
+            );
+            assert_eq!(200, loaded.max_history_items);
+            assert_eq!(80, loaded.tray_text_length);
+            assert_eq!(7, loaded.max_pinned_in_tray);
+            assert_eq!(30, loaded.max_recent_in_tray);
+            assert_eq!(
+                Some("/tmp/clipman-data".to_string()),
+                loaded.custom_data_path
+            );
+            assert!(loaded.enable_autostart);
+            assert_eq!("en", loaded.locale);
+            assert_eq!(123456, loaded.max_text_bytes);
+            assert_eq!(2048, loaded.max_image_dimension);
+            assert!(!loaded.skip_secrets);
+            assert_eq!(
+                vec!["Terminal".to_string(), "Safari".to_string()],
+                loaded.ignored_apps
+            );
+            assert!(loaded.capture_paused);
+        }
     }
 }

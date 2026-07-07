@@ -26,15 +26,11 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
 
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
 }
 
 :root {
@@ -44,9 +40,6 @@
 
   --card: hsl(0 0% 100%);
   --card-foreground: hsl(224 71.4% 4.1%);
-
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(224 71.4% 4.1%);
 
   --primary: hsl(224 71.4% 4.1%);
   --primary-foreground: hsl(0 0% 100%);
@@ -90,9 +83,6 @@
   --card: hsl(222 47% 8%);
   --card-foreground: hsl(210 40% 98%);
 
-  --popover: hsl(222 47% 6%);
-  --popover-foreground: hsl(210 40% 98%);
-
   --primary: hsl(0 0% 100%);
   --primary-foreground: hsl(222 47% 6%);
 
@@ -129,9 +119,6 @@
   --card: hsl(343 33% 99%);
   --card-foreground: hsl(343 40% 15%);
 
-  --popover: hsl(343 33% 98%);
-  --popover-foreground: hsl(343 40% 15%);
-
   --primary: hsl(343 55% 45%);
   --primary-foreground: hsl(343 20% 99%);
 
@@ -150,8 +137,6 @@
   --border: hsl(343 25% 90%);
   --input: hsl(343 25% 90%);
   --ring: hsl(343 55% 45%);
-
-  --radius: 0.6rem;
 
   /* Custom Floating Panel & Keycaps Styles for Light Pink Mode.
      Same rule: no CSS drop shadow — native window shadow only. */

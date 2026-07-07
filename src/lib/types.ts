@@ -55,7 +55,11 @@ export interface Settings {
   capturePaused: boolean;
 }
 
-export type PasteMode = 'default' | 'opposite' | 'paste' | 'copy';
+// The frontend only ever issues 'default' (honor the auto-paste setting) or
+// 'opposite' (⌘Enter swap). The Rust `PasteMode` enum additionally accepts
+// 'paste'/'copy', but nothing in the UI emits them — narrowing here makes the
+// paste/copy failure toast branch on a real, exhaustive set of modes.
+export type PasteMode = 'default' | 'opposite';
 
 export type ReorderDirection = 'up' | 'down';
 
@@ -67,7 +71,6 @@ export interface UpdateInfo {
   current_version: string;
   latest_version?: string;
   body?: string;
-  date?: string;
 }
 
 /**

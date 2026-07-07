@@ -112,36 +112,6 @@ pub struct FrontendClipItem {
     pub has_html: bool,
 }
 
-impl From<ClipItem> for FrontendClipItem {
-    fn from(item: ClipItem) -> Self {
-        use data_encoding::BASE64;
-
-        // Files, like Text, ship their path text as base64; only images render
-        // as data URLs from their thumbnail/content bytes.
-        let content = match item.content_type {
-            ContentType::Image => {
-                let image_bytes = item.thumbnail.as_deref().unwrap_or(&item.content);
-                format!("data:image/png;base64,{}", BASE64.encode(image_bytes))
-            }
-            _ => BASE64.encode(&item.content),
-        };
-        let has_html = item.html.is_some();
-
-        FrontendClipItem {
-            id: item.id,
-            content,
-            content_type: item.content_type,
-            timestamp: item.timestamp,
-            is_pinned: item.is_pinned,
-            pin_order: item.pin_order,
-            label: item.label,
-            group_name: item.group_name,
-            source_app: item.source_app,
-            has_html,
-        }
-    }
-}
-
 impl ClipPreviewItem {
     pub fn from_clip_item(item: &ClipItem) -> Self {
         Self::from_clip_item_with_id(item, item.id.clone())
@@ -236,18 +206,11 @@ pub struct ClipStorage {
 
 const CLIP_COLUMNS: &str =
     "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name, source_app, html";
-const CLIP_COLUMNS_WITH_ALIAS: &str = "c.id, c.content, c.thumbnail, c.content_type, c.timestamp, c.is_pinned, c.pin_order, c.label, c.group_name, c.source_app, c.html";
 const CLIP_PREVIEW_COLUMNS: &str = "id,
      CASE WHEN content_type IN ('text','files') THEN substr(content, 1, 4096) ELSE x'' END AS preview_content,
      thumbnail,
      content_type, timestamp, is_pinned, pin_order, label, group_name, source_app,
      (html IS NOT NULL) AS has_html";
-const CLIP_PREVIEW_COLUMNS_WITH_ALIAS: &str =
-    "c.id,
-     CASE WHEN c.content_type IN ('text','files') THEN substr(c.content, 1, 4096) ELSE x'' END AS preview_content,
-     c.thumbnail,
-     c.content_type, c.timestamp, c.is_pinned, c.pin_order, c.label, c.group_name, c.source_app,
-     (c.html IS NOT NULL) AS has_html";
 const FTS_REBUILD_BATCH_SIZE: i64 = 100;
 const TEXT_PREVIEW_BYTES: usize = 4096;
 
@@ -324,11 +287,11 @@ impl ClipStorage {
 
     pub fn insert(&self, item: &ClipItem, max_history_items: usize) -> Result<Option<String>> {
         let tx = self.conn.unchecked_transaction()?;
-        let result = Self::insert_with_conn(&tx, item, max_history_items)?;
+        let (result, pruned) = Self::insert_with_conn(&tx, item, max_history_items)?;
         tx.commit()?;
-        // insert_with_conn may have pruned stale history above max_history_items;
-        // reclaim those freed pages now that the transaction is closed (§4).
-        self.reclaim_space();
+        if pruned {
+            self.reclaim_space();
+        }
         Ok(result)
     }
 
@@ -336,7 +299,7 @@ impl ClipStorage {
         conn: &Connection,
         item: &ClipItem,
         max_history_items: usize,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Option<String>, bool)> {
         let content_hash = hash_bytes(&item.content);
 
         let existing_id: Option<String> = conn
@@ -355,8 +318,14 @@ impl ClipStorage {
                 "⏭️ Duplicate content detected (hash: {}), updating timestamp",
                 &content_hash[..8]
             );
-            Self::refresh_duplicate_with_conn(conn, &id, item.timestamp, item.html.as_deref())?;
-            return Ok(Some(id));
+            Self::refresh_duplicate_with_conn(
+                conn,
+                &id,
+                item.timestamp,
+                item.html.as_deref(),
+                item.source_app.as_deref(),
+            )?;
+            return Ok((Some(id), false));
         }
 
         conn.execute(
@@ -382,34 +351,9 @@ impl ClipStorage {
         )?;
 
         Self::sync_fts_for_clip_id_with_conn(conn, &item.id)?;
-        Self::prune_history_with_conn(conn, max_history_items)?;
+        let pruned = Self::prune_history_with_conn(conn, max_history_items)? > 0;
 
-        Ok(None)
-    }
-
-    pub fn get_recent_clips(&self, limit: usize) -> Result<Vec<ClipItem>> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_COLUMNS}
-             FROM clips
-             WHERE is_pinned = 0
-             ORDER BY timestamp DESC, id DESC
-             LIMIT ?1"
-        ))?;
-
-        let items = stmt.query_map([limit], Self::clip_from_row)?;
-        items.collect()
-    }
-
-    pub fn get_pinned_clips(&self) -> Result<Vec<ClipItem>> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_COLUMNS}
-             FROM clips
-             WHERE is_pinned = 1
-             ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC"
-        ))?;
-
-        let items = stmt.query_map([], Self::clip_from_row)?;
-        items.collect()
+        Ok((None, pruned))
     }
 
     pub fn get_recent_clip_previews(&self, limit: usize) -> Result<Vec<ClipPreviewItem>> {
@@ -481,21 +425,6 @@ impl ClipStorage {
 
         let items = stmt.query_map([limit], Self::preview_from_row)?;
         items.collect()
-    }
-
-    pub fn search(&self, query: &str) -> Result<Vec<ClipItem>> {
-        log::info!("🔍 Searching for: {}", query);
-
-        let query = query.trim();
-        if query.is_empty() {
-            return self.get_all_for_search();
-        }
-
-        if query.chars().count() < 3 {
-            return self.search_with_like(query);
-        }
-
-        self.search_with_fts(query)
     }
 
     pub fn search_clip_previews(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
@@ -579,13 +508,11 @@ impl ClipStorage {
 
     fn update_pin_with_conn(conn: &Connection, id: &str, is_pinned: bool) -> Result<()> {
         let pin_order = if is_pinned {
-            let max_order: Option<i32> = conn
-                .query_row(
-                    "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap_or(None);
+            let max_order: Option<i32> = conn.query_row(
+                "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
+                [],
+                |row| row.get(0),
+            )?;
 
             Some(max_order.unwrap_or(0) + 1)
         } else {
@@ -683,21 +610,6 @@ impl ClipStorage {
         Ok(())
     }
 
-    pub fn clear_all(&self) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        Self::clear_all_with_conn(&tx)?;
-        tx.commit()?;
-        self.reclaim_space();
-        Ok(())
-    }
-
-    fn clear_all_with_conn(conn: &Connection) -> Result<()> {
-        log::info!("🗑️ Clearing all clipboard history");
-        conn.execute("DELETE FROM clips_fts", [])?;
-        conn.execute("DELETE FROM clips", [])?;
-        Ok(())
-    }
-
     pub fn clear_non_pinned(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         Self::clear_non_pinned_with_conn(&tx)?;
@@ -752,18 +664,39 @@ impl ClipStorage {
         Ok(())
     }
 
-    /// Refresh a duplicate clip on re-copy: bump its timestamp and let the most
-    /// recent rich copy win, while a plain-text re-copy (html = None) keeps the
-    /// previously captured html via COALESCE (D6).
+    /// Bump several clips' timestamps to the same value in a single transaction,
+    /// so a merge paste moves every touched clip to the top of the recent list
+    /// with one write instead of one round-trip (and one prepared statement) per
+    /// clip (#38). The single-clip path keeps using `update_timestamp`.
+    pub fn touch_timestamps(&self, ids: &[String], new_timestamp: i64) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE clips SET timestamp = ?1 WHERE id = ?2")?;
+            for id in ids {
+                stmt.execute(params![new_timestamp, id])?;
+            }
+        }
+        tx.commit()?;
+        log::debug!("📍 Touched {} item timestamp(s)", ids.len());
+        Ok(())
+    }
+
+    /// Refresh a duplicate clip on re-copy: bump its timestamp and let present
+    /// metadata win while missing fields keep the old values via COALESCE (D6).
     fn refresh_duplicate_with_conn(
         conn: &Connection,
         id: &str,
         new_timestamp: i64,
         html: Option<&str>,
+        source_app: Option<&str>,
     ) -> Result<()> {
         conn.execute(
-            "UPDATE clips SET timestamp = ?1, html = COALESCE(?2, html) WHERE id = ?3",
-            params![new_timestamp, html, id],
+            "UPDATE clips
+             SET timestamp = ?1,
+                 html = COALESCE(?2, html),
+                 source_app = COALESCE(?3, source_app)
+             WHERE id = ?4",
+            params![new_timestamp, html, source_app, id],
         )?;
         log::debug!("📍 Refreshed duplicate item {}", id);
         Ok(())
@@ -913,18 +846,6 @@ impl ClipStorage {
         })
     }
 
-    fn get_all_for_search(&self) -> Result<Vec<ClipItem>> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_COLUMNS}
-             FROM clips
-             ORDER BY timestamp DESC
-             LIMIT 1000"
-        ))?;
-
-        let items = stmt.query_map([], Self::clip_from_row)?;
-        items.collect()
-    }
-
     fn get_all_previews_for_search(&self) -> Result<Vec<ClipPreviewItem>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {CLIP_PREVIEW_COLUMNS}
@@ -937,51 +858,19 @@ impl ClipStorage {
         items.collect()
     }
 
-    fn search_with_fts(&self, query: &str) -> Result<Vec<ClipItem>> {
-        let fts_query = escape_fts_query(query);
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_COLUMNS_WITH_ALIAS}
-             FROM clips c
-             JOIN clips_fts ON clips_fts.rowid = c.rowid AND clips_fts.clip_id = c.id
-             WHERE clips_fts MATCH ?1
-             ORDER BY c.timestamp DESC
-             LIMIT 1000"
-        ))?;
-
-        let items = stmt.query_map([fts_query], Self::clip_from_row)?;
-        items.collect()
-    }
-
     fn search_previews_with_fts(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
         let fts_query = escape_fts_query(query);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS_WITH_ALIAS}
-             FROM clips c
-             JOIN clips_fts ON clips_fts.rowid = c.rowid AND clips_fts.clip_id = c.id
-             WHERE clips_fts MATCH ?1
-             ORDER BY c.timestamp DESC
-             LIMIT 1000"
-        ))?;
-
-        let items = stmt.query_map([fts_query], Self::preview_from_row)?;
-        items.collect()
-    }
-
-    fn search_with_like(&self, query: &str) -> Result<Vec<ClipItem>> {
-        let like_query = format!("%{}%", escape_like_query(query));
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_COLUMNS}
+            "SELECT {CLIP_PREVIEW_COLUMNS}
              FROM clips
-             WHERE (
-                content_type IN ('text','files')
-                AND CAST(substr(content, 1, {TEXT_PREVIEW_BYTES}) AS TEXT) LIKE ?1 ESCAPE '\\'
+             WHERE (rowid, id) IN (
+                SELECT rowid, clip_id FROM clips_fts WHERE clips_fts MATCH ?1
              )
-             OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
              ORDER BY timestamp DESC
              LIMIT 1000"
         ))?;
 
-        let items = stmt.query_map([like_query], Self::clip_from_row)?;
+        let items = stmt.query_map([fts_query], Self::preview_from_row)?;
         items.collect()
     }
 
@@ -1016,58 +905,32 @@ impl ClipStorage {
         loop {
             let rows = {
                 let mut stmt = conn.prepare(
-                    "SELECT rowid, id
+                    "SELECT rowid, id,
+                        CASE WHEN content_type IN ('text','files') THEN content ELSE x'' END AS search_content,
+                        content_type, label
                      FROM clips
                      WHERE rowid > ?1
                      ORDER BY rowid ASC
                      LIMIT ?2",
                 )?;
-                let rows = stmt.query_map(params![last_rowid, FTS_REBUILD_BATCH_SIZE], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                })?;
+                let rows = stmt.query_map(
+                    params![last_rowid, FTS_REBUILD_BATCH_SIZE],
+                    Self::fts_payload_from_row,
+                )?;
                 rows.collect::<Result<Vec<_>>>()?
             };
 
-            let Some((batch_last_rowid, _)) = rows.last() else {
+            let Some(batch_last_rowid) = rows.last().map(|payload| payload.rowid) else {
                 break;
             };
-            last_rowid = *batch_last_rowid;
+            last_rowid = batch_last_rowid;
 
-            for (rowid, clip_id) in rows {
-                if let Some(payload) = Self::fts_payload_for_rowid_with_conn(conn, rowid, &clip_id)?
-                {
-                    Self::insert_fts_payload_with_conn(conn, &payload)?;
-                }
+            for payload in rows {
+                Self::insert_fts_payload_with_conn(conn, &payload)?;
             }
         }
 
         Ok(())
-    }
-
-    fn fts_payload_for_rowid_with_conn(
-        conn: &Connection,
-        rowid: i64,
-        id: &str,
-    ) -> Result<Option<FtsPayload>> {
-        conn.query_row(
-            "SELECT rowid, id,
-                CASE WHEN content_type IN ('text','files') THEN content ELSE x'' END AS search_content,
-                content_type, label
-             FROM clips
-             WHERE rowid = ?1 AND id = ?2",
-            params![rowid, id],
-            |row| {
-                let content_type = ContentType::from_db_value(&row.get::<_, String>(3)?);
-                Ok(FtsPayload {
-                    rowid: row.get(0)?,
-                    clip_id: row.get(1)?,
-                    content: row.get(2)?,
-                    content_type,
-                    label: row.get(4)?,
-                })
-            },
-        )
-        .optional()
     }
 
     fn sync_fts_for_clip_id_with_conn(conn: &Connection, id: &str) -> Result<()> {
@@ -1081,16 +944,7 @@ impl ClipStorage {
                  FROM clips
                  WHERE id = ?1",
                 params![id],
-                |row| {
-                    let content_type = ContentType::from_db_value(&row.get::<_, String>(3)?);
-                    Ok(FtsPayload {
-                        rowid: row.get(0)?,
-                        clip_id: row.get(1)?,
-                        content: row.get(2)?,
-                        content_type,
-                        label: row.get(4)?,
-                    })
-                },
+                Self::fts_payload_from_row,
             )
             .optional()?;
 
@@ -1099,6 +953,17 @@ impl ClipStorage {
         }
 
         Ok(())
+    }
+
+    fn fts_payload_from_row(row: &Row<'_>) -> Result<FtsPayload> {
+        let content_type = ContentType::from_db_value(&row.get::<_, String>(3)?);
+        Ok(FtsPayload {
+            rowid: row.get(0)?,
+            clip_id: row.get(1)?,
+            content: row.get(2)?,
+            content_type,
+            label: row.get(4)?,
+        })
     }
 
     fn insert_fts_payload_with_conn(conn: &Connection, payload: &FtsPayload) -> Result<()> {
@@ -1111,28 +976,28 @@ impl ClipStorage {
         Ok(())
     }
 
-    fn prune_history_with_conn(conn: &Connection, max_history_items: usize) -> Result<()> {
+    fn prune_history_with_conn(conn: &Connection, max_history_items: usize) -> Result<usize> {
         conn.execute(
             "DELETE FROM clips_fts
              WHERE clip_id IN (
                 SELECT id FROM clips
                 WHERE is_pinned = 0
-                ORDER BY timestamp DESC
+                ORDER BY timestamp DESC, id DESC
                 LIMIT -1 OFFSET ?1
              )",
             params![max_history_items],
         )?;
-        conn.execute(
+        let deleted = conn.execute(
             "DELETE FROM clips
              WHERE id IN (
                 SELECT id FROM clips
                 WHERE is_pinned = 0
-                ORDER BY timestamp DESC
+                ORDER BY timestamp DESC, id DESC
                 LIMIT -1 OFFSET ?1
              )",
             params![max_history_items],
         )?;
-        Ok(())
+        Ok(deleted)
     }
 }
 
@@ -1509,7 +1374,7 @@ mod tests {
         assert_eq!("work email", indexed_label);
 
         let search_ids: Vec<String> = storage
-            .search("email")
+            .search_clip_previews("email")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1537,7 +1402,7 @@ mod tests {
             .unwrap();
 
         let search_ids: Vec<String> = storage
-            .search("中")
+            .search_clip_previews("中")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1560,7 +1425,7 @@ mod tests {
             .unwrap();
 
         let search_ids: Vec<String> = storage
-            .search("中")
+            .search_clip_previews("中")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1596,7 +1461,7 @@ mod tests {
             .unwrap();
 
         let recent_ids: Vec<String> = storage
-            .get_recent_clips(10)
+            .get_recent_clip_previews(10)
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1604,12 +1469,54 @@ mod tests {
         assert_eq!(vec!["recent-new", "recent-old"], recent_ids);
 
         let pinned_ids: Vec<String> = storage
-            .get_pinned_clips()
+            .get_pinned_clip_previews()
             .unwrap()
             .into_iter()
             .map(|item| item.id)
             .collect();
         assert_eq!(vec!["pinned-first", "pinned-later"], pinned_ids);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn touch_timestamps_bumps_all_given_ids_in_one_transaction() {
+        let db_path = temp_db_path("touch_batch");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        storage
+            .insert(&test_item("a", b"a", 10, false, None), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("b", b"b", 20, false, None), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("c", b"c", 30, false, None), 100)
+            .unwrap();
+
+        // Lift the two oldest clips above the newest with one shared timestamp;
+        // an unknown id is a harmless no-op (UPDATE matches nothing).
+        storage
+            .touch_timestamps(
+                &["a".to_string(), "b".to_string(), "missing".to_string()],
+                99,
+            )
+            .unwrap();
+
+        assert_eq!(storage.get_by_id("a").unwrap().unwrap().timestamp, 99);
+        assert_eq!(storage.get_by_id("b").unwrap().unwrap().timestamp, 99);
+        assert_eq!(storage.get_by_id("c").unwrap().unwrap().timestamp, 30);
+
+        // Both touched clips now sort above the untouched one; the id DESC
+        // tiebreak orders the two equal-timestamp clips (b before a).
+        let recent_ids: Vec<String> = storage
+            .get_recent_clip_previews(10)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(vec!["b", "a", "c"], recent_ids);
 
         drop(storage);
         cleanup_db(&db_path);
@@ -1632,7 +1539,7 @@ mod tests {
         assert_eq!(Some("work email".to_string()), item.label);
 
         let search_ids: Vec<String> = storage
-            .search("email")
+            .search_clip_previews("email")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1695,7 +1602,7 @@ mod tests {
         storage.reorder_pinned("second", "up").unwrap();
 
         let pinned: Vec<(String, Option<i32>)> = storage
-            .get_pinned_clips()
+            .get_pinned_clip_previews()
             .unwrap()
             .into_iter()
             .map(|item| (item.id, item.pin_order))
@@ -1712,7 +1619,7 @@ mod tests {
         storage.reorder_pinned("second", "down").unwrap();
 
         let pinned_ids: Vec<String> = storage
-            .get_pinned_clips()
+            .get_pinned_clip_previews()
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1962,7 +1869,7 @@ mod tests {
             "EXPLAIN QUERY PLAN
              SELECT id FROM clips
              WHERE is_pinned = 0
-             ORDER BY timestamp DESC
+             ORDER BY timestamp DESC, id DESC
              LIMIT -1 OFFSET 100",
         );
 
@@ -2111,10 +2018,8 @@ mod tests {
             )
             .unwrap();
 
-        let full_search = storage.search("needle").unwrap();
         let preview_search = storage.search_clip_previews("needle").unwrap();
 
-        assert!(full_search.is_empty());
         assert!(preview_search.is_empty());
         drop(storage);
         cleanup_db(&db_path);
@@ -2163,7 +2068,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM clips_fts", [], |row| row.get(0))
             .unwrap();
         let search_ids: Vec<String> = storage
-            .search("needle104")
+            .search_clip_previews("needle104")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -2336,7 +2241,7 @@ mod tests {
 
         let restored = ClipStorage::new(&destination_path).unwrap();
         let ids: Vec<String> = restored
-            .search("needle")
+            .search_clip_previews("needle")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -2461,7 +2366,7 @@ mod tests {
         );
 
         let search_ids: Vec<String> = storage
-            .search("report.pdf")
+            .search_clip_previews("report.pdf")
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -2517,6 +2422,7 @@ mod tests {
             .insert(
                 &ClipItem {
                     html: Some("<b>hello</b>".to_string()),
+                    source_app: Some("Browser".to_string()),
                     ..test_item("rich", b"hello", 1, false, None)
                 },
                 100,
@@ -2526,22 +2432,28 @@ mod tests {
             Some("<b>hello</b>".to_string()),
             storage.get_by_id("rich").unwrap().unwrap().html
         );
+        assert_eq!(
+            Some("Browser".to_string()),
+            storage.get_by_id("rich").unwrap().unwrap().source_app
+        );
 
-        // A plain-text re-copy of identical content (html = None) refreshes the
-        // timestamp but keeps the previously captured html via COALESCE (D6).
+        // A plain-text re-copy of identical content refreshes the timestamp
+        // but keeps missing metadata via COALESCE (D6).
         let dup_id = storage
             .insert(&test_item("plain-dup", b"hello", 2, false, None), 100)
             .unwrap();
         assert_eq!(Some("rich".to_string()), dup_id);
         let after_plain = storage.get_by_id("rich").unwrap().unwrap();
         assert_eq!(Some("<b>hello</b>".to_string()), after_plain.html);
+        assert_eq!(Some("Browser".to_string()), after_plain.source_app);
         assert_eq!(2, after_plain.timestamp);
 
-        // A newer rich re-copy wins and replaces the stored html.
+        // A newer rich re-copy wins and replaces the stored metadata.
         storage
             .insert(
                 &ClipItem {
                     html: Some("<i>hello</i>".to_string()),
+                    source_app: Some("Editor".to_string()),
                     ..test_item("rich-again", b"hello", 3, false, None)
                 },
                 100,
@@ -2550,6 +2462,10 @@ mod tests {
         assert_eq!(
             Some("<i>hello</i>".to_string()),
             storage.get_by_id("rich").unwrap().unwrap().html
+        );
+        assert_eq!(
+            Some("Editor".to_string()),
+            storage.get_by_id("rich").unwrap().unwrap().source_app
         );
 
         drop(storage);
@@ -2649,7 +2565,7 @@ mod tests {
 
         let size_before = database_byte_size(&storage);
 
-        storage.clear_all().unwrap();
+        storage.clear_non_pinned().unwrap();
 
         let size_after = database_byte_size(&storage);
 

@@ -5,6 +5,7 @@ export type Locale = 'zh-CN' | 'en';
 export interface Translations {
   // App
   appName: string;
+  appTagline: string;
 
   // Navigation
   history: string;
@@ -27,7 +28,6 @@ export interface Translations {
   reset: string;
   cancel: string;
   confirm: string;
-  quit: string;
 
   // Content types
   text: string;
@@ -53,8 +53,6 @@ export interface Translations {
 
   // Search
   searchPlaceholder: string;
-  showing: string;
-  items: string;
 
   // Preview pane
   selectToPreview: string;
@@ -80,6 +78,7 @@ export interface Translations {
   advancedManualInput: string;
   pinnedShortcut: string;
   pinnedShortcutDesc: string;
+  disableHotkeyFailed: string;
 
   // Clipboard settings
   maxHistoryItems: string;
@@ -106,7 +105,6 @@ export interface Translations {
   maxRecentInTrayDesc: string;
 
   // Storage settings
-  dataLocation: string;
   dataLocationDesc: string;
   currentLocation: string;
   changeLocation: string;
@@ -134,6 +132,7 @@ export interface Translations {
   downloadingUpdate: string;
   updateInstalled: string;
   installUpdateFailed: string;
+  releaseNotes: string;
 
   // Confirmations
   confirmClearHistory: string;
@@ -143,15 +142,8 @@ export interface Translations {
   loadSettingsFailed: string;
   saveSettingsFailed: string;
   copyFailed: string;
+  pasteFailed: string;
   clearFailed: string;
-
-  // Statistics
-  statistics: string;
-  total: string;
-
-  // Tray menu
-  trayPinnedHeader: string;
-  trayRecentHeader: string;
 
   // Loading
   loading: string;
@@ -217,6 +209,7 @@ export interface Translations {
 const zh: Translations = {
   // App
   appName: 'ClipMan',
+  appTagline: '高效的剪贴板管理工具',
 
   // Navigation
   history: '历史记录',
@@ -239,7 +232,6 @@ const zh: Translations = {
   reset: '重置',
   cancel: '取消',
   confirm: '确认',
-  quit: '退出',
 
   // Content types
   text: '文本',
@@ -264,8 +256,6 @@ const zh: Translations = {
 
   // Search
   searchPlaceholder: '搜索剪切板内容...',
-  showing: '显示',
-  items: '项',
 
   // Preview pane
   selectToPreview: '选择一项查看完整内容',
@@ -291,6 +281,7 @@ const zh: Translations = {
   advancedManualInput: '高级：手动输入...',
   pinnedShortcut: '常用快捷键',
   pinnedShortcutDesc: '可选。设置后直接打开常用面板；留空则不绑定。',
+  disableHotkeyFailed: '无法禁用快捷键',
 
   // Clipboard settings
   maxHistoryItems: '历史记录数量',
@@ -317,7 +308,6 @@ const zh: Translations = {
   maxRecentInTrayDesc: '托盘菜单中显示的最近项数量',
 
   // Storage settings
-  dataLocation: '数据存储位置',
   dataLocationDesc: '选择 ClipMan 数据的存储位置',
   currentLocation: '当前位置',
   changeLocation: '更改位置',
@@ -345,6 +335,7 @@ const zh: Translations = {
   downloadingUpdate: '正在下载并安装更新...',
   updateInstalled: '更新安装成功，请重启应用',
   installUpdateFailed: '安装更新失败',
+  releaseNotes: '更新内容',
 
   // Confirmations
   confirmClearHistory: '确定要清除所有非置顶的历史记录吗？',
@@ -354,15 +345,8 @@ const zh: Translations = {
   loadSettingsFailed: '加载设置失败',
   saveSettingsFailed: '保存失败',
   copyFailed: '复制失败',
+  pasteFailed: '粘贴失败',
   clearFailed: '清除失败',
-
-  // Statistics
-  statistics: '统计信息',
-  total: '总计',
-
-  // Tray menu
-  trayPinnedHeader: '置顶项',
-  trayRecentHeader: '最近复制',
 
   // Loading
   loading: '加载中...',
@@ -429,6 +413,7 @@ const zh: Translations = {
 const en: Translations = {
   // App
   appName: 'ClipMan',
+  appTagline: 'Efficient clipboard manager',
 
   // Navigation
   history: 'History',
@@ -451,7 +436,6 @@ const en: Translations = {
   reset: 'Reset',
   cancel: 'Cancel',
   confirm: 'Confirm',
-  quit: 'Quit',
 
   // Content types
   text: 'Text',
@@ -476,8 +460,6 @@ const en: Translations = {
 
   // Search
   searchPlaceholder: 'Search clipboard...',
-  showing: 'Showing',
-  items: 'items',
 
   // Preview pane
   selectToPreview: 'Select an item to see the full content',
@@ -504,6 +486,7 @@ const en: Translations = {
   pinnedShortcut: 'Pinned shortcut',
   pinnedShortcutDesc:
     'Optional. Opens QuickBar directly on the pinned panel; leave empty to disable.',
+  disableHotkeyFailed: 'Failed to disable hotkey',
 
   // Clipboard settings
   maxHistoryItems: 'History limit',
@@ -531,7 +514,6 @@ const en: Translations = {
   maxRecentInTrayDesc: 'Number of recent items shown in tray menu',
 
   // Storage settings
-  dataLocation: 'Data location',
   dataLocationDesc: 'Choose where ClipMan stores its data',
   currentLocation: 'Current location',
   changeLocation: 'Change location',
@@ -559,6 +541,7 @@ const en: Translations = {
   downloadingUpdate: 'Downloading and installing update...',
   updateInstalled: 'Update installed, please restart the app',
   installUpdateFailed: 'Failed to install update',
+  releaseNotes: 'Release Notes',
 
   // Confirmations
   confirmClearHistory: 'Are you sure you want to clear all non-pinned history?',
@@ -568,15 +551,8 @@ const en: Translations = {
   loadSettingsFailed: 'Failed to load settings',
   saveSettingsFailed: 'Failed to save',
   copyFailed: 'Copy failed',
+  pasteFailed: 'Paste failed',
   clearFailed: 'Failed to clear',
-
-  // Statistics
-  statistics: 'Statistics',
-  total: 'Total',
-
-  // Tray menu
-  trayPinnedHeader: 'Pinned',
-  trayRecentHeader: 'Recent',
 
   // Loading
   loading: 'Loading...',

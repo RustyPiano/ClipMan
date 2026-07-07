@@ -8,8 +8,14 @@ const state = (<T>(value: T) => value) as (<T>(value: T) => T) & {
 };
 state.raw = <T>(value: T) => value;
 
-(globalThis as typeof globalThis & { $state: typeof state }).$state = state;
-(globalThis as typeof globalThis & { $derived: <T>(value: T) => T }).$derived = (value) => value;
+// $state / $derived are compiled away in a real Svelte build; the .svelte.ts
+// stores are imported raw here, so mock the runes as global callables.
+// defineProperty (value: any) sidesteps Svelte's ambient rune global types.
+Object.defineProperty(globalThis, '$state', { configurable: true, value: state });
+Object.defineProperty(globalThis, '$derived', {
+  configurable: true,
+  value: <T>(value: T) => value,
+});
 
 Object.defineProperty(globalThis, 'navigator', {
   configurable: true,
@@ -42,12 +48,17 @@ const storage = new Map<string, string>();
   },
 };
 
-(globalThis as typeof globalThis & { window: Window }).window = {
-  addEventListener() {},
-  removeEventListener() {},
-} as Window;
+Object.defineProperty(globalThis, 'window', {
+  configurable: true,
+  value: {
+    addEventListener() {},
+    removeEventListener() {},
+  },
+});
 
 const { clipboardStore } = await import('../../src/lib/stores/clipboard.svelte');
+const { toastStore } = await import('../../src/lib/stores/toast.svelte');
+const { i18n } = await import('../../src/lib/i18n');
 
 function clip(overrides: Partial<ClipItem>): ClipItem {
   return {
@@ -59,6 +70,8 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     pinOrder: null,
     label: null,
     groupName: null,
+    sourceApp: null,
+    hasHtml: false,
     ...overrides,
   };
 }
@@ -83,6 +96,7 @@ function resetStore() {
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
   clipboardStore.selectedIds.clear();
+  toastStore.toasts = [];
 }
 
 describe('clipboard store races', () => {
@@ -278,6 +292,76 @@ describe('clipboard store races', () => {
     expect(pastes[1].args).toEqual({ id: 'c1', mode: 'default', plain: false });
   });
 
+  test('useClip toasts paste vs copy on failure based on the resolved action', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'paste_clip') throw new Error('boom');
+      return null;
+    });
+
+    const item = clip({ id: 'c1' });
+
+    // autoPaste on: 'default' resolves to a paste, 'opposite' (⌘Enter) to a copy.
+    clipboardStore.autoPaste = true;
+    await clipboardStore.useClip(item, 'default');
+    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+
+    await clipboardStore.useClip(item, 'opposite');
+    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.copyFailed);
+
+    // autoPaste off: the paste/copy mapping inverts.
+    clipboardStore.autoPaste = false;
+    await clipboardStore.useClip(item, 'default');
+    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.copyFailed);
+
+    await clipboardStore.useClip(item, 'opposite');
+    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+  });
+
+  test('useSelectedClips toasts on merge-paste failure and keeps the selection', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'paste_clips') throw new Error('boom');
+      return null;
+    });
+
+    clipboardStore.autoPaste = true;
+    clipboardStore.toggleSelected('a');
+    clipboardStore.toggleSelected('b');
+
+    await clipboardStore.useSelectedClips('default');
+
+    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+    // A failed merge-paste must not silently drop the selection.
+    expect([...clipboardStore.selectedIds]).toEqual(['a', 'b']);
+  });
+
+  test('loadHistory clears isLoading even when a search becomes active mid-load', async () => {
+    let resolveRecent: (items: ClipItem[]) => void = () => {};
+    installTauriInvoke((cmd) => {
+      if (cmd === 'get_recent_clips') {
+        return new Promise<ClipItem[]>((resolve) => {
+          resolveRecent = resolve;
+        });
+      }
+      if (cmd === 'get_pinned_clips') return [];
+      return null;
+    });
+
+    // Fresh full load starts with the spinner up (showLoading defaults to true).
+    const load = clipboardStore.loadHistory();
+    expect(clipboardStore.isLoading).toBe(true);
+
+    // User types a query before the history request resolves.
+    clipboardStore.searchQuery = 'abc';
+
+    resolveRecent([clip({ id: 'r1' })]);
+    await load;
+
+    // Regression (#16): the spinner must clear even though a search is now active.
+    expect(clipboardStore.isLoading).toBe(false);
+  });
+
   test('toggleSelected preserves selection order and clears cleanly', () => {
     clipboardStore.toggleSelected('a');
     clipboardStore.toggleSelected('b');
@@ -387,8 +471,9 @@ describe('clipboard store races', () => {
 
     await clipboardStore.loadMoreRecent();
 
-    // Cursor is the (timestamp, id) of the last loaded row.
-    expect(calls).toEqual([{ limit: 100, beforeTimestamp: 4, beforeId: 'p1b' }]);
+    // Cursor is the (timestamp, id) of the last loaded row; limit is PAGE_SIZE + 1
+    // (the sentinel row that decides hasMore).
+    expect(calls).toEqual([{ limit: 101, beforeTimestamp: 4, beforeId: 'p1b' }]);
     expect(clipboardStore.recentItems.map((item) => item.id)).toEqual([
       'p1a',
       'p1b',
@@ -462,7 +547,8 @@ describe('clipboard store races', () => {
     installTauriInvoke((cmd, args) => {
       if (cmd === 'get_recent_clips') {
         calls.push(args);
-        return Array.from({ length: 100 }, (_, index) =>
+        // Page + sentinel row (PAGE_SIZE + 1) so hasMore resolves true.
+        return Array.from({ length: 101 }, (_, index) =>
           clip({ id: `r-${index}`, timestamp: 1000 - index })
         );
       }
@@ -472,9 +558,9 @@ describe('clipboard store races', () => {
 
     await clipboardStore.loadHistory({ showLoading: false });
 
-    // Fresh load (recentItems empty) requests exactly PAGE_SIZE, no cursor.
-    expect(calls).toEqual([{ limit: 100 }]);
-    // A full page back means more pages may exist.
+    // Fresh load (recentItems empty) requests PAGE_SIZE + 1 (the sentinel), no cursor.
+    expect(calls).toEqual([{ limit: 101 }]);
+    // The sentinel row means older pages exist; it is trimmed from the list.
     expect(clipboardStore.hasMoreRecent).toBe(true);
     expect(clipboardStore.recentItems.length).toBe(100);
   });

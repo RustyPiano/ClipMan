@@ -1,5 +1,5 @@
 // Tauri commands module
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -7,9 +7,26 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;
-use crate::storage::{ContentType, FrontendClipItem};
+use crate::storage::{ClipStorage, ContentType, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, safe_lock, AppState};
+
+/// Run a blocking storage operation on the blocking thread pool, locking the
+/// shared `ClipStorage` for the duration. Collapses the nine near-identical
+/// `spawn_blocking` + `safe_lock` + error-flatten blocks the read/write
+/// commands used to repeat.
+async fn with_storage<T, F>(storage: Arc<Mutex<ClipStorage>>, op: F) -> Result<T, String>
+where
+    F: FnOnce(&ClipStorage) -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+        op(&storage)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
 type MainThreadAction = Box<dyn FnOnce() -> Result<(), String> + Send>;
 
@@ -115,49 +132,38 @@ pub async fn get_recent_clips(
     before_timestamp: Option<i64>,
     before_id: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
-    let storage = state.storage.clone();
     let limit = limit.unwrap_or(100);
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let items = {
-            // Both cursor parts must be present to page; a missing pair (the old
-            // signature, or a first-page request) falls back to the first page.
-            let before = match (before_timestamp, before_id.as_deref()) {
-                (Some(timestamp), Some(id)) => Some((timestamp, id)),
-                _ => None,
-            };
-            let storage = safe_lock(&storage);
-            storage
-                .get_recent_clip_previews_page(limit, before)
-                .map_err(|e| e.to_string())?
+    with_storage(state.storage.clone(), move |storage| {
+        // Both cursor parts must be present to page; a missing pair (the old
+        // signature, or a first-page request) falls back to the first page.
+        let before = match (before_timestamp, before_id.as_deref()) {
+            (Some(timestamp), Some(id)) => Some((timestamp, id)),
+            _ => None,
         };
+        let items = storage
+            .get_recent_clip_previews_page(limit, before)
+            .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
             .map(FrontendClipItem::from_preview)
             .collect())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<FrontendClipItem>, String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let items = {
-            let storage = safe_lock(&storage);
-            storage
-                .get_pinned_clip_previews()
-                .map_err(|e| e.to_string())?
-        };
+    with_storage(state.storage.clone(), |storage| {
+        let items = storage
+            .get_pinned_clip_previews()
+            .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
             .map(FrontendClipItem::from_preview)
             .collect())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -165,17 +171,11 @@ pub async fn get_clip(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<Option<FrontendClipItem>, String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let item = {
-            let storage = safe_lock(&storage);
-            storage.get_by_id(&id).map_err(|e| e.to_string())?
-        };
+    with_storage(state.storage.clone(), move |storage| {
+        let item = storage.get_by_id(&id).map_err(|e| e.to_string())?;
         Ok(item.and_then(FrontendClipItem::from_full_text))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -183,22 +183,16 @@ pub async fn search_clips(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<FrontendClipItem>, String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let items = {
-            let storage = safe_lock(&storage);
-            storage
-                .search_clip_previews(&query)
-                .map_err(|e| e.to_string())?
-        };
+    with_storage(state.storage.clone(), move |storage| {
+        let items = storage
+            .search_clip_previews(&query)
+            .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
             .map(FrontendClipItem::from_preview)
             .collect())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -208,16 +202,12 @@ pub async fn toggle_pin(
     id: String,
     is_pinned: bool,
 ) -> Result<(), String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+    with_storage(state.storage.clone(), move |storage| {
         storage
             .update_pin(&id, is_pinned)
             .map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
 
     update_tray_menu(&app);
     Ok(())
@@ -229,14 +219,10 @@ pub async fn delete_clip(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+    with_storage(state.storage.clone(), move |storage| {
         storage.delete(&id).map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
 
     update_tray_menu(&app);
     Ok(())
@@ -281,14 +267,10 @@ pub async fn clear_non_pinned_history(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     log::info!("Clearing non-pinned clipboard history (user requested)");
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+    with_storage(state.storage.clone(), |storage| {
         storage.clear_non_pinned().map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
 
     state.icon_cache.clear();
     update_tray_menu(&app);
@@ -318,7 +300,7 @@ pub async fn copy_clip_to_clipboard_internal(
         &item,
         state.last_copied_by_us.clone(),
         false,
-        Some(app),
+        app,
     )?;
 
     if show_notification {
@@ -347,11 +329,7 @@ fn notify_copied(app: &AppHandle, content_type: &ContentType) {
 fn notify_copied(_app: &AppHandle, _content_type: &ContentType) {}
 
 #[tauri::command]
-pub async fn copy_to_system_clipboard(
-    app: AppHandle,
-    _state: State<'_, AppState>,
-    clip_id: String,
-) -> Result<(), String> {
+pub async fn copy_to_system_clipboard(app: AppHandle, clip_id: String) -> Result<(), String> {
     // Use unified function, no notification for window copy
     copy_clip_to_clipboard_internal(&app, &clip_id, false).await
 }
@@ -448,16 +426,12 @@ pub async fn set_clip_label(
     id: String,
     label: Option<String>,
 ) -> Result<(), String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+    with_storage(state.storage.clone(), move |storage| {
         storage
             .set_clip_label(&id, label)
             .map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
 
     update_tray_menu(&app);
     Ok(())
@@ -470,16 +444,12 @@ pub async fn reorder_pinned(
     id: String,
     direction: String,
 ) -> Result<(), String> {
-    let storage = state.storage.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+    with_storage(state.storage.clone(), move |storage| {
         storage
             .reorder_pinned(&id, direction.as_str())
             .map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
 
     update_tray_menu(&app);
     Ok(())
@@ -506,100 +476,85 @@ pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result
     })
 }
 
-#[tauri::command]
-pub async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, String> {
+/// Acquire the updater and check the remote endpoint once. Shared by
+/// `check_for_updates` and `install_update` so both surface identical
+/// "no updater" / "check failed" errors.
+async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    let updater = app.updater().map_err(|e| {
+        log::error!("Failed to get updater: {}", e);
+        format!("Failed to get updater: {}", e)
+    })?;
+
+    updater.check().await.map_err(|e| {
+        log::error!("Failed to check for updates: {}", e);
+        format!("Failed to check for updates: {}", e)
+    })
+}
+
+#[tauri::command]
+pub async fn check_for_updates(app: AppHandle) -> Result<serde_json::Value, String> {
     log::info!("Checking for updates...");
     let current_version = app.package_info().version.to_string();
 
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(update) => {
-                if let Some(update_info) = update {
-                    let available_version = update_info.version.clone();
-                    log::info!(
-                        "Update available: {} -> {}",
-                        current_version,
-                        available_version
-                    );
+    match fetch_update(&app).await? {
+        Some(update_info) => {
+            let available_version = update_info.version.clone();
+            log::info!(
+                "Update available: {} -> {}",
+                current_version,
+                available_version
+            );
 
-                    Ok(serde_json::json!({
-                        "available": true,
-                        "current_version": current_version,
-                        "latest_version": available_version,
-                        "body": update_info.body,
-                        "date": update_info.date.map(|d| d.to_string())
-                    }))
-                } else {
-                    log::info!("No updates available. Current version: {}", current_version);
-                    Ok(serde_json::json!({
-                        "available": false,
-                        "current_version": current_version
-                    }))
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to check for updates: {}", e);
-                Err(format!("Failed to check for updates: {}", e))
-            }
-        },
-        Err(e) => {
-            log::error!("Failed to get updater: {}", e);
-            Err(format!("Failed to get updater: {}", e))
+            Ok(serde_json::json!({
+                "available": true,
+                "current_version": current_version,
+                "latest_version": available_version,
+                "body": update_info.body,
+                "date": update_info.date.map(|d| d.to_string())
+            }))
+        }
+        None => {
+            log::info!("No updates available. Current version: {}", current_version);
+            Ok(serde_json::json!({
+                "available": false,
+                "current_version": current_version
+            }))
         }
     }
 }
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-
     log::info!("Installing update...");
 
-    match app.updater() {
-        Ok(updater) => match updater.check().await {
-            Ok(update) => {
-                if let Some(update_info) = update {
-                    log::info!("Downloading and installing update: {}", update_info.version);
+    let update_info = fetch_update(&app)
+        .await?
+        .ok_or_else(|| "No update available".to_string())?;
 
-                    match update_info
-                        .download_and_install(
-                            |chunk_length, content_length| {
-                                if let Some(total) = content_length {
-                                    let progress = (chunk_length as f64 / total as f64) * 100.0;
-                                    log::debug!("Download progress: {:.2}%", progress);
-                                }
-                            },
-                            || {
-                                log::info!("Download complete, installing...");
-                            },
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            log::info!("Update installed successfully. Restarting app...");
-                            app.restart();
-                        }
-                        Err(e) => {
-                            log::error!("Failed to download/install update: {}", e);
-                            Err(format!("Failed to download/install update: {}", e))
-                        }
-                    }
-                } else {
-                    Err("No update available".to_string())
+    log::info!("Downloading and installing update: {}", update_info.version);
+
+    update_info
+        .download_and_install(
+            |chunk_length, content_length| {
+                if let Some(total) = content_length {
+                    let progress = (chunk_length as f64 / total as f64) * 100.0;
+                    log::debug!("Download progress: {:.2}%", progress);
                 }
-            }
-            Err(e) => {
-                log::error!("Failed to check for updates: {}", e);
-                Err(format!("Failed to check for updates: {}", e))
-            }
-        },
-        Err(e) => {
-            log::error!("Failed to get updater: {}", e);
-            Err(format!("Failed to get updater: {}", e))
-        }
-    }
+            },
+            || {
+                log::info!("Download complete, installing...");
+            },
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to download/install update: {}", e);
+            format!("Failed to download/install update: {}", e)
+        })?;
+
+    log::info!("Update installed successfully. Restarting app...");
+    app.restart();
 }
 
 fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) -> bool {
@@ -750,6 +705,19 @@ pub async fn update_settings(
     log::info!("Updating settings: {:?}", settings);
 
     let old_settings = state.settings.get();
+
+    // Two fields are owned by other subsystems, not the settings page, so a
+    // stale/reset settings object must never write over them here:
+    //   * `custom_data_path` is owned exclusively by `migrate_data_location`,
+    //     which relocates the database alongside changing the path. A settings
+    //     save (or a reset payload sending `null`) that repointed it here would
+    //     silently switch the app to a different/empty directory and strand the
+    //     existing database. Keep whatever migration last set.
+    //   * `capture_paused` is owned exclusively by the tray "Pause Capture"
+    //     toggle. A stale settings window saving would otherwise clobber the
+    //     tray's current pause state.
+    settings.custom_data_path = old_settings.custom_data_path.clone();
+    settings.capture_paused = old_settings.capture_paused;
     let old_shortcut = old_settings.global_shortcut;
     let old_pinned_shortcut = old_settings.pinned_shortcut;
     let old_tray_text_length = old_settings.tray_text_length;

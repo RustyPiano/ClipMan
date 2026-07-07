@@ -67,11 +67,11 @@ pub async fn paste_clip(
     let item = fetch_clip_and_touch_timestamp(&app, state, id).await?;
     let auto_paste = state.settings.get().auto_paste;
 
-    write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone(), plain, Some(&app))?;
+    write_clip_to_system_clipboard(&item, state.last_copied_by_us.clone(), plain, &app)?;
     hide_quickbar(&app)?;
 
     if should_simulate_paste(mode, auto_paste) {
-        match simulate_paste(&app, state)? {
+        match simulate_paste(&app, state).await? {
             PasteSimulation::Pasted => log::info!("Pasted clip {}", item.id),
             PasteSimulation::CopiedOnly => {
                 log::warn!(
@@ -107,18 +107,21 @@ pub async fn paste_clips(
     }
     let auto_paste = state.settings.get().auto_paste;
 
-    // Fetch in selection order, touching each clip's timestamp (task #13: "逐项
-    // touch timestamp") via the same helper paste_clip uses.
-    let mut fetched: Vec<(ContentType, Vec<u8>)> = Vec::with_capacity(ids.len());
-    for id in &ids {
-        let item = fetch_clip_and_touch_timestamp(&app, state, id.clone()).await?;
-        fetched.push((item.content_type, item.content));
+    // Touch every selected clip's timestamp in one transaction and fetch each
+    // clip's content in selection order (task #13). Unlike paste_clip's
+    // single-item path, this does NOT emit per clip or rebuild the tray inside
+    // the loop: a merge of N clips used to fire N `clipboard-changed` events and
+    // rebuild the tray N times. Now a single batched touch is followed by one
+    // emit + one tray rebuild here (#38). This runs before the merge/write (as
+    // the per-item touch did), so an all-images selection still surfaces the
+    // moved-up clips and refreshes the tray before the early return below.
+    let (fetched, touched_preview) = fetch_clips_and_touch_batch(state, &ids).await?;
+    if let Err(e) = app.emit("clipboard-changed", &touched_preview) {
+        log::error!("Failed to emit clipboard-changed event: {}", e);
     }
+    update_tray_menu(&app);
 
-    let (merged, skipped_images) = merge_clip_texts(
-        fetched.iter().map(|(ct, content)| (ct, content.as_slice())),
-        &separator,
-    );
+    let (merged, skipped_images) = merge_clip_texts(&fetched, &separator);
     let merged_count = fetched.len() - skipped_images;
 
     if skipped_images > 0 {
@@ -126,17 +129,19 @@ pub async fn paste_clips(
     }
 
     if merged_count == 0 {
-        // Nothing mergeable (e.g. every selected clip was an image): leave the
-        // clipboard untouched rather than clobbering it with an empty write.
+        // Every selected clip was an image (no text form in v1): nothing is
+        // mergeable. Return an error so the caller surfaces a paste-failure
+        // toast instead of the panel silently staying put with no feedback
+        // (#14); the clipboard is deliberately left untouched.
         log::warn!("Merge paste had no text/files clips to merge; skipping clipboard write");
-        return Ok(());
+        return Err("Merge paste had no text or file clips to merge".to_string());
     }
 
     write_merged_text_to_system_clipboard(&merged, state.last_copied_by_us.clone())?;
     hide_quickbar(&app)?;
 
     if should_simulate_paste(mode, auto_paste) {
-        match simulate_paste(&app, state)? {
+        match simulate_paste(&app, state).await? {
             PasteSimulation::Pasted => log::info!("Merge-pasted {merged_count} clip(s)"),
             PasteSimulation::CopiedOnly => {
                 log::warn!(
@@ -155,10 +160,7 @@ pub async fn paste_clips(
 /// counting Image clips (v1 has no text form for them). Text uses its bytes;
 /// Files use their newline-joined path text (D3). Pure so the merge order,
 /// image-skip, and separator behaviors are unit-testable without a clipboard.
-fn merge_clip_texts<'a>(
-    clips: impl IntoIterator<Item = (&'a ContentType, &'a [u8])>,
-    separator: &str,
-) -> (String, usize) {
+fn merge_clip_texts(clips: &[(ContentType, Vec<u8>)], separator: &str) -> (String, usize) {
     let mut parts: Vec<String> = Vec::new();
     let mut skipped_images = 0usize;
     for (content_type, content) in clips {
@@ -181,18 +183,16 @@ fn write_merged_text_to_system_clipboard(
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, merged.as_bytes());
-    set_copy_marker(&marker_state, &marker);
-
-    if let Err(e) = clipboard.set_text(merged.to_string()) {
-        clear_marker_if_current(&marker_state, &marker);
-        return Err(format!("Failed to write merged text clipboard: {e}"));
-    }
+    write_with_marker(marker_state, marker, || {
+        clipboard
+            .set_text(merged)
+            .map_err(|e| format!("Failed to write merged text clipboard: {e}"))
+    })?;
 
     log::info!(
         "Copied merged clip text to clipboard: {} chars",
         merged.len()
     );
-    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
@@ -231,6 +231,66 @@ pub async fn fetch_clip_and_touch_timestamp(
     Ok(item)
 }
 
+/// Touch every clip in `ids` (same timestamp, one transaction) and return each
+/// clip's `(content_type, content)` in selection order, plus a preview of the
+/// last touched clip. Image bytes are dropped (the merge skips images, so
+/// holding every selected image only to discard it wastes memory — #44); the
+/// preview still renders images from their thumbnail. Unlike
+/// `fetch_clip_and_touch_timestamp` this emits nothing and does not rebuild the
+/// tray — the merge-paste caller does both once for the whole batch (#38).
+async fn fetch_clips_and_touch_batch(
+    state: &AppState,
+    ids: &[String],
+) -> Result<(Vec<(ContentType, Vec<u8>)>, FrontendClipItem), String> {
+    let storage = state.storage.clone();
+    let ids = ids.to_vec();
+    let new_timestamp = Utc::now().timestamp();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = safe_lock(&storage);
+
+        let mut items = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let item = storage
+                .get_by_id(id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "Clip not found".to_string())?;
+            items.push(item);
+        }
+
+        storage
+            .touch_timestamps(&ids, new_timestamp)
+            .map_err(|e| e.to_string())?;
+
+        // Reflect the touch in the returned copies and build the emit preview
+        // from the last touched clip (all share `new_timestamp`, so a later full
+        // reload surfaces the whole batch at the top; this live event lifts the
+        // last one). `ids` is non-empty (paste_clips guards that), so `items` is
+        // too.
+        for item in &mut items {
+            item.timestamp = new_timestamp;
+        }
+        let last = items.last().ok_or("No clips fetched for merge paste")?;
+        let touched_preview =
+            FrontendClipItem::from_preview(crate::storage::ClipPreviewItem::from_clip_item(last));
+
+        let fetched = items
+            .into_iter()
+            .map(|item| {
+                let content = match item.content_type {
+                    ContentType::Image => Vec::new(),
+                    ContentType::Text | ContentType::Files => item.content,
+                };
+                (item.content_type, content)
+            })
+            .collect();
+
+        Ok::<_, String>((fetched, touched_preview))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
     match mode {
         PasteMode::Default | PasteMode::Paste => auto_paste,
@@ -243,7 +303,7 @@ pub fn write_clip_to_system_clipboard(
     item: &ClipItem,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
     plain_text_only: bool,
-    app: Option<&AppHandle>,
+    app: &AppHandle,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     match &item.content_type {
@@ -265,21 +325,18 @@ fn write_text(
     // D5: the marker is always the plain-text hash, never the html — the monitor
     // reads back the plain-text alt after a self-paste and must still match.
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
-    set_copy_marker(&marker_state, &marker);
 
     let use_html = !plain_text_only && item.html.as_deref().is_some_and(|html| !html.is_empty());
-    let write_result = if use_html {
-        // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
-        let html = item.html.as_deref().unwrap_or_default();
-        clipboard.set().html(html, Some(text.as_str()))
-    } else {
-        clipboard.set_text(text.clone())
-    };
-
-    if let Err(e) = write_result {
-        clear_marker_if_current(&marker_state, &marker);
-        return Err(format!("Failed to write text clipboard: {e}"));
-    }
+    write_with_marker(marker_state, marker, || {
+        if use_html {
+            // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
+            let html = item.html.as_deref().unwrap_or_default();
+            clipboard.set().html(html, Some(text.as_str()))
+        } else {
+            clipboard.set_text(text.as_str())
+        }
+        .map_err(|e| format!("Failed to write text clipboard: {e}"))
+    })?;
 
     log::info!(
         "Copied text clip {} to clipboard: {} chars (html: {})",
@@ -287,7 +344,6 @@ fn write_text(
         text.len(),
         use_html
     );
-    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
@@ -295,7 +351,7 @@ fn write_files(
     clipboard: &mut Clipboard,
     item: &ClipItem,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
-    app: Option<&AppHandle>,
+    app: &AppHandle,
 ) -> Result<(), String> {
     let content = String::from_utf8_lossy(&item.content).into_owned();
     let paths = split_file_paths(&content);
@@ -304,31 +360,33 @@ fn write_files(
     let paths = effective_file_paths(paths);
     let joined = join_file_paths(&paths);
     let marker = CopyMarker::from_payload(ContentType::Files, joined.as_bytes());
-    set_copy_marker(&marker_state, &marker);
 
-    if let Err(e) = write_file_list(clipboard, &paths) {
+    let write_result = write_with_marker(marker_state.clone(), marker, || {
+        write_file_list(clipboard, &paths)
+    });
+
+    if let Err(file_err) = write_result {
         // Degrade to the path text so the user still gets a usable clipboard,
         // and tell them why the real files didn't make it (macOS quietly
         // rejecting the URLs looks like "paste did nothing" otherwise).
         log::warn!(
-            "Failed to write file list for clip {} ({e}); falling back to text",
+            "Failed to write file list for clip {} ({file_err}); falling back to text",
             item.id
         );
         notify_file_paste_blocked(app);
         let text_marker = CopyMarker::from_payload(ContentType::Text, joined.as_bytes());
-        set_copy_marker(&marker_state, &text_marker);
-        if let Err(text_err) = clipboard.set_text(joined.clone()) {
-            clear_marker_if_current(&marker_state, &text_marker);
-            return Err(format!(
-                "Failed to write file list clipboard: {e}; text fallback failed: {text_err}"
-            ));
-        }
+        write_with_marker(marker_state, text_marker, || {
+            clipboard.set_text(joined.as_str()).map_err(|text_err| {
+                format!(
+                    "Failed to write file list clipboard: {file_err}; text fallback failed: {text_err}"
+                )
+            })
+        })?;
         log::info!(
             "Copied {} file path(s) as text for clip {}",
             paths.len(),
             item.id
         );
-        schedule_marker_clear(marker_state, text_marker);
         return Ok(());
     }
 
@@ -337,7 +395,6 @@ fn write_files(
         paths.len(),
         item.id
     );
-    schedule_marker_clear(marker_state, marker);
     Ok(())
 }
 
@@ -428,9 +485,9 @@ fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), S
 
 /// Shown when macOS blocks a file paste: without it the rejected write looks
 /// like "pressing Enter did nothing". Non-fatal, fire-and-forget.
-fn notify_file_paste_blocked(app: Option<&AppHandle>) {
+fn notify_file_paste_blocked(app: &AppHandle) {
     #[cfg(not(target_os = "linux"))]
-    if let Some(app) = app {
+    {
         use tauri_plugin_notification::NotificationExt;
         let _ = app
             .notification()
@@ -466,16 +523,16 @@ fn write_image(
     let rgba_bytes = img.to_rgba8().into_raw();
     let marker =
         CopyMarker::from_normalized_image_parts(width as usize, height as usize, &rgba_bytes);
-    set_copy_marker(&marker_state, &marker);
 
-    if let Err(e) = clipboard.set_image(ImageData {
-        width: width as usize,
-        height: height as usize,
-        bytes: Cow::Owned(rgba_bytes),
-    }) {
-        clear_marker_if_current(&marker_state, &marker);
-        return Err(format!("Failed to write image clipboard: {e}"));
-    }
+    write_with_marker(marker_state, marker, || {
+        clipboard
+            .set_image(ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: Cow::Owned(rgba_bytes),
+            })
+            .map_err(|e| format!("Failed to write image clipboard: {e}"))
+    })?;
 
     log::info!(
         "Copied image clip {} to clipboard: {}x{}",
@@ -483,6 +540,24 @@ fn write_image(
         width,
         height
     );
+    Ok(())
+}
+
+/// The self-copy marker ritual every clipboard write shares (D5): stake the
+/// marker before writing, then clear it if the write failed or schedule its TTL
+/// expiry if it succeeded. `write` performs the actual clipboard call and owns
+/// its own error message. Structuring the invariant here keeps the write_*
+/// family from each re-implementing (and potentially skewing) it (#31).
+fn write_with_marker(
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker: CopyMarker,
+    write: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    set_copy_marker(&marker_state, &marker);
+    if let Err(e) = write() {
+        clear_marker_if_current(&marker_state, &marker);
+        return Err(e);
+    }
     schedule_marker_clear(marker_state, marker);
     Ok(())
 }
@@ -516,7 +591,24 @@ fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
+async fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
+    // The body blocks: it waits (up to 5s) on a main-thread round-trip to bring
+    // the previous app forward, then sleeps 60ms and posts the Cmd+V CGEvent.
+    // Running that on a Tokio worker would stall the async runtime, so hand it
+    // to the blocking pool (#48). Only the foreground-window store is needed
+    // from `state`, so clone that Arc rather than borrowing `AppState`.
+    let app = app.clone();
+    let foreground_store = state.quickbar_foreground_window.clone();
+    tauri::async_runtime::spawn_blocking(move || simulate_paste_blocking(&app, &foreground_store))
+        .await
+        .map_err(|e| format!("Paste simulation task failed: {e}"))?
+}
+
+#[cfg(target_os = "macos")]
+fn simulate_paste_blocking(
+    app: &AppHandle,
+    foreground_store: &crate::window::ForegroundWindowStore,
+) -> Result<PasteSimulation, String> {
     // Without the Accessibility permission, the CGEvent post that sends Cmd+V
     // fails *silently* — enigo returns Ok but nothing is typed. So we cannot
     // rely on a paste error to detect the problem; check the permission up
@@ -535,7 +627,7 @@ fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, 
     // The QuickBar stole keyboard focus while it was open. It is now hidden, so
     // bring the previously frontmost app back to the front before pressing
     // Cmd+V; otherwise the keystroke is delivered to nothing.
-    if let Err(e) = restore_recorded_foreground_window_on_main_thread(app, state) {
+    if let Err(e) = restore_recorded_foreground_window_on_main_thread(app, foreground_store) {
         log::warn!("Could not reactivate previous app before paste: {}", e);
     }
     // Give the reactivated app a brief moment to become key and accept input.
@@ -549,9 +641,9 @@ fn simulate_paste(app: &AppHandle, state: &AppState) -> Result<PasteSimulation, 
 #[cfg(target_os = "macos")]
 fn restore_recorded_foreground_window_on_main_thread(
     app: &AppHandle,
-    state: &AppState,
+    foreground_store: &crate::window::ForegroundWindowStore,
 ) -> Result<(), String> {
-    let foreground_store = state.quickbar_foreground_window.clone();
+    let foreground_store = foreground_store.clone();
     let (sender, receiver) = mpsc::channel();
 
     app.run_on_main_thread(move || {
@@ -567,13 +659,13 @@ fn restore_recorded_foreground_window_on_main_thread(
 }
 
 #[cfg(target_os = "windows")]
-fn simulate_paste(_app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
+async fn simulate_paste(_app: &AppHandle, state: &AppState) -> Result<PasteSimulation, String> {
     crate::window::restore_recorded_foreground_window(&state.quickbar_foreground_window)?;
     send_paste_shortcut(Key::Control).map(|_| PasteSimulation::Pasted)
 }
 
 #[cfg(target_os = "linux")]
-fn simulate_paste(_app: &AppHandle, _state: &AppState) -> Result<PasteSimulation, String> {
+async fn simulate_paste(_app: &AppHandle, _state: &AppState) -> Result<PasteSimulation, String> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         log::warn!("Wayland detected; degrading paste request to copy-only");
         return Ok(PasteSimulation::CopiedOnly);
@@ -654,8 +746,7 @@ mod tests {
             clip(ContentType::Text, b"second"),
             clip(ContentType::Text, b"third"),
         ];
-        let (merged, skipped) =
-            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        let (merged, skipped) = merge_clip_texts(&clips, "\n");
         assert_eq!(merged, "first\nsecond\nthird");
         assert_eq!(skipped, 0);
     }
@@ -668,8 +759,7 @@ mod tests {
             clip(ContentType::Text, b"b"),
             clip(ContentType::Image, b"more-png"),
         ];
-        let (merged, skipped) =
-            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        let (merged, skipped) = merge_clip_texts(&clips, "\n");
         // Images are dropped from the merge; only text survives, in order.
         assert_eq!(merged, "a\nb");
         assert_eq!(skipped, 2);
@@ -678,10 +768,9 @@ mod tests {
     #[test]
     fn merge_uses_the_given_separator_verbatim() {
         let clips = [clip(ContentType::Text, b"a"), clip(ContentType::Text, b"b")];
-        let make = || clips.iter().map(|(ct, c)| (ct, c.as_slice()));
-        assert_eq!(merge_clip_texts(make(), "\n").0, "a\nb");
-        assert_eq!(merge_clip_texts(make(), "\t").0, "a\tb");
-        assert_eq!(merge_clip_texts(make(), "").0, "ab");
+        assert_eq!(merge_clip_texts(&clips, "\n").0, "a\nb");
+        assert_eq!(merge_clip_texts(&clips, "\t").0, "a\tb");
+        assert_eq!(merge_clip_texts(&clips, "").0, "ab");
     }
 
     #[test]
@@ -692,8 +781,7 @@ mod tests {
             clip(ContentType::Files, b"/a/one.txt\n/a/two.txt"),
             clip(ContentType::Text, b"tail"),
         ];
-        let (merged, skipped) =
-            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        let (merged, skipped) = merge_clip_texts(&clips, "\n");
         assert_eq!(merged, "/a/one.txt\n/a/two.txt\ntail");
         assert_eq!(skipped, 0);
     }
@@ -705,8 +793,7 @@ mod tests {
             clip(ContentType::Image, b"two"),
             clip(ContentType::Image, b"three"),
         ];
-        let (merged, skipped) =
-            merge_clip_texts(clips.iter().map(|(ct, c)| (ct, c.as_slice())), "\n");
+        let (merged, skipped) = merge_clip_texts(&clips, "\n");
         assert_eq!(merged, "");
         assert_eq!(skipped, 3);
     }

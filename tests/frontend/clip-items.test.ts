@@ -22,6 +22,8 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     pinOrder: null,
     label: null,
     groupName: null,
+    sourceApp: null,
+    hasHtml: false,
     ...overrides,
   };
 }

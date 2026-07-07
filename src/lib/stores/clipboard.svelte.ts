@@ -51,7 +51,6 @@ class ClipboardStore {
   // deliberate reset points (panel switch / quickbar refresh / search / hide).
   selectedIds = new SvelteSet<string>();
   private static readonly PAGE_SIZE = 100;
-  private unlisten?: () => void;
   private historyRequests = new RequestSequencer();
   private searchRequests = new RequestSequencer();
   private incomingRevision = 0;
@@ -85,29 +84,19 @@ class ClipboardStore {
     })
   );
 
-  constructor() {
-    this.initialize();
-  }
-
+  // Lazily initialized by the main QuickBar window in onMount. The settings
+  // window imports this same singleton but must NOT initialize it — otherwise it
+  // would needlessly pull a page of history and subscribe to every event.
   async initialize() {
     if (!hasTauriRuntime()) {
       this.isLoading = false;
       return;
     }
 
-    try {
-      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
-        'get_settings'
-      );
-      this.autoPaste = settings.autoPaste;
-      this.maxHistoryItems = settings.maxHistoryItems;
-    } catch (error) {
-      console.error('Failed to load settings:', error);
-    }
-
+    await this.refreshSettings();
     await this.loadHistory();
 
-    const unlistenClipboard = await listen<ClipItem>('clipboard-changed', async (event) => {
+    await listen<ClipItem>('clipboard-changed', async (event) => {
       if (this.searchQuery.trim()) {
         await this.reloadFromBackend();
         return;
@@ -116,26 +105,16 @@ class ClipboardStore {
       this.applyIncomingItem(event.payload);
     });
 
-    const unlistenHistoryCleared = await listen('history-cleared', async () => {
+    await listen('history-cleared', async () => {
       this.fullClipCache.clear();
       this.clearSelection();
       await this.reloadFromBackend();
     });
 
-    const unlistenQuickbarHidden = await listen(QUICKBAR_HIDDEN_EVENT, () => {
+    await listen(QUICKBAR_HIDDEN_EVENT, () => {
       this.clearSelection();
       void this.clearSearch({ reload: false });
     });
-
-    this.unlisten = () => {
-      unlistenClipboard();
-      unlistenHistoryCleared();
-      unlistenQuickbarHidden();
-    };
-  }
-
-  destroy() {
-    this.unlisten?.();
   }
 
   async loadHistory(options: LoadHistoryOptions = {}) {
@@ -155,15 +134,22 @@ class ClipboardStore {
     // Fetch only the first page on a fresh load; on a reload (pin/delete/label/
     // clear) preserve however many pages the user already scrolled through, so
     // those actions don't snap the list back to the top.
-    const limit = Math.max(ClipboardStore.PAGE_SIZE, this.recentItems.length);
+    const pageLimit = Math.max(ClipboardStore.PAGE_SIZE, this.recentItems.length);
 
     try {
-      const [recent, pinned] = await Promise.all([
-        invoke<ClipItem[]>('get_recent_clips', { limit }),
+      // Ask for one sentinel row past the page: its presence — not a merely full
+      // page — is the authoritative "there are older rows" signal, so a history
+      // whose size is an exact multiple of the page no longer offers an empty
+      // page turn. The sentinel is trimmed before it reaches the list.
+      const [recentRaw, pinned] = await Promise.all([
+        invoke<ClipItem[]>('get_recent_clips', { limit: pageLimit + 1 }),
         invoke<ClipItem[]>('get_pinned_clips'),
       ]);
 
       if (this.historyRequests.isCurrent(requestId)) {
+        const hasMore = recentRaw.length > pageLimit;
+        const recent = hasMore ? recentRaw.slice(0, pageLimit) : recentRaw;
+
         const nextItems = this.replayIncomingItemsSince({
           recentItems: recent,
           pinnedItems: pinned,
@@ -172,8 +158,7 @@ class ClipboardStore {
 
         this.recentItems = nextItems.recentItems;
         this.pinnedItems = nextItems.pinnedItems;
-        // A full page back means the DB may hold older rows past what we loaded.
-        this.hasMoreRecent = recent.length >= limit;
+        this.hasMoreRecent = hasMore;
         this.isLoadingMore = false;
         if (!this.searchQuery.trim()) {
           this.searchResults = [];
@@ -184,7 +169,12 @@ class ClipboardStore {
         console.error('[ERROR] Failed to load clipboard history:', error);
       }
     } finally {
-      if (this.historyRequests.isCurrent(requestId) && !this.searchQuery.trim()) {
+      // Clear the full-screen spinner for the current request regardless of the
+      // search state. The previous `!searchQuery.trim()` guard let isLoading stick
+      // forever when a search became active mid-load (e.g. typing immediately on
+      // launch): the finally then skipped the clear and the search flow only
+      // manages isSearchPending, so the spinner never went away.
+      if (this.historyRequests.isCurrent(requestId)) {
         this.isLoading = false;
       }
     }
@@ -214,21 +204,27 @@ class ClipboardStore {
     const requestId = this.historyRequests.next();
 
     try {
+      // limit + 1: the sentinel row past the page is the authoritative "there is
+      // another page" signal, so an exact page boundary no longer triggers an
+      // empty page turn. The sentinel is trimmed before it reaches the list.
       const page = await invoke<ClipItem[]>('get_recent_clips', {
-        limit: ClipboardStore.PAGE_SIZE,
+        limit: ClipboardStore.PAGE_SIZE + 1,
         beforeTimestamp: cursor.timestamp,
         beforeId: cursor.id,
       });
 
       if (!this.historyRequests.isCurrent(requestId)) return;
 
+      const hasMore = page.length > ClipboardStore.PAGE_SIZE;
+      const pageItems = hasMore ? page.slice(0, ClipboardStore.PAGE_SIZE) : page;
+
       // Append older rows, deduping by id: a live clipboard-changed event may
       // have bumped one of these rows to the top mid-fetch, and it must not
       // reappear lower in the list.
       const existingIds = new Set(this.recentItems.map((item) => item.id));
-      const olderItems = page.filter((item) => !existingIds.has(item.id));
+      const olderItems = pageItems.filter((item) => !existingIds.has(item.id));
       this.recentItems = [...this.recentItems, ...olderItems];
-      this.hasMoreRecent = page.length >= ClipboardStore.PAGE_SIZE;
+      this.hasMoreRecent = hasMore;
     } catch (error) {
       if (this.historyRequests.isCurrent(requestId)) {
         console.error('[ERROR] Failed to load more clipboard history:', error);
@@ -356,9 +352,11 @@ class ClipboardStore {
 
   async clearNonPinned() {
     try {
+      // The backend emits `history-cleared` after clearing (the tray's "clear"
+      // item fires the same command), and our listener there clears the cache
+      // and reloads. So this path must NOT reload again — that was a redundant
+      // round trip on every clear.
       await invoke('clear_non_pinned_history');
-      this.fullClipCache.clear();
-      await this.reloadFromBackend();
       console.log('[SUCCESS] Cleared all non-pinned items');
     } catch (error) {
       console.error('[ERROR] Failed to clear non-pinned items:', error);
@@ -418,11 +416,20 @@ class ClipboardStore {
       // non-text clips, so it is passed through without a frontend type branch.
       await invoke('paste_clip', { id: item.id, mode, plain: options.plain ?? false });
     } catch (error) {
-      console.error(`[ERROR] Failed to ${mode} clip:`, error);
-      if (mode === 'copy') {
-        toastStore.add(i18n.t.copyFailed, 'error');
-      }
+      console.error('[ERROR] Failed to use clip:', error);
+      toastStore.add(this.pasteFailureMessage(mode), 'error');
     }
+  }
+
+  /**
+   * Toast text for a failed paste/copy. The resolved action mirrors the backend:
+   * mode 'default' honors the auto-paste setting, 'opposite' (⌘Enter) inverts it.
+   * So the action is a paste iff `(mode === 'default') === autoPaste` — the same
+   * mapping the footer hints use — which decides whether to say "paste" or "copy".
+   */
+  private pasteFailureMessage(mode: PasteMode): string {
+    const isPaste = (mode === 'default') === this.autoPaste;
+    return isPaste ? i18n.t.pasteFailed : i18n.t.copyFailed;
   }
 
   isSelected(id: string): boolean {
@@ -457,9 +464,7 @@ class ClipboardStore {
       this.clearSelection();
     } catch (error) {
       console.error('[ERROR] Failed to merge-paste clips:', error);
-      if (mode === 'copy') {
-        toastStore.add(i18n.t.copyFailed, 'error');
-      }
+      toastStore.add(this.pasteFailureMessage(mode), 'error');
     }
   }
 
@@ -505,8 +510,10 @@ class ClipboardStore {
 
     try {
       const full = await invoke<ClipItem | null>('get_clip', { id });
+      // A null result (or any non text/files type) has no cacheable preview
+      // payload; this guard also narrows `full` to non-null for the cache call.
       if (full?.contentType !== 'text' && full?.contentType !== 'files') return null;
-      if (full) this.cacheFullClip(full);
+      this.cacheFullClip(full);
       return full;
     } catch (error) {
       console.error('[ERROR] Failed to fetch full clip:', error);

@@ -52,7 +52,7 @@
       <div>
         <h3 class="font-bold text-lg">{t.appName}</h3>
         <p class="text-sm text-muted-foreground">
-          {i18n.locale === 'zh-CN' ? '高效的剪贴板管理工具' : 'Efficient clipboard manager'}
+          {t.appTagline}
         </p>
         <div class="flex items-center gap-2 mt-1">
           {#if currentVersion}
@@ -87,7 +87,7 @@
           {#if updateInfo.body}
             <div class="mt-3 p-3 bg-muted/50 rounded border border-border">
               <strong class="block mb-2 text-xs uppercase tracking-wider text-muted-foreground"
-                >{i18n.locale === 'zh-CN' ? '更新内容' : 'Release Notes'}</strong
+                >{t.releaseNotes}</strong
               >
               <MarkdownContent content={updateInfo.body} />
             </div>
@@ -117,7 +117,7 @@
         {#if updateInfo?.available}
           <Button
             type="button"
-            class="flex-1 !bg-green-600 !hover:bg-green-700 !text-white"
+            class="flex-1 !bg-green-600 hover:!bg-green-700 !text-white"
             onclick={installUpdate}
             disabled={installingUpdate}
           >
@@ -133,7 +133,7 @@
       {#if updateMessage}
         <div
           class="p-3 rounded text-sm text-center
-                    {updateMessage.includes(t.noUpdateAvailable) || updateMessage.includes('✓')
+                    {updateMessage.includes(t.noUpdateAvailable)
             ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
             : 'bg-muted text-muted-foreground'}"
         >

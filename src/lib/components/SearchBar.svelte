@@ -7,9 +7,9 @@
   import { Loader2, Search, X } from 'lucide-svelte';
   import { listen } from '@tauri-apps/api/event';
   import { hasTauriRuntime } from '$lib/utils/tauri';
+  import { SEARCH_INPUT_ID } from '$lib/constants';
 
   const SEARCH_DEBOUNCE_MS = 120;
-  const SEARCH_INPUT_ID = 'quickbar-search';
 
   const t = $derived(i18n.t);
 

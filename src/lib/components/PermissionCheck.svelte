@@ -4,13 +4,11 @@
   import { listen } from '@tauri-apps/api/event';
   import { hasTauriRuntime } from '$lib/utils/tauri';
   import { i18n } from '$lib/i18n';
+  import { isMac } from '$lib/utils/platform';
   import Button from './ui/Button.svelte';
   import { AlertTriangle, RefreshCw, Settings } from 'lucide-svelte';
 
   const t = $derived(i18n.t);
-
-  const isMac =
-    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
 
   let hasPermission = $state(true);
   let isChecking = $state(true);

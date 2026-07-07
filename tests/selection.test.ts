@@ -1,6 +1,10 @@
 import { beforeEach, expect, test } from 'bun:test';
 
-(globalThis as typeof globalThis & { $state: <T>(value: T) => T }).$state = (value) => value;
+// Mock the $state rune as a global callable (the store is imported raw, not compiled).
+Object.defineProperty(globalThis, '$state', {
+  configurable: true,
+  value: <T>(value: T) => value,
+});
 
 const { selectionStore } = await import('../src/lib/stores/selection.svelte');
 

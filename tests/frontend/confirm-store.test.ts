@@ -4,7 +4,8 @@ const state = (<T>(value: T) => value) as (<T>(value: T) => T) & {
   raw: <T>(value: T) => T;
 };
 state.raw = <T>(value: T) => value;
-(globalThis as typeof globalThis & { $state: typeof state }).$state = state;
+// Mock the $state rune as a global callable (see clipboard-store.test.ts).
+Object.defineProperty(globalThis, '$state', { configurable: true, value: state });
 
 const { confirmStore } = await import('../../src/lib/stores/confirm.svelte');
 

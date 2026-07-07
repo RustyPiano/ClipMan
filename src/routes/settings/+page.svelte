@@ -10,7 +10,7 @@
   import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
-  import { normalizeSettingsLocale } from '$lib/utils/settings';
+  import { createDefaultSettings, normalizeSettingsLocale } from '$lib/utils/settings';
 
   // Import modularized components
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
@@ -23,24 +23,7 @@
 
   const t = $derived(i18n.t);
 
-  let settings = $state<Settings>({
-    globalShortcut: 'CommandOrControl+Shift+V',
-    autoPaste: true,
-    ignoreConcealed: true,
-    pinnedShortcut: null,
-    maxHistoryItems: 100,
-    trayTextLength: 70,
-    maxPinnedInTray: 5,
-    maxRecentInTray: 20,
-    customDataPath: null,
-    enableAutostart: false,
-    locale: 'zh-CN',
-    ignoredApps: [],
-    skipSecrets: true,
-    maxTextBytes: 2000000,
-    maxImageDimension: 4096,
-    capturePaused: false,
-  });
+  let settings = $state<Settings>(createDefaultSettings());
 
   let loading = $state(true);
   let saving = $state(false);
@@ -131,25 +114,8 @@
     if (!confirmed) return;
 
     // saveSettings handles its own success/error toasts, so no try/catch here.
-    settings = {
-      globalShortcut: 'CommandOrControl+Shift+V',
-      autoPaste: true,
-      ignoreConcealed: true,
-      pinnedShortcut: null,
-      maxHistoryItems: 100,
-      trayTextLength: 70,
-      maxPinnedInTray: 5,
-      maxRecentInTray: 20,
-      customDataPath: null,
-      enableAutostart: false,
-      locale: 'zh-CN',
-      ignoredApps: [],
-      skipSecrets: true,
-      maxTextBytes: 2000000,
-      maxImageDimension: 4096,
-      // Reset restores capture; the tray toggle owns this at runtime.
-      capturePaused: false,
-    };
+    // Reset restores defaults; the tray toggle owns capturePaused at runtime.
+    settings = createDefaultSettings();
     await saveSettings();
   }
 
