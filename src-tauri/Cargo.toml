@@ -13,11 +13,8 @@ tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 # Tauri Core
-tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon", "devtools"] }
-tauri-plugin-shell = "2.3.5"
+tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.7.1"
-tauri-plugin-fs = "2.5.1"
-tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-store = "2.4.3"
 tauri-plugin-updater = "2.10.1"
@@ -28,12 +25,6 @@ tauri-plugin-single-instance = "2"
 # Clipboard & System
 arboard = "3.4"
 enigo = { version = "0.3.0", default-features = false, features = ["x11rb"] }
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_DataExchange",
-    "Win32_System_Threading"
-] }
 
 # Storage & Serialization
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
@@ -42,13 +33,17 @@ serde_json = "1.0"
 serde_bytes = "0.11"
 
 # Async Runtime
-tokio = { version = "1.40", features = ["full"] }
+# Only `tokio::time::sleep` is used directly (paste.rs); the async runtime
+# itself comes from Tauri (`tauri::async_runtime`), which enables the wider
+# tokio feature set. Cargo unions features across the graph, so `time` here is
+# sufficient for this crate's own usage.
+tokio = { version = "1.40", features = ["time"] }
 
 data-encoding = "2.6"
 sha2 = "0.10"
 
 # Utilities
-uuid = { version = "1.10", features = ["v4", "serde"] }
+uuid = { version = "1.10", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
@@ -58,6 +53,15 @@ regex = "1"
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clipboard-master = "4.0.0"
+
+# Windows specific (all `windows::` usage is behind `#[cfg(windows)]`)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_Threading"
+] }
 
 # macOS specific
 [target.'cfg(target_os = "macos")'.dependencies]
