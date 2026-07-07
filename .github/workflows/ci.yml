@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: lint
+        run: bun run lint
+
+      - name: check
+        run: bun run check
+
+      - name: test
+        run: bun test tests/
+
+      - name: build
+        run: bun run build
+
+  rust:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # cargo test builds the Tauri app, which requires frontendDist (dist/)
+      # to exist even though the frontend isn't otherwise exercised here.
+      - name: build frontend (for frontendDist)
+        run: bun run build
+
+      - name: install Rust (rust-toolchain.toml pinned)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test

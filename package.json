@@ -9,6 +9,7 @@
     "preview": "bun --bun vite preview",
     "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint src/",
+    "test": "bun test tests/",
     "format": "prettier --write \"src/**/*.{ts,svelte}\"",
     "tauri": "tauri"
   },
