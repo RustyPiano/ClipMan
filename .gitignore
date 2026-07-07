@@ -32,8 +32,11 @@ src-tauri/gen/
 *.sln
 *.sw?
 
-# User-specific tool configs
-.claude/
+# User-specific tool configs (shared project hooks/settings ARE committed)
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/settings.local.json
 .serena/
 
 # OS generated files

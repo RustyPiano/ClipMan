@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/inject-status.sh",
+            "timeout": 10,
+            "statusMessage": "注入项目状态文档"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/check-status-doc.sh",
+            "timeout": 15,
+            "statusMessage": "检查状态文档是否需要更新"
+          }
+        ]
+      }
+    ]
+  }
+}
