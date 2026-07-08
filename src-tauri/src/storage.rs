@@ -287,11 +287,9 @@ impl ClipStorage {
 
     pub fn insert(&self, item: &ClipItem, max_history_items: usize) -> Result<Option<String>> {
         let tx = self.conn.unchecked_transaction()?;
-        let (result, pruned) = Self::insert_with_conn(&tx, item, max_history_items)?;
+        let result = Self::insert_with_conn(&tx, item, max_history_items)?;
         tx.commit()?;
-        if pruned {
-            self.reclaim_space();
-        }
+        self.reclaim_space();
         Ok(result)
     }
 
@@ -299,7 +297,7 @@ impl ClipStorage {
         conn: &Connection,
         item: &ClipItem,
         max_history_items: usize,
-    ) -> Result<(Option<String>, bool)> {
+    ) -> Result<Option<String>> {
         let content_hash = hash_bytes(&item.content);
 
         let existing_id: Option<String> = conn
@@ -325,7 +323,7 @@ impl ClipStorage {
                 item.html.as_deref(),
                 item.source_app.as_deref(),
             )?;
-            return Ok((Some(id), false));
+            return Ok(Some(id));
         }
 
         conn.execute(
@@ -351,9 +349,9 @@ impl ClipStorage {
         )?;
 
         Self::sync_fts_for_clip_id_with_conn(conn, &item.id)?;
-        let pruned = Self::prune_history_with_conn(conn, max_history_items)? > 0;
+        Self::prune_history_with_conn(conn, max_history_items)?;
 
-        Ok((None, pruned))
+        Ok(None)
     }
 
     pub fn get_recent_clip_previews(&self, limit: usize) -> Result<Vec<ClipPreviewItem>> {
@@ -652,11 +650,7 @@ impl ClipStorage {
 
     /// Update the timestamp of a clip item (move it to the top of recent list)
     pub fn update_timestamp(&self, id: &str, new_timestamp: i64) -> Result<()> {
-        Self::update_timestamp_with_conn(&self.conn, id, new_timestamp)
-    }
-
-    fn update_timestamp_with_conn(conn: &Connection, id: &str, new_timestamp: i64) -> Result<()> {
-        conn.execute(
+        self.conn.execute(
             "UPDATE clips SET timestamp = ?1 WHERE id = ?2",
             params![new_timestamp, id],
         )?;

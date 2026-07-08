@@ -4,20 +4,20 @@
 > 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 PLAN.md / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-07-07**
+**最后更新：2026-07-08**
 
 ## 当前状态一句话
 
-v2.2 全部改动（含双模型审核 49 项修复）**已提交到 `main`**（6 个提交）；版本已升到 **2.2.0**、release notes 已写；发布流程已全面自动化。下一步：（用户上机确认后）推 `v2.2.0` 标签触发构建 → 发布草稿。
+v2.2（含双模型审核 49 项修复 + 2026-07-08 清晰度精简波次）已在 `main`；版本 **2.2.0**；正在发布：推 `v2.2.0` 标签触发 4 平台构建 → 草稿 → Publish。
 
 ## 工作区
 
-- 干净（本次仅剩本文件的 STATUS 更新）。签名私钥目录 `ClipMan-signing/` 已加入 `.gitignore`，永不入库。
+- 干净。签名私钥目录 `ClipMan-signing/` 已加入 `.gitignore`，永不入库。
 
-## 质量基线（改动必须保持全绿；本机无工具链，靠 CI）
+## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 
 ```
-cd src-tauri && cargo test               # 119 通过
+cd src-tauri && cargo test               # 114 通过
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo fmt --check
 bun run lint && bun run check            # 0 错误
@@ -27,17 +27,15 @@ bun run build
 
 ## 待办（按优先级）
 
-1. **切 v2.2.0 正式版**（自动化已就绪，任选其一）：
-   - 本地：`git tag v2.2.0 && git push --follow-tags`（标签触发 `release.yml`：preflight 校验 → 4 平台构建 + 自签名 → **草稿** release）。
-   - 或 Actions → **Prepare Release** 一键（需先配 `RELEASE_PAT` secret，否则标签不触发构建）。
-   - 构建完成后：GitHub Releases 里编辑草稿 → **Publish**（更新器的 `latest.json` 只认已发布的非草稿 release）。
-2. **上机复验**（推标签前）：v2.2 各特性（文件、富文本+⌥Enter、⌘Click 合并粘贴、托盘暂停、秘密跳过、忽略应用）与三处修复（文件粘贴、深色阴影、vacuum）。CI 已全绿但缺真机验证。
+1. **发布 v2.2.0**（进行中）：标签已触发 `release.yml`（preflight → 4 平台构建 + 自签名 → 草稿）；构建完成后 Publish（更新器的 `latest.json` 只认已发布的非草稿 release）。
+2. **上机复验**：v2.2 各特性（文件、富文本+⌥Enter、⌘Click 合并粘贴、托盘暂停、秘密跳过、忽略应用）与三处修复（文件粘贴、深色阴影、vacuum）。CI 全绿但缺真机验证。
 3. **发版可选增强**：给 ClipMan **完全磁盘访问**以获最佳文件粘贴体验；README 功能列表若有新特性再补（版本号/文件名已自动）。
 4. Wave 4 候选（未排期）：Paste Stack 逐次粘贴、类型识别与语法高亮、SQLCipher 加密（同步前置）、搜索 1000 条截断提示、Apple 公证。
 
-## 双模型代码审核（2026-07-07，已提交）
+## 代码审核记录
 
-四路审毕约 55 条（规格：`docs/dev/REVIEW-2026-07-07.md`）：**49 条全部 fixed、0 跳过 0 失败**（含 anchor 竞态，测试先行，`anchor-race.test.ts`）。已随 v2.2 波次提交到 `main`。遗留决策：`group_name` 去留、短查询 4096 截断、#47 Windows FFI（现由 CI `rust-windows` 作业守护编译）。
+- **双模型审核（2026-07-07）**：约 55 条、49 fixed（规格 `docs/dev/REVIEW-2026-07-07.md`）。遗留决策：`group_name` 去留、短查询 4096 截断、#47 Windows FFI（CI `rust-windows` 守护）。
+- **清晰度精简（2026-07-08）**：三路审查"能跑但不够清晰"，17 项确认全部落地（删 ~230 行：死 RAII 守卫、快捷键三标志状态机→直线流、搜索路径双保险、migration 重复列添加、测试驱动抽象等）。快捷键切换从 make-before-break 改为 break-before-make（毫秒级窗口，已接受）。审毕保留项（勿再"清理"）：`run_returned` 标志（护 250ms 竞态，有注释）、`StagedSqliteReplacement`（护目标目录已有库的数据丢失窗口）。
 
 ## 已知问题 / 注意事项
 

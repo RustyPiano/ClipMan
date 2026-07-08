@@ -3,7 +3,6 @@
   import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { router } from '$lib/stores/router.svelte';
   import { clampIndex, selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
@@ -36,16 +35,18 @@
     Search,
   } from 'lucide-svelte';
 
-  const initialSettingsCheck =
+  // Tauri injects __TAURI_INTERNALS__ before page scripts run, so the window
+  // identity is known at module scope (getCurrentWindow() reads this same
+  // field and can never disagree with it).
+  const isSettingsWindow =
     typeof window !== 'undefined' &&
     (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'settings';
 
-  if (initialSettingsCheck) {
+  if (isSettingsWindow) {
     router.goToSettings();
   }
 
-  let isSettings = $state(initialSettingsCheck);
-  let resultsScroller: Element | null = $state(null);
+  let resultsScroller: HTMLDivElement | null = $state(null);
 
   const SCROLL_EDGE_PADDING = 6;
   // Prefetch the next recent page when scrolled within this many viewport
@@ -111,7 +112,7 @@
       selectionStore.selectedIndex = 0;
       anchoredId = items[0]?.id ?? null;
       untrack(() => {
-        if (resultsScroller instanceof globalThis.HTMLElement) {
+        if (resultsScroller) {
           resultsScroller.scrollTop = 0;
         }
       });
@@ -146,10 +147,9 @@
     const scroller = resultsScroller;
     const item = displayItems[index];
     if (!scroller || !item) return;
-    if (!(scroller instanceof globalThis.HTMLElement)) return;
 
     const element = document.getElementById(`clip-item-${item.id}`);
-    if (!(element instanceof globalThis.HTMLElement)) return;
+    if (!element) return;
 
     const scrollerRect = scroller.getBoundingClientRect();
     const elementRect = element.getBoundingClientRect();
@@ -221,9 +221,9 @@
     void clipboardStore.loadMoreRecent();
   }
 
-  function handleResultsScroll(event: Event) {
-    const scroller = event.currentTarget;
-    if (!(scroller instanceof globalThis.HTMLElement)) return;
+  function handleResultsScroll() {
+    const scroller = resultsScroller;
+    if (!scroller) return;
 
     const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     if (remaining <= scroller.clientHeight * LOAD_MORE_SCROLL_SCREENS) {
@@ -484,9 +484,7 @@
   onMount(() => {
     const tauriAvailable = hasTauriRuntime();
 
-    if (isSettings || (tauriAvailable && getCurrentWindow().label === 'settings')) {
-      isSettings = true;
-      router.goToSettings();
+    if (isSettingsWindow) {
       return;
     }
 
@@ -512,7 +510,7 @@
     void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
       resetPanelAndReveal(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
       if (clipboardStore.searchQuery.trim()) {
-        void clipboardStore.clearSearch({ showLoading: false });
+        void clipboardStore.clearSearch();
       }
       void clipboardStore.refreshSettings();
       focusSearchInput();
@@ -536,7 +534,7 @@
 <Toast />
 <ConfirmDialog />
 
-{#if isSettings || router.currentRoute === 'settings'}
+{#if isSettingsWindow || router.currentRoute === 'settings'}
   <div class="contents" {@attach syncTheme(themeStore.current)}>
     <SettingsPage />
   </div>

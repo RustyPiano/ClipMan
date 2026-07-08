@@ -47,32 +47,6 @@ impl ForegroundWindow {
     }
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MacQuickBarWindowPolicy {
-    visible_on_all_workspaces: bool,
-    level: objc2_app_kit::NSWindowLevel,
-    collection_behavior: objc2_app_kit::NSWindowCollectionBehavior,
-    hides_on_deactivate: bool,
-}
-
-#[cfg(target_os = "macos")]
-fn mac_quickbar_window_policy() -> MacQuickBarWindowPolicy {
-    use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior};
-
-    // QuickBar is a non-activating panel; the target app stays active while it is shown.
-    MacQuickBarWindowPolicy {
-        visible_on_all_workspaces: true,
-        level: NSStatusWindowLevel,
-        collection_behavior: NSWindowCollectionBehavior::Auxiliary
-            | NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary
-            | NSWindowCollectionBehavior::Transient
-            | NSWindowCollectionBehavior::IgnoresCycle,
-        hides_on_deactivate: false,
-    }
-}
-
 pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
     setup_quickbar_window(&quickbar)?;
@@ -309,10 +283,9 @@ fn quickbar_logical_size(work_width: f64, work_height: f64) -> (f64, f64) {
 
 #[cfg(target_os = "macos")]
 fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
-    use objc2_app_kit::NSWindowStyleMask;
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
     let ns_window = ns_window(window)?;
-    let policy = mac_quickbar_window_policy();
 
     // macOS-only native shadow: the window server draws it around the opaque
     // rounded panel, outside the window bounds, so it can't be clipped like a
@@ -320,13 +293,21 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     // DWM shadows follow the rectangular frame, not the panel shape.
     window.set_shadow(true).map_err(to_string)?;
 
+    // QuickBar is a non-activating panel; the target app stays active while it
+    // is shown.
     window
-        .set_visible_on_all_workspaces(policy.visible_on_all_workspaces)
+        .set_visible_on_all_workspaces(true)
         .map_err(to_string)?;
     ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
-    ns_window.setLevel(policy.level);
-    ns_window.setHidesOnDeactivate(policy.hides_on_deactivate);
-    ns_window.setCollectionBehavior(policy.collection_behavior);
+    ns_window.setLevel(NSStatusWindowLevel);
+    ns_window.setHidesOnDeactivate(false);
+    ns_window.setCollectionBehavior(
+        NSWindowCollectionBehavior::Auxiliary
+            | NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::Transient
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
 
     log::info!("Configured QuickBar macOS non-activating panel style fallback");
     Ok(())
@@ -543,35 +524,6 @@ mod size_tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior};
-
-    #[test]
-    fn mac_quickbar_policy_keeps_nonactivating_panel_visible_while_app_is_inactive() {
-        assert!(!super::mac_quickbar_window_policy().hides_on_deactivate);
-    }
-
-    #[test]
-    fn mac_quickbar_policy_is_visible_on_all_workspaces() {
-        assert!(super::mac_quickbar_window_policy().visible_on_all_workspaces);
-    }
-
-    #[test]
-    fn mac_quickbar_policy_marks_window_as_fullscreen_auxiliary() {
-        let behavior = super::mac_quickbar_window_policy().collection_behavior;
-
-        assert!(behavior.contains(NSWindowCollectionBehavior::Auxiliary));
-        assert!(behavior.contains(NSWindowCollectionBehavior::FullScreenAuxiliary));
-        assert!(behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces));
-    }
-
-    #[test]
-    fn mac_quickbar_policy_uses_status_window_level() {
-        assert_eq!(
-            NSStatusWindowLevel,
-            super::mac_quickbar_window_policy().level
-        );
-    }
-
     #[test]
     fn quickbar_hidden_event_name_matches_frontend_listener() {
         assert_eq!("quickbar-hidden", super::QUICKBAR_HIDDEN_EVENT);

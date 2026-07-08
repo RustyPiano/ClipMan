@@ -43,20 +43,11 @@
     },
   ];
 
-  interface ShortcutKey {
-    id: string;
-    label: string;
-  }
-
   // Convert Tauri shortcut to display format
-  function formatShortcut(shortcut: string): ShortcutKey[] {
+  function formatShortcut(shortcut: string): string[] {
     if (!shortcut) return [];
 
-    const keys = shortcut.split('+');
-    return keys.map((key, index) => ({
-      id: `${index}:${key}`,
-      label: formatShortcutKey(key),
-    }));
+    return shortcut.split('+').map(formatShortcutKey);
   }
 
   function formatShortcutKey(key: string): string {
@@ -80,7 +71,7 @@
 
   // Keyboard recording state
   let isRecording = $state(false);
-  let recordedKeys = $state<ShortcutKey[]>([]);
+  let recordedKeys = $state<string[]>([]);
   let recordingWarning = $state('');
   let recordingTimeout: ReturnType<typeof setTimeout> | undefined;
   const formattedKeys = $derived(formatShortcut(settings.globalShortcut));
@@ -171,10 +162,7 @@
       }
     } else {
       // Just show modifiers while waiting for main key
-      recordedKeys = keys.map((key, index) => ({
-        id: `${index}:${key}`,
-        label: formatShortcutKey(key),
-      }));
+      recordedKeys = keys.map(formatShortcutKey);
       recordingWarning = '';
     }
   }
@@ -251,14 +239,14 @@
               </div>
             {:else if recordedKeys.length > 0}
               <div class="flex items-center justify-center gap-1.5">
-                {#each recordedKeys as key (key.id)}
+                {#each recordedKeys as label}
                   <kbd
                     class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                                bg-gradient-to-b from-background to-muted
                                                border border-border rounded-md shadow-sm
                                                text-foreground"
                   >
-                    {key.label}
+                    {label}
                   </kbd>
                   <span class="text-muted-foreground text-sm">+</span>
                 {/each}
@@ -274,14 +262,14 @@
           </div>
         {:else}
           <div class="flex items-center gap-1.5">
-            {#each formattedKeys as key, index (key.id)}
+            {#each formattedKeys as label, index}
               <kbd
                 class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                        bg-gradient-to-b from-background to-muted
                                        border border-border rounded-md shadow-sm
                                        text-foreground"
               >
-                {key.label}
+                {label}
               </kbd>
               {#if index < formattedKeys.length - 1}
                 <span class="text-muted-foreground text-sm">+</span>

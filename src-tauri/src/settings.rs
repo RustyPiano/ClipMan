@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
@@ -246,7 +246,7 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
 }
 
 pub struct SettingsManager {
-    settings: Arc<Mutex<Settings>>,
+    settings: Mutex<Settings>,
 }
 
 impl Default for SettingsManager {
@@ -258,7 +258,7 @@ impl Default for SettingsManager {
 impl SettingsManager {
     pub fn new() -> Self {
         Self {
-            settings: Arc::new(Mutex::new(Settings::default())),
+            settings: Mutex::new(Settings::default()),
         }
     }
 

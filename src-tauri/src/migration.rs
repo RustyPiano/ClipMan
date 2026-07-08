@@ -61,46 +61,13 @@ fn upgrade_to_v1_plaintext(conn: &rusqlite::Connection, data_dir: &Path) -> Resu
     Ok(())
 }
 
+/// Callers must ensure the current schema columns already exist
+/// (`ClipStorage::initialize_schema` runs before this in `ClipStorage::new`);
+/// this only fills in values for rows written by older versions.
 fn backfill_v2_search_columns(conn: &rusqlite::Connection) -> Result<(), String> {
-    add_column_if_missing(conn, "content_hash", "TEXT")?;
-    add_column_if_missing(conn, "thumbnail", "BLOB")?;
     backfill_content_hashes(conn)?;
     backfill_image_thumbnails(conn)?;
     Ok(())
-}
-
-fn add_column_if_missing(
-    conn: &rusqlite::Connection,
-    name: &str,
-    column_type: &str,
-) -> Result<(), String> {
-    if has_column(conn, name)? {
-        return Ok(());
-    }
-
-    conn.execute(
-        &format!("ALTER TABLE clips ADD COLUMN {name} {column_type}"),
-        [],
-    )
-    .map_err(|e| format!("Failed to add {name} column: {}", e))?;
-    Ok(())
-}
-
-fn has_column(conn: &rusqlite::Connection, name: &str) -> Result<bool, String> {
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(clips)")
-        .map_err(|e| format!("Failed to inspect clips table: {}", e))?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| format!("Failed to read clips columns: {}", e))?;
-
-    for column in columns {
-        if column.map_err(|e| format!("Failed to read clips column: {}", e))? == name {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
 }
 
 fn backfill_content_hashes(conn: &rusqlite::Connection) -> Result<(), String> {
@@ -335,6 +302,8 @@ mod tests {
             "CREATE TABLE clips (
                 id TEXT PRIMARY KEY,
                 content BLOB NOT NULL,
+                thumbnail BLOB,
+                content_hash TEXT,
                 content_type TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
                 is_pinned INTEGER DEFAULT 0,

@@ -196,6 +196,10 @@ impl ClipboardMonitor {
                     // Hand the shutdown channel to the monitor before start()
                     // returns, so stop() can always signal run() before join().
                     *crate::safe_lock(&shutdown_slot) = Some(master.shutdown_channel());
+                    // Not belt-and-braces: if run() fails near the 250ms
+                    // boundary, this flag keeps the timer thread from
+                    // sending Ok before the polling fallback reports its
+                    // own Ok/Err.
                     let run_returned = Arc::new(AtomicBool::new(false));
                     let run_returned_for_ready = run_returned.clone();
                     let ready_sender_for_event = ready_sender.clone();
@@ -403,7 +407,10 @@ impl ClipboardMonitor {
         let settings = app_handle.state::<AppState>().settings.get();
         let max_text_bytes = settings.max_text_bytes;
 
-        if !content_within_size_limit(text.len(), max_text_bytes) {
+        // Oversized Text/Files content is skipped entirely rather than
+        // truncated (§5): a partial path list or partial text is worse than
+        // no clip at all.
+        if text.len() > max_text_bytes {
             log::info!(
                 "Skipping text clip: {} bytes exceeds max_text_bytes ({})",
                 text.len(),
@@ -446,7 +453,7 @@ impl ClipboardMonitor {
         let max_text_bytes = app_handle.state::<AppState>().settings.get().max_text_bytes;
         let content = join_file_paths(&paths).into_bytes();
 
-        if !content_within_size_limit(content.len(), max_text_bytes) {
+        if content.len() > max_text_bytes {
             log::info!(
                 "Skipping files clip: {} bytes exceeds max_text_bytes ({})",
                 content.len(),
@@ -687,14 +694,6 @@ impl ClipboardMonitor {
     }
 }
 
-/// Whether Text/Files content of `content_len` bytes is small enough to
-/// capture under `max_text_bytes` (§5). Oversized content is skipped
-/// entirely rather than truncated, since a truncated path list or partial
-/// text is worse than no clip at all.
-fn content_within_size_limit(content_len: usize, max_text_bytes: usize) -> bool {
-    content_len <= max_text_bytes
-}
-
 /// Whether `text` should be skipped because it matches a high-confidence
 /// secret pattern (SPEC-4 §2), and if so, the kind for logging. Only Text
 /// content is checked — Files/Image never reach this function. Kept pure and
@@ -724,7 +723,7 @@ fn app_name_matches_ignore_list(app_name: &str, ignored_apps: &[String]) -> bool
 /// whole clip.
 fn clamp_html_to_size_limit(html: Option<String>, max_text_bytes: usize) -> Option<String> {
     html.filter(|html| {
-        let within_limit = content_within_size_limit(html.len(), max_text_bytes);
+        let within_limit = html.len() <= max_text_bytes;
         if !within_limit {
             log::debug!(
                 "Dropping oversized html companion: {} bytes exceeds max_text_bytes ({})",
@@ -821,7 +820,7 @@ fn windows_clipboard_has_exclude_marker() -> bool {
 #[cfg(target_os = "windows")]
 fn windows_can_include_clipboard_history_is_false() -> bool {
     let format = windows_clipboard_format("CanIncludeInClipboardHistory");
-    if format == 0 || !windows_clipboard_format_available(format) {
+    if !windows_clipboard_format_available(format) {
         return false;
     }
 
@@ -982,12 +981,6 @@ mod tests {
         let content = image::load_from_memory(&processed.content_png).unwrap();
 
         assert_eq!(width as u32, content.width());
-    }
-
-    #[test]
-    fn text_and_files_content_size_limit_rejects_only_oversized_content() {
-        assert!(content_within_size_limit(100, 100));
-        assert!(!content_within_size_limit(101, 100));
     }
 
     #[test]

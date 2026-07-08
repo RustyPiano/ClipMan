@@ -134,7 +134,7 @@ describe('clipboard store races', () => {
     // runtime is present, which installTauriInvoke provides.
     expect(clipboardStore.isSearchPending).toBe(true);
 
-    await clipboardStore.clearSearch({ showLoading: false });
+    await clipboardStore.clearSearch();
 
     expect(clipboardStore.searchQuery).toBe('');
     expect(clipboardStore.isLoading).toBe(false);

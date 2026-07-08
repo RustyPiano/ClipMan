@@ -30,7 +30,7 @@
   function applySearchInput(value: string) {
     if (!value.trim()) {
       clearTimeout(debounceTimer);
-      void clipboardStore.clearSearch({ showLoading: false });
+      void clipboardStore.clearSearch();
       return;
     }
 
@@ -68,7 +68,7 @@
 
   function clearSearch() {
     clearTimeout(debounceTimer);
-    void clipboardStore.clearSearch({ showLoading: false });
+    void clipboardStore.clearSearch();
 
     const input = document.getElementById(SEARCH_INPUT_ID);
     if (input instanceof HTMLInputElement) {

@@ -178,26 +178,21 @@ fn add_clip_menu_item(
 ) -> Result<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>, tauri::Error> {
     let preview = truncate_content(&item.preview_content, &item.content_type, max_len, i18n);
 
-    if matches!(item.content_type, ContentType::Image) {
-        if let Some(icon) = item
-            .thumbnail
-            .as_deref()
-            .and_then(|content| icon_cache.get_or_create(&item.id, content))
-        {
-            let menu_item = IconMenuItemBuilder::with_id(format!("clip:{}", item.id), preview)
+    let icon = matches!(item.content_type, ContentType::Image)
+        .then(|| item.thumbnail.as_deref())
+        .flatten()
+        .and_then(|content| icon_cache.get_or_create(&item.id, content));
+
+    Ok(match icon {
+        Some(icon) => Box::new(
+            IconMenuItemBuilder::with_id(format!("clip:{}", item.id), preview)
                 .icon(icon)
-                .build(app)?;
-            Ok(Box::new(menu_item))
-        } else {
-            let menu_item =
-                MenuItemBuilder::with_id(format!("clip:{}", item.id), preview).build(app)?;
-            Ok(Box::new(menu_item))
+                .build(app)?,
+        ),
+        None => {
+            Box::new(MenuItemBuilder::with_id(format!("clip:{}", item.id), preview).build(app)?)
         }
-    } else {
-        let menu_item =
-            MenuItemBuilder::with_id(format!("clip:{}", item.id), preview).build(app)?;
-        Ok(Box::new(menu_item))
-    }
+    })
 }
 
 /// Build dynamic tray menu

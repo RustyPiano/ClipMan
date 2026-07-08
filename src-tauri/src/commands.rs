@@ -80,51 +80,6 @@ fn restart_clipboard_monitor(app: &AppHandle, state: &AppState) -> Result<(), St
     }
 }
 
-struct ClipboardMonitorPause<'a> {
-    app: AppHandle,
-    state: &'a AppState,
-    restart: bool,
-}
-
-impl<'a> ClipboardMonitorPause<'a> {
-    fn pause(app: AppHandle, state: &'a AppState) -> Self {
-        let restart = if let Some(monitor) = safe_lock(&state.monitor).take() {
-            monitor.stop();
-            log::info!("Clipboard monitoring stopped for migration");
-            true
-        } else {
-            false
-        };
-
-        Self {
-            app,
-            state,
-            restart,
-        }
-    }
-
-    fn restart_if_needed(mut self) -> Result<(), String> {
-        if self.restart {
-            self.restart = false;
-            restart_clipboard_monitor(&self.app, self.state)?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for ClipboardMonitorPause<'_> {
-    fn drop(&mut self) {
-        if self.restart && safe_lock(&self.state.monitor).is_none() {
-            if let Err(e) = restart_clipboard_monitor(&self.app, self.state) {
-                log::error!(
-                    "Failed to restart clipboard monitoring from drop guard: {}",
-                    e
-                );
-            }
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
@@ -557,17 +512,13 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
-fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) -> bool {
-    match app.global_shortcut().unregister(shortcut) {
-        Ok(()) => true,
-        Err(e) => {
-            log::warn!(
-                "Failed to unregister {label} shortcut '{}': {}",
-                shortcut,
-                e
-            );
-            false
-        }
+fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) {
+    if let Err(e) = app.global_shortcut().unregister(shortcut) {
+        log::warn!(
+            "Failed to unregister {label} shortcut '{}': {}",
+            shortcut,
+            e
+        );
     }
 }
 
@@ -591,95 +542,76 @@ fn apply_shortcut_changes(
     new_shortcut: &str,
     new_pinned_shortcut: Option<&str>,
 ) -> Result<(), String> {
-    let shortcut_changed = old_shortcut != new_shortcut;
-    let pinned_shortcut_changed = old_pinned_shortcut != new_pinned_shortcut;
+    let main_changed = old_shortcut != new_shortcut;
+    let pinned_changed = old_pinned_shortcut != new_pinned_shortcut;
 
-    if !shortcut_changed && !pinned_shortcut_changed {
+    if !main_changed && !pinned_changed {
         return Ok(());
     }
 
-    let mut new_main_registered = false;
-    let mut old_main_unregistered = false;
-    let mut old_pinned_unregistered = false;
-
-    if pinned_shortcut_changed && old_pinned_shortcut == Some(new_shortcut) {
-        old_pinned_unregistered = unregister_shortcut_if_active(app, new_shortcut, "old pinned");
-    }
-
-    if shortcut_changed {
-        if let Err(e) = register_quickbar_shortcut(
-            app,
-            new_shortcut,
-            foreground_store.clone(),
-            crate::window::QuickBarPanel::Recent,
-        ) {
-            if old_pinned_unregistered {
-                if let Some(old_pinned_shortcut) = old_pinned_shortcut {
-                    restore_shortcut(
-                        app,
-                        old_pinned_shortcut,
-                        foreground_store,
-                        crate::window::QuickBarPanel::Pinned,
-                        "old pinned",
-                    );
-                }
-            }
-            return Err(e);
-        }
-        new_main_registered = true;
-    }
-
-    if shortcut_changed && new_pinned_shortcut == Some(old_shortcut) {
-        old_main_unregistered = unregister_shortcut_if_active(app, old_shortcut, "old main");
-    }
-
-    if pinned_shortcut_changed {
-        if let Some(new_pinned_shortcut) = new_pinned_shortcut {
-            if let Err(e) = register_quickbar_shortcut(
-                app,
-                new_pinned_shortcut,
-                foreground_store.clone(),
-                crate::window::QuickBarPanel::Pinned,
-            ) {
-                if new_main_registered {
-                    let _ = app.global_shortcut().unregister(new_shortcut);
-                }
-                if old_main_unregistered {
-                    restore_shortcut(
-                        app,
-                        old_shortcut,
-                        foreground_store.clone(),
-                        crate::window::QuickBarPanel::Recent,
-                        "old main",
-                    );
-                }
-                if old_pinned_unregistered {
-                    if let Some(old_pinned_shortcut) = old_pinned_shortcut {
-                        restore_shortcut(
-                            app,
-                            old_pinned_shortcut,
-                            foreground_store,
-                            crate::window::QuickBarPanel::Pinned,
-                            "old pinned",
-                        );
-                    }
-                }
-                return Err(e);
-            }
-        }
-    }
-
-    if shortcut_changed && !old_main_unregistered {
+    // Unregister every changed old binding first (frees the keys, so swapping
+    // main and pinned needs no special casing), then register the new ones.
+    if main_changed {
         unregister_shortcut_if_active(app, old_shortcut, "old main");
     }
-
-    if pinned_shortcut_changed && !old_pinned_unregistered {
-        if let Some(old_pinned_shortcut) = old_pinned_shortcut {
-            unregister_shortcut_if_active(app, old_pinned_shortcut, "old pinned");
+    if pinned_changed {
+        if let Some(old_pinned) = old_pinned_shortcut {
+            unregister_shortcut_if_active(app, old_pinned, "old pinned");
         }
     }
 
-    Ok(())
+    let result = (|| -> Result<(), String> {
+        if main_changed {
+            register_quickbar_shortcut(
+                app,
+                new_shortcut,
+                foreground_store.clone(),
+                crate::window::QuickBarPanel::Recent,
+            )?;
+        }
+        if pinned_changed {
+            if let Some(new_pinned) = new_pinned_shortcut {
+                register_quickbar_shortcut(
+                    app,
+                    new_pinned,
+                    foreground_store.clone(),
+                    crate::window::QuickBarPanel::Pinned,
+                )?;
+            }
+        }
+        Ok(())
+    })();
+
+    if result.is_err() {
+        // Best effort: drop whatever new bindings landed, restore the old
+        // ones. `restore_shortcut` only logs on failure.
+        let _ = app.global_shortcut().unregister(new_shortcut);
+        if let Some(new_pinned) = new_pinned_shortcut {
+            let _ = app.global_shortcut().unregister(new_pinned);
+        }
+        if main_changed {
+            restore_shortcut(
+                app,
+                old_shortcut,
+                foreground_store.clone(),
+                crate::window::QuickBarPanel::Recent,
+                "old main",
+            );
+        }
+        if pinned_changed {
+            if let Some(old_pinned) = old_pinned_shortcut {
+                restore_shortcut(
+                    app,
+                    old_pinned,
+                    foreground_store,
+                    crate::window::QuickBarPanel::Pinned,
+                    "old pinned",
+                );
+            }
+        }
+    }
+
+    result
 }
 
 fn apply_autostart_setting(app: &AppHandle, enable_autostart: bool) -> Result<(), String> {
@@ -966,7 +898,10 @@ pub async fn migrate_data_location(
 
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
-    let pause = ClipboardMonitorPause::pause(app.clone(), state.inner());
+    let was_running = safe_lock(&state.monitor).take().map(|m| m.stop()).is_some();
+    if was_running {
+        log::info!("Clipboard monitoring stopped for migration");
+    }
     let migration_result = (|| -> Result<(), String> {
         let mut storage_guard = safe_lock(&state.storage);
         storage_guard
@@ -995,7 +930,11 @@ pub async fn migrate_data_location(
         Ok(())
     })();
 
-    let restart_result = pause.restart_if_needed();
+    let restart_result = if was_running {
+        restart_clipboard_monitor(&app, state.inner())
+    } else {
+        Ok(())
+    };
     crate::tray::update_tray_menu(&app);
 
     match (migration_result, restart_result) {

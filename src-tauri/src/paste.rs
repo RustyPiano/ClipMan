@@ -265,8 +265,7 @@ async fn fetch_clips_and_touch_batch(
         // Reflect the touch in the returned copies and build the emit preview
         // from the last touched clip (all share `new_timestamp`, so a later full
         // reload surfaces the whole batch at the top; this live event lifts the
-        // last one). `ids` is non-empty (paste_clips guards that), so `items` is
-        // too.
+        // last one).
         for item in &mut items {
             item.timestamp = new_timestamp;
         }

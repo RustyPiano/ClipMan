@@ -19,7 +19,7 @@ interface LoadHistoryOptions {
   showLoading?: boolean;
 }
 
-interface ClearSearchOptions extends LoadHistoryOptions {
+interface ClearSearchOptions {
   reload?: boolean;
 }
 
@@ -266,16 +266,11 @@ class ClipboardStore {
   }
 
   setSearchQuery(query: string) {
+    // Empty input is routed to clearSearch by SearchBar; this only stages a
+    // non-empty draft.
     this.searchRequests.next();
     this.searchQuery = query;
-    if (!query.trim()) {
-      this.activeSearchQuery = '';
-      this.searchResults = [];
-      this.isSearchPending = false;
-      this.isLoading = false;
-    } else {
-      this.isSearchPending = hasTauriRuntime();
-    }
+    this.isSearchPending = hasTauriRuntime();
   }
 
   setSearchDraft(query: string) {
@@ -288,6 +283,12 @@ class ClipboardStore {
     if (query.trim() && this.searchQuery !== query) {
       return;
     }
+    if (!query.trim()) {
+      return this.clearSearch();
+    }
+    if (!hasTauriRuntime()) {
+      return;
+    }
 
     // A silent search refreshes the results of the *same* query in place — e.g.
     // after a copy bumps a row's timestamp while a query is active. It must not
@@ -297,45 +298,29 @@ class ClipboardStore {
     const requestId = this.searchRequests.next();
     this.searchQuery = query;
 
-    if (!query.trim()) {
-      this.activeSearchQuery = '';
-      this.searchResults = [];
-      this.isSearchPending = false;
-      await this.loadHistory({ showLoading: false });
-      return;
-    }
-
-    if (!hasTauriRuntime()) {
-      this.activeSearchQuery = '';
-      this.searchResults = [];
-      this.isSearchPending = false;
-      this.isLoading = false;
-      return;
-    }
-
     if (!silent) {
       this.isSearchPending = true;
     }
+    // `isCurrent` alone guarantees `searchQuery` is still `query`: every
+    // assignment to `searchQuery` bumps the sequencer first.
     try {
       const results = await invoke<ClipItem[]>('search_clips', { query });
-      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+      if (this.searchRequests.isCurrent(requestId)) {
         this.searchResults = results;
         this.activeSearchQuery = query;
       }
     } catch (error) {
-      if (this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+      if (this.searchRequests.isCurrent(requestId)) {
         console.error('Search failed:', error);
       }
     } finally {
-      if (!silent && this.searchRequests.isCurrent(requestId) && this.searchQuery === query) {
+      if (!silent && this.searchRequests.isCurrent(requestId)) {
         this.isSearchPending = false;
       }
     }
   }
 
   async clearSearch(options: ClearSearchOptions = {}) {
-    const reload = options.reload ?? true;
-
     this.searchRequests.next();
     this.searchQuery = '';
     this.activeSearchQuery = '';
@@ -343,10 +328,8 @@ class ClipboardStore {
     this.isSearchPending = false;
     this.isLoading = false;
 
-    if (reload) {
-      await this.loadHistory({ showLoading: options.showLoading ?? false });
-    } else {
-      this.isLoading = false;
+    if (options.reload ?? true) {
+      await this.loadHistory({ showLoading: false });
     }
   }
 
@@ -522,7 +505,6 @@ class ClipboardStore {
   }
 
   private cacheFullClip(item: ClipItem) {
-    if (item.contentType !== 'text' && item.contentType !== 'files') return;
     if (item.content.length > ClipboardStore.MAX_CACHEABLE_CONTENT_LENGTH) return;
 
     this.fullClipCache.set(item.id, item);
