@@ -12,7 +12,7 @@
 
 ## 工作区
 
-- 有未提交改动：AWS secret-detection 测试样例改为运行时拼接，避免 GitHub Secret Scanning 把假样例识别为泄露凭证。签名私钥目录 `ClipMan-signing/` 已加入 `.gitignore`，永不入库。
+- 干净。AWS secret-detection 测试样例已改为运行时拼接，避免 GitHub Secret Scanning 把假样例识别为泄露凭证。签名私钥目录 `ClipMan-signing/` 已加入 `.gitignore`，永不入库。
 
 ## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 
