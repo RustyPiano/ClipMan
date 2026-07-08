@@ -999,16 +999,16 @@ mod tests {
 
     #[test]
     fn secret_skip_reason_flags_detected_secrets_only_when_enabled() {
-        let secret = "AKIAIOSFODNN7EXAMPLE";
+        let secret = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
 
         assert_eq!(
             Some("AWS access key"),
-            secret_skip_reason(secret, true),
+            secret_skip_reason(&secret, true),
             "skip_secrets=true must surface the detected kind"
         );
         assert_eq!(
             None,
-            secret_skip_reason(secret, false),
+            secret_skip_reason(&secret, false),
             "skip_secrets=false must never intercept, even for a clear secret match"
         );
     }

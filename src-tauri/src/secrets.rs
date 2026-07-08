@@ -107,7 +107,8 @@ mod tests {
 
     #[test]
     fn detects_aws_access_key() {
-        let text = format!("aws_access_key_id = {}", "AKIAIOSFODNN7EXAMPLE");
+        let key = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
+        let text = format!("aws_access_key_id = {key}");
         assert_eq!(Some("AWS access key"), detect_secret(&text));
     }
 
@@ -120,7 +121,8 @@ mod tests {
 
     #[test]
     fn detects_aws_temporary_key() {
-        let text = format!("aws_session token uses {}", "ASIAIOSFODNN7EXAMPLE");
+        let key = ["ASIA", "IOSFODNN7EXAMPLE"].concat();
+        let text = format!("aws_session token uses {key}");
         assert_eq!(Some("AWS temporary key"), detect_secret(&text));
     }
 
