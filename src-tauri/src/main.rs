@@ -56,7 +56,10 @@ enum StorageAttempt {
     /// `dir` itself could not be created (or isn't writable).
     DirUnavailable(String),
     /// `dir` exists, but opening/initializing the database inside it failed.
-    OpenFailed(String),
+    OpenFailed {
+        message: String,
+        is_corrupt: bool,
+    },
 }
 
 fn try_open_storage(dir: &Path) -> StorageAttempt {
@@ -75,24 +78,22 @@ fn try_open_storage(dir: &Path) -> StorageAttempt {
 
     match ClipStorage::new(&db_path) {
         Ok(storage) => StorageAttempt::Ready(storage),
-        Err(e) => StorageAttempt::OpenFailed(format!(
-            "Failed to open database at {}: {}",
-            db_path.display(),
-            e
-        )),
+        Err(e) => StorageAttempt::OpenFailed {
+            is_corrupt: storage::is_corrupt_database_error(&e),
+            message: format!("Failed to open database at {}: {}", db_path.display(), e),
+        },
     }
 }
 
 /// Pure startup degradation-chain logic (SPEC-3 §2): try the custom data
 /// directory first if one is configured, falling back to `default_dir` when
-/// it's unusable; if the database at `default_dir` itself fails to open,
-/// assume corruption, quarantine the old files, and rebuild a fresh database
-/// in their place.
+/// it's unusable; if SQLite identifies the database at `default_dir` as
+/// corrupt/not-a-database, quarantine the old files and rebuild a fresh
+/// database in their place. Other open failures leave the original untouched.
 ///
 /// Kept free of `AppHandle`/dialogs so it can be exercised directly in unit
 /// tests with injected notification closures (see the `tests` module below).
-/// The only case this returns `Err` for is `default_dir` being completely
-/// unusable (can't even be created), which the caller must treat as fatal.
+/// Any non-corruption failure in `default_dir` is fatal for this startup.
 fn initialize_storage_core(
     default_dir: &Path,
     custom_data_path: Option<String>,
@@ -104,7 +105,7 @@ fn initialize_storage_core(
             migration::get_data_directory(default_dir.to_path_buf(), Some(custom_path));
         match try_open_storage(&custom_dir) {
             StorageAttempt::Ready(storage) => return Ok(storage),
-            StorageAttempt::DirUnavailable(e) | StorageAttempt::OpenFailed(e) => {
+            StorageAttempt::DirUnavailable(e) | StorageAttempt::OpenFailed { message: e, .. } => {
                 log::warn!(
                     "Custom data directory unavailable ({}); falling back to the default directory",
                     e
@@ -117,22 +118,37 @@ fn initialize_storage_core(
     match try_open_storage(default_dir) {
         StorageAttempt::Ready(storage) => Ok(storage),
         StorageAttempt::DirUnavailable(e) => Err(e),
-        StorageAttempt::OpenFailed(open_err) => {
+        StorageAttempt::OpenFailed {
+            message: open_err,
+            is_corrupt: false,
+        } => Err(open_err),
+        StorageAttempt::OpenFailed {
+            message: open_err,
+            is_corrupt: true,
+        } => {
             log::warn!(
-                "Default database unavailable, assuming corruption and resetting: {}",
+                "SQLite reported a corrupt default database; resetting: {}",
                 open_err
             );
 
             let db_path = default_dir.join("clipman.db");
-            match storage::quarantine_corrupt_database(&db_path) {
-                Ok(Some(backup_path)) => on_database_reset(&backup_path),
-                Ok(None) => {}
-                Err(e) => log::error!("Failed to quarantine corrupt database sidecars: {}", e),
+            if let Some(backup_path) =
+                storage::quarantine_corrupt_database(&db_path).map_err(|e| {
+                    format!(
+                        "Failed to quarantine corrupt database at {}: {}; original error: {}",
+                        db_path.display(),
+                        e,
+                        open_err
+                    )
+                })?
+            {
+                on_database_reset(&backup_path);
             }
 
             match try_open_storage(default_dir) {
                 StorageAttempt::Ready(storage) => Ok(storage),
-                StorageAttempt::DirUnavailable(e) | StorageAttempt::OpenFailed(e) => Err(e),
+                StorageAttempt::DirUnavailable(e)
+                | StorageAttempt::OpenFailed { message: e, .. } => Err(e),
             }
         }
     }
@@ -513,6 +529,24 @@ mod storage_init_tests {
         );
 
         drop(storage);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn non_corruption_open_failure_preserves_default_database_path() {
+        let root = temp_root("non_corrupt_open_failure");
+        let db_path = root.join("clipman.db");
+        fs::create_dir_all(&db_path).unwrap();
+
+        let result = initialize_storage_core(
+            &root,
+            None,
+            |_error| panic!("no custom dir configured, should not fall back"),
+            |_backup| panic!("non-corruption failures must not reset the database"),
+        );
+
+        assert!(result.is_err());
+        assert!(db_path.is_dir(), "the original path must remain untouched");
         let _ = fs::remove_dir_all(&root);
     }
 

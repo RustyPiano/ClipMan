@@ -91,6 +91,9 @@ function resetStore() {
   clipboardStore.searchQuery = '';
   clipboardStore.activeSearchQuery = '';
   clipboardStore.isLoading = false;
+  clipboardStore.isSearchPending = false;
+  clipboardStore.historyError = null;
+  clipboardStore.searchError = null;
   clipboardStore.hasMoreRecent = false;
   clipboardStore.isLoadingMore = false;
   clipboardStore.maxHistoryItems = 100;
@@ -362,6 +365,22 @@ describe('clipboard store races', () => {
     expect(clipboardStore.isLoading).toBe(false);
   });
 
+  test('loadHistory preserves visible items and exposes a retryable error', async () => {
+    const existing = clip({ id: 'existing' });
+    installTauriInvoke((cmd) => {
+      if (cmd === 'get_recent_clips') throw new Error('database busy');
+      if (cmd === 'get_pinned_clips') return [];
+      return null;
+    });
+    clipboardStore.recentItems = [existing];
+
+    await clipboardStore.loadHistory({ showLoading: false });
+
+    expect(clipboardStore.recentItems).toEqual([existing]);
+    expect(clipboardStore.historyError).toBe('database busy');
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+  });
+
   test('toggleSelected preserves selection order and clears cleanly', () => {
     clipboardStore.toggleSelected('a');
     clipboardStore.toggleSelected('b');
@@ -453,6 +472,41 @@ describe('clipboard store races', () => {
     expect(clipboardStore.isSearchPending).toBe(false);
   });
 
+  test('failed search cannot present results from an older query as current', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'search_clips') throw new Error('search unavailable');
+      return null;
+    });
+    clipboardStore.searchResults = [clip({ id: 'old-match' })];
+    clipboardStore.activeSearchQuery = 'old';
+
+    clipboardStore.setSearchQuery('new');
+    await clipboardStore.search('new');
+
+    expect(clipboardStore.searchResults).toEqual([]);
+    expect(clipboardStore.activeSearchQuery).toBe('new');
+    expect(clipboardStore.searchError).toBe('search unavailable');
+    expect(clipboardStore.isSearchPending).toBe(false);
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+  });
+
+  test('failed silent refresh keeps results for the unchanged active query', async () => {
+    installTauriInvoke((cmd) => {
+      if (cmd === 'search_clips') throw new Error('search unavailable');
+      return null;
+    });
+    const existing = clip({ id: 'existing-match' });
+    clipboardStore.searchQuery = 'same';
+    clipboardStore.activeSearchQuery = 'same';
+    clipboardStore.searchResults = [existing];
+
+    await clipboardStore.search('same', { silent: true });
+
+    expect(clipboardStore.searchResults).toEqual([existing]);
+    expect(clipboardStore.activeSearchQuery).toBe('same');
+    expect(clipboardStore.searchError).toBe('search unavailable');
+  });
+
   test('loadMoreRecent pages by the last item cursor and appends older rows', async () => {
     const calls: Array<Record<string, unknown> | undefined> = [];
     installTauriInvoke((cmd, args) => {
@@ -474,12 +528,7 @@ describe('clipboard store races', () => {
     // Cursor is the (timestamp, id) of the last loaded row; limit is PAGE_SIZE + 1
     // (the sentinel row that decides hasMore).
     expect(calls).toEqual([{ limit: 101, beforeTimestamp: 4, beforeId: 'p1b' }]);
-    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual([
-      'p1a',
-      'p1b',
-      'p2a',
-      'p2b',
-    ]);
+    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['p1a', 'p1b', 'p2a', 'p2b']);
     // A short page (2 < PAGE_SIZE) marks the end.
     expect(clipboardStore.hasMoreRecent).toBe(false);
     expect(clipboardStore.isLoadingMore).toBe(false);
@@ -563,5 +612,30 @@ describe('clipboard store races', () => {
     // The sentinel row means older pages exist; it is trimmed from the list.
     expect(clipboardStore.hasMoreRecent).toBe(true);
     expect(clipboardStore.recentItems.length).toBe(100);
+  });
+
+  test('initialize subscribes before issuing the initial history query', async () => {
+    const calls: string[] = [];
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'plugin:event|listen') {
+        calls.push(`listen:${String(args?.event)}`);
+        return calls.length;
+      }
+      calls.push(cmd);
+      if (cmd === 'get_settings') return { autoPaste: true, maxHistoryItems: 100 };
+      if (cmd === 'get_recent_clips' || cmd === 'get_pinned_clips') return [];
+      return null;
+    });
+
+    await clipboardStore.initialize();
+
+    expect(calls.slice(0, 3)).toEqual([
+      'listen:clipboard-changed',
+      'listen:history-cleared',
+      'listen:quickbar-hidden',
+    ]);
+    expect(calls.indexOf('listen:clipboard-changed')).toBeLessThan(
+      calls.indexOf('get_recent_clips')
+    );
   });
 });

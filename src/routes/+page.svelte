@@ -77,6 +77,21 @@
   const showPreview = $derived(
     viewportWidth >= PREVIEW_MIN_VIEWPORT && !clipboardStore.isLoading && displayItems.length > 0
   );
+  const displayError = $derived(
+    clipboardStore.activeSearchQuery.trim()
+      ? clipboardStore.searchError
+      : selectionStore.panel === 'recent'
+        ? clipboardStore.historyError
+        : null
+  );
+
+  async function retryDisplayLoad() {
+    if (clipboardStore.activeSearchQuery.trim()) {
+      await clipboardStore.search(clipboardStore.activeSearchQuery);
+    } else {
+      await clipboardStore.loadHistory();
+    }
+  }
 
   // Hover-to-select is only honored after a genuine pointer move, so keyboard
   // navigation isn't hijacked when the list scrolls under a stationary cursor.
@@ -611,6 +626,15 @@
             >
               <Loader2 class="h-6 w-6 animate-spin" />
               <p class="text-sm">{t.loading}</p>
+            </div>
+          {:else if displayItems.length === 0 && displayError}
+            <div
+              class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground"
+              role="alert"
+            >
+              <p class="text-sm font-medium text-foreground">{t.errorLabel}</p>
+              <p class="max-w-sm text-xs opacity-80">{displayError}</p>
+              <Button variant="outline" onclick={retryDisplayLoad}>{t.recheck}</Button>
             </div>
           {:else if displayItems.length === 0}
             <div

@@ -20,18 +20,23 @@ git status            # 工作区应干净
 **路径 A —— 本地脚本（无需 Rust/bun 工具链，纯 sed）**
 
 ```bash
-scripts/release.sh 2.2.0        # 同步四个清单 + README 下载文件名 + 生成 release_notes 模板
-$EDITOR release_notes_2.2.0.md  # 填写发布说明（必填，否则 release 会失败）
-git commit -am "release: v2.2.0"
-git tag v2.2.0
-git push --follow-tags          # 推送标签即触发 release.yml 构建
+VERSION=2.2.1                  # 示例：替换为实际版本
+scripts/release.sh "$VERSION"  # 同步四个清单 + README 下载文件名 + 生成 release notes
+$EDITOR "release_notes_${VERSION}.md"
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock \
+  README.md README_EN.md "release_notes_${VERSION}.md"
+git commit -m "release: v${VERSION}"
+git push origin main
+# 等 main CI 全绿后再打标签；release preflight 仍会对该 commit 重跑质量门
+git tag "v${VERSION}"
+git push origin "v${VERSION}"  # 推送标签即触发 release.yml
 ```
 
 **路径 B —— GitHub「Prepare Release」工作流（在 Actions 页一键触发）**
 
-1. 先把填好的 `release_notes_2.2.0.md` 提交到 `main`（工作流不会替你生成，避免发出空说明）。
-2. Actions → **Prepare Release** → Run workflow → 填 `2.2.0`。它会跑同一个 `scripts/release.sh`、提交、打标签并推送。
-3. **前置条件：** 必须配置 `RELEASE_PAT` secret（`contents: write` 权限的 PAT）。GitHub 不允许内置 `GITHUB_TOKEN` 触发下游工作流，没有 PAT 时标签能建但不会自动开始构建。
+1. 先把填好的 `release_notes_<版本号>.md` 提交到 `main`（工作流不会替你生成，避免发出空说明）。
+2. Actions → **Prepare Release** → 从 `main` 运行 → 填入不带 `v` 的版本号。它会跑同一个 `scripts/release.sh`、提交、打标签并推送；从其他分支运行会直接失败。
+3. **前置条件：** 必须配置 `RELEASE_PAT` secret（`contents: write` 权限的 PAT）。GitHub 不允许内置 `GITHUB_TOKEN` 触发下游工作流；没有 PAT 时工作流会在修改仓库前停止，请改用上面的本地发布路径。
 
 > 版本徽章已改为动态（shields `github/v/release`），README 无需再手动改版本号；下载文件名由 `scripts/release.sh` 自动重写。
 
@@ -41,18 +46,19 @@ git push --follow-tags          # 推送标签即触发 release.yml 构建
 2. 查看 "Release" workflow 运行状态
 3. 等待所有平台构建完成 (约 10-20 分钟)
 
-构建产物:
-- **macOS (Apple Silicon)**: `.dmg`, `.app.tar.gz`
-- **macOS (Intel)**: `.dmg`, `.app.tar.gz`
-- **Windows**: `.msi`, `.msi.zip`
-- **Linux**: `.deb`, `.AppImage`, `.AppImage.tar.gz`
+构建产物（具体的 updater 压缩包/签名后缀随 Tauri 版本变化，以 Draft Release 为准）：
+
+- **macOS (Apple Silicon / Intel)**: `.dmg`, `.app.tar.gz` 及签名
+- **Windows**: `.exe`, `.msi` 及 updater 压缩包/签名
+- **Linux**: `.deb`, `.AppImage` 及 updater 压缩包/签名
+- **Updater**: `latest.json`
 
 ### 4. 编辑 Release 说明
 
 构建完成后:
 
 1. 进入 Releases: `https://github.com/RustyPiano/ClipMan/releases`
-2. 找到自动创建的 Draft release (v1.0.0)
+2. 找到当前标签对应的 Draft release
 3. 点击 "Edit draft"
 4. 检查自动填入的 `release_notes_<版本号>.md` 内容是否正确
 5. 可选: 添加截图或演示 GIF
@@ -66,14 +72,16 @@ git push --follow-tags          # 推送标签即触发 release.yml 构建
 ```bash
 # 下载并测试安装包
 # macOS
-curl -L https://github.com/RustyPiano/ClipMan/releases/download/v1.0.0/ClipMan_1.0.0_aarch64.dmg -o ClipMan.dmg
+VERSION=2.2.1 # 示例：替换为刚发布的版本
+curl -fL "https://github.com/RustyPiano/ClipMan/releases/download/v${VERSION}/ClipMan_${VERSION}_aarch64.dmg" -o ClipMan.dmg
+
+# 打开 dmg，将 ClipMan 拖入 Applications 后验证签名
+open ClipMan.dmg
+codesign -dv --verbose=2 /Applications/ClipMan.app
+codesign --verify --strict /Applications/ClipMan.app
 
 # 验证签名（自签名证书；spctl 因未公证会判为 rejected，属正常现象）
-codesign -dv --verbose=2 ClipMan.app    # 应显示 Authority=ClipMan Code Signing
-codesign --verify --strict ClipMan.app  # 应输出 "satisfies its Designated Requirement"
-
-# 测试安装
-open ClipMan.dmg
+# 应显示 Authority=ClipMan Code Signing，且严格验证成功
 ```
 
 ## 🔧 版本号规则
@@ -90,6 +98,7 @@ open ClipMan.dmg
   - 例: `v1.0.0` → `v1.0.1`
 
 示例:
+
 ```bash
 # Bug 修复
 git tag -a v1.0.1 -m "Fix: 修复搜索功能问题"
@@ -120,13 +129,14 @@ git tag -a v2.0.0 -m "Breaking: 升级到 Tauri 3.0"
 - ✅ 四个清单文件版本号一致（CI `versions` + release `preflight` 作业强制）
 - ✅ README 版本徽章（动态）与下载文件名（脚本重写）
 - ✅ 缺失 `release_notes_<版本>.md` 会让 release 失败，而非发出空说明
+- ✅ 标签 commit 的前端、测试类型和 Linux Rust 质量门会在打包前重跑
 
 仍需人工确认：
 
 - [ ] `release_notes_<版本>.md` 内容写实、准确
 - [ ] README 的**功能列表**已随新特性更新（版本号是自动的，特性描述不是）
 - [ ] 安装包在目标平台实测通过
-- [ ] 已知 bug 已在 Issues 中登记
+- [ ] 已知 bug 已在团队当前的跟踪渠道登记
 
 ### 本地发布构建
 
@@ -164,6 +174,7 @@ cd src-tauri && cargo build
 **Q: Workflow 构建失败怎么办?**
 
 A: 检查 Actions 日志,常见原因:
+
 - Rust 依赖问题: 更新 `Cargo.toml`
 - Node/Bun 依赖: 运行 `bun install`
 - 平台特定问题: 检查对应平台的构建日志
@@ -172,6 +183,7 @@ A: 检查 Actions 日志,常见原因:
 **Q: 如何删除错误的 Release?**
 
 A:
+
 ```bash
 # 删除远程标签
 git push --delete origin v1.0.0
@@ -185,6 +197,7 @@ git tag -d v1.0.0
 **Q: 如何配置代码签名?**
 
 A:
+
 - **macOS**: 已配置。Release 构建用**自签名证书**签名（无需 Apple Developer 账号）。目的是让 app 的签名要求（Designated Requirement）在各版本间保持稳定——用户只需授予一次辅助功能权限，更新后也不会失效（ad-hoc 签名每次构建哈希都变，会反复要求重新授权）。涉及：
   - GitHub Secrets：`APPLE_CERTIFICATE`（`.p12` 的 base64）、`APPLE_CERTIFICATE_PASSWORD`；`release.yml` 中写死 `APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'`。
   - 证书与私钥保存在仓库之外（本机 `~/ClipMan-signing/`），**必须永久复用同一张**；一旦更换，所有用户在下次更新后都要重新授权辅助功能。务必备份该目录。
@@ -196,13 +209,13 @@ A:
 
 ## 🚀 发布流程涉及的文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `scripts/release.sh` | 一键升级四个清单 + README 文件名 + 生成 release notes 模板（纯 sed，无工具链依赖） |
-| `scripts/check-versions.sh` | 断言四个清单版本一致；可选传入期望版本/标签再断言相等 |
-| `.github/workflows/prepare-release.yml` | Actions 页一键升级 + 打标签（需 `RELEASE_PAT`） |
-| `.github/workflows/ci.yml` | `versions` 作业在每次 push/PR 上守护版本一致性 |
-| `.github/workflows/release.yml` | 标签触发；`preflight` 作业先校验标签==清单、release notes 存在，再构建/签名/建草稿 |
+| 文件                                    | 作用                                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------------------- |
+| `scripts/release.sh`                    | 一键升级四个清单 + README 文件名 + 生成 release notes 模板（纯 sed，无工具链依赖） |
+| `scripts/check-versions.sh`             | 断言四个清单版本一致；可选传入期望版本/标签再断言相等                              |
+| `.github/workflows/prepare-release.yml` | Actions 页一键升级 + 打标签（需 `RELEASE_PAT`）                                    |
+| `.github/workflows/ci.yml`              | 每次 push/PR 校验版本、前端与 macOS/Linux/Windows Rust                             |
+| `.github/workflows/release.yml`         | 标签触发；`preflight` 先校验版本/release notes 并重跑质量门，再构建/签名/建草稿    |
 
 ## 📊 发布后
 
@@ -213,6 +226,6 @@ A:
 
 ## 🔗 相关资源
 
-- [Tauri 发布指南](https://tauri.app/v1/guides/distribution/)
+- [Tauri 发布指南](https://v2.tauri.app/distribute/)
 - [GitHub Releases 文档](https://docs.github.com/en/repositories/releasing-projects-on-github)
 - [语义化版本规范](https://semver.org/lang/zh-CN/)

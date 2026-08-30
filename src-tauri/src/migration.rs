@@ -1,8 +1,13 @@
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 
-const DATA_FILES: [&str; 3] = ["clipman.db", "clipman.db-shm", "clipman.db-wal"];
+const DATA_FILES: [&str; 4] = [
+    "clipman.db",
+    "clipman.db-shm",
+    "clipman.db-wal",
+    "clipman.db-journal",
+];
 pub const CURRENT_DB_USER_VERSION: i64 = 2;
 const THUMBNAIL_SIZE: u32 = 256;
 const BACKFILL_BATCH_SIZE: i64 = 100;
@@ -211,6 +216,15 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         return Err("Source and destination are the same".to_string());
     }
 
+    if let Some(filename) = DATA_FILES
+        .iter()
+        .find(|filename| to.join(filename).exists())
+    {
+        return Err(format!(
+            "Destination already contains ClipMan data ({filename}); choose an empty destination"
+        ));
+    }
+
     // Use a unique name + exclusive create so the probe can never overwrite a
     // pre-existing user file in the destination directory: a fixed name written
     // with `fs::write` would clobber (and then delete) an unrelated file that
@@ -234,17 +248,35 @@ pub fn paths_refer_to_same_location(left: &Path, right: &Path) -> Result<bool, S
 }
 
 /// Remove ClipMan data files (and the directory if it becomes empty).
-pub fn remove_data_files(dir: &Path) {
+pub fn remove_data_files(dir: &Path) -> Result<(), String> {
+    let mut failures = Vec::new();
     for filename in DATA_FILES {
         let path = dir.join(filename);
-        if path.exists() {
-            if let Err(e) = fs::remove_file(&path) {
-                log::warn!("Failed to remove old file {}: {}", filename, e);
-            }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!("{}: {}", path.display(), error)),
         }
     }
-    if let Err(e) = fs::remove_dir(dir) {
-        log::warn!("Could not remove old directory (may not be empty): {}", e);
+
+    match fs::remove_dir(dir) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+            ) => {}
+        Err(error) => log::warn!(
+            "Could not remove old directory {}: {}",
+            dir.display(),
+            error
+        ),
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
 
@@ -289,6 +321,38 @@ mod tests {
 
         assert!(result.unwrap_err().contains("same"));
         let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    #[test]
+    fn prepare_destination_rejects_existing_database_files() {
+        let test_root =
+            std::env::temp_dir().join(format!("clipman_prepare_existing_{}", uuid::Uuid::new_v4()));
+        let source = test_root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+
+        for (index, filename) in DATA_FILES.iter().enumerate() {
+            let destination = test_root.join(format!("destination-{index}"));
+            std::fs::create_dir_all(&destination).unwrap();
+            std::fs::write(destination.join(filename), b"existing").unwrap();
+
+            let error = prepare_destination_directory(&source, &destination).unwrap_err();
+            assert!(error.contains("already contains ClipMan data"));
+        }
+
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    #[test]
+    fn remove_data_files_reports_failed_deletions() {
+        let test_dir =
+            std::env::temp_dir().join(format!("clipman_remove_failure_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(test_dir.join("clipman.db")).unwrap();
+
+        let error = remove_data_files(&test_dir).unwrap_err();
+
+        assert!(error.contains("clipman.db"));
+        assert!(test_dir.join("clipman.db").is_dir());
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[test]

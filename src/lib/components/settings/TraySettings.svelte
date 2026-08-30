@@ -28,7 +28,7 @@
         id="tray-text-length"
         type="range"
         min="10"
-        max="100"
+        max="200"
         step="5"
         bind:value={settings.trayTextLength}
         class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
@@ -47,7 +47,7 @@
         id="max-pinned"
         type="range"
         min="0"
-        max="10"
+        max="50"
         step="1"
         bind:value={settings.maxPinnedInTray}
         class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
@@ -66,7 +66,7 @@
         id="max-recent"
         type="range"
         min="0"
-        max="30"
+        max="100"
         step="1"
         bind:value={settings.maxRecentInTray}
         class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"

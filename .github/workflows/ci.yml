@@ -43,6 +43,9 @@ jobs:
       - name: test
         run: bun test tests/
 
+      - name: type-check tests
+        run: bun run test:types
+
       - name: build
         run: bun run build
 
@@ -87,6 +90,43 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+  rust-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: build frontend (for frontendDist)
+        run: bun run build
+
+      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
   # The macOS `rust` job above never compiles the `#[cfg(windows)]` clipboard /
   # window FFI, so it can silently rot. Lint it natively on a Windows runner:
   # the MSVC target can't be cross-compiled from macOS because rusqlite's
@@ -120,9 +160,10 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # No `-D warnings` here: the goal is to keep the `#[cfg(windows)]` code
-      # *compiling* in CI (it never was before). Style lints in that long-untested
-      # FFI are surfaced as warnings rather than hard-failing this new job.
       - name: cargo clippy (windows target)
         working-directory: src-tauri
-        run: cargo clippy --target x86_64-pc-windows-msvc --all-targets
+        run: cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+
+      - name: cargo test (windows target)
+        working-directory: src-tauri
+        run: cargo test --target x86_64-pc-windows-msvc

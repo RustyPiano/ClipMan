@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { router } from '$lib/stores/router.svelte';
   import { i18n } from '$lib/i18n';
@@ -39,7 +40,11 @@
   let changingDataPath = $state(false);
   let showMigrationDialog = $state(false);
   let newDataPath = $state('');
-  let deleteOldData = $state(true);
+  let deleteOldData = $state(false);
+
+  const MIGRATION_DIALOG_TITLE_ID = 'migration-dialog-title';
+  const MIGRATION_DIALOG_DESCRIPTION_ID = 'migration-dialog-description';
+  const MIGRATION_CANCEL_ID = 'migration-dialog-cancel';
 
   // 侧边栏导航状态
   let activeTab = $state<SettingsTab>('general');
@@ -49,7 +54,7 @@
     await Promise.all([loadSettings(), loadDataPath()]);
   });
 
-  async function loadSettings({ preserveMessage = false }: { preserveMessage?: boolean } = {}) {
+  async function loadSettings() {
     try {
       loading = true;
       const data = await invoke<Settings>('get_settings');
@@ -72,9 +77,7 @@
     } catch (err) {
       console.error('Failed to load settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      if (!preserveMessage) {
-        toastStore.add(`${t.loadSettingsFailed}: ${errorMsg}`, 'error');
-      }
+      toastStore.add(`${t.loadSettingsFailed}: ${errorMsg}`, 'error');
     } finally {
       loading = false;
     }
@@ -92,7 +95,7 @@
   async function saveSettings() {
     try {
       saving = true;
-      await invoke('update_settings', { settings: settings });
+      settings = await invoke<Settings>('update_settings', { settings: settings });
       i18n.setLocale(settings.locale);
       toastStore.add(t.saved, 'success');
     } catch (err) {
@@ -163,6 +166,7 @@
 
       if (selected && typeof selected === 'string') {
         newDataPath = selected;
+        deleteOldData = false;
         showMigrationDialog = true;
       }
     } catch (err) {
@@ -176,21 +180,70 @@
       changingDataPath = true;
       showMigrationDialog = false;
 
-      await invoke('migrate_data_location', {
+      const warning = await invoke<string | null>('migrate_data_location', {
         newPath: newDataPath,
         deleteOld: deleteOldData,
       });
 
       toastStore.add(t.migrationSuccess, 'success');
+      if (warning) {
+        toastStore.add(warning, 'info');
+      }
     } catch (err) {
       console.error('Migration failed:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
       toastStore.add(`${t.migrationFailed}: ${errorMsg}`, 'error');
     } finally {
-      await Promise.all([loadSettings({ preserveMessage: true }), loadDataPath()]);
+      // Migration only owns the data path. Reloading every setting here used to
+      // discard unrelated edits that the user had not saved yet.
+      await loadDataPath();
       changingDataPath = false;
     }
   }
+
+  function closeMigrationDialog() {
+    showMigrationDialog = false;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (!showMigrationDialog || event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeMigrationDialog();
+  }
+
+  // Keep focus inside the migration prompt while it is open. This mirrors the
+  // shared confirmation dialog, but includes the checkbox as a focus target.
+  const trapMigrationFocus: Attachment = (element) => {
+    const previousFocus =
+      document.activeElement instanceof globalThis.HTMLElement ? document.activeElement : null;
+    const handler = (event: Event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      if (keyboardEvent.key !== 'Tab') return;
+
+      const focusable = element.querySelectorAll<globalThis.HTMLElement>('input, button');
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (keyboardEvent.shiftKey && active === first) {
+        keyboardEvent.preventDefault();
+        last.focus();
+      } else if (!keyboardEvent.shiftKey && active === last) {
+        keyboardEvent.preventDefault();
+        first.focus();
+      }
+    };
+
+    element.addEventListener('keydown', handler);
+    document.getElementById(MIGRATION_CANCEL_ID)?.focus();
+
+    return () => {
+      element.removeEventListener('keydown', handler);
+      previousFocus?.focus();
+    };
+  };
 
   async function handleBack() {
     try {
@@ -208,13 +261,21 @@
   }
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 <div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
   <!-- 顶部标题栏 -->
   <header
     class="flex-none flex items-center justify-between px-6 py-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10"
   >
     <div class="flex items-center gap-4">
-      <Button variant="ghost" size="icon" onclick={handleBack} class="hover:bg-muted rounded-full">
+      <Button
+        variant="ghost"
+        size="icon"
+        onclick={handleBack}
+        aria-label={t.close}
+        class="hover:bg-muted rounded-full"
+      >
         <ChevronLeft class="h-5 w-5" />
       </Button>
       <h1 class="text-xl font-bold tracking-tight">{t.settings}</h1>
@@ -251,7 +312,7 @@
     <Sidebar bind:activeTab />
 
     <!-- 主内容区域 -->
-    <main class="flex-1 overflow-y-auto p-8 bg-muted/10">
+    <main inert={saving || changingDataPath} class="flex-1 overflow-y-auto p-8 bg-muted/10">
       {#if loading}
         <div class="flex items-center justify-center h-full">
           <Loader2 class="h-8 w-8 animate-spin text-primary" />
@@ -290,10 +351,15 @@
     class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
   >
     <div
+      {@attach trapMigrationFocus}
       class="bg-card text-card-foreground rounded-lg shadow-lg max-w-md w-full border border-border p-6 space-y-4 animate-in zoom-in-95 duration-200"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={MIGRATION_DIALOG_TITLE_ID}
+      aria-describedby={MIGRATION_DIALOG_DESCRIPTION_ID}
     >
-      <h3 class="text-lg font-semibold">{t.confirmMigration}</h3>
-      <p class="text-sm text-muted-foreground">
+      <h3 id={MIGRATION_DIALOG_TITLE_ID} class="text-lg font-semibold">{t.confirmMigration}</h3>
+      <p id={MIGRATION_DIALOG_DESCRIPTION_ID} class="text-sm text-muted-foreground">
         {t.migratingTo} <br />
         <span class="font-mono bg-muted px-1 rounded">{newDataPath}</span>
       </p>
@@ -309,7 +375,7 @@
       </div>
 
       <div class="flex justify-end gap-3 pt-2">
-        <Button variant="outline" onclick={() => (showMigrationDialog = false)}>
+        <Button id={MIGRATION_CANCEL_ID} variant="outline" onclick={closeMigrationDialog}>
           {t.cancel}
         </Button>
         <Button onclick={confirmMigration} disabled={changingDataPath}>{t.startMigration}</Button>

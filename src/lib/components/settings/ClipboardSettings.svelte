@@ -77,17 +77,22 @@
   const BYTES_PER_MB = 1_000_000;
   const DEFAULT_MAX_TEXT_BYTES = 2_000_000;
   const DEFAULT_MAX_IMAGE_DIMENSION = 4096;
+  const MIN_TEXT_BYTES = 4096;
+  const MAX_TEXT_BYTES = 50_000_000;
+  const MIN_IMAGE_DIMENSION = 512;
+  const MAX_IMAGE_DIMENSION = 16384;
 
-  const maxTextMb = $derived(
-    Math.round(((settings.maxTextBytes ?? DEFAULT_MAX_TEXT_BYTES) / BYTES_PER_MB) * 100) / 100
-  );
+  const maxTextMb = $derived((settings.maxTextBytes ?? DEFAULT_MAX_TEXT_BYTES) / BYTES_PER_MB);
 
   function updateMaxTextMb(raw: string) {
     const value = Number.parseFloat(raw);
     if (!Number.isFinite(value) || value < 0) {
       return;
     }
-    settings.maxTextBytes = Math.round(value * BYTES_PER_MB);
+    settings.maxTextBytes = Math.min(
+      MAX_TEXT_BYTES,
+      Math.max(MIN_TEXT_BYTES, Math.round(value * BYTES_PER_MB))
+    );
   }
 
   function updateMaxImageDimension(raw: string) {
@@ -95,7 +100,8 @@
     if (!Number.isFinite(value) || value < 0) {
       return;
     }
-    settings.maxImageDimension = value;
+    settings.maxImageDimension =
+      value === 0 ? 0 : Math.min(MAX_IMAGE_DIMENSION, Math.max(MIN_IMAGE_DIMENSION, value));
   }
 </script>
 
@@ -121,9 +127,9 @@
       <input
         id="max-items"
         type="range"
-        min="50"
-        max="500"
-        step="50"
+        min="1"
+        max="10000"
+        step="1"
         bind:value={settings.maxHistoryItems}
         class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
       />
@@ -182,10 +188,11 @@
         <input
           id="max-text-bytes"
           type="number"
-          min="0"
-          step="0.1"
+          min={MIN_TEXT_BYTES / BYTES_PER_MB}
+          max={MAX_TEXT_BYTES / BYTES_PER_MB}
+          step="any"
           value={maxTextMb}
-          oninput={(event) => updateMaxTextMb(event.currentTarget.value)}
+          onchange={(event) => updateMaxTextMb(event.currentTarget.value)}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
@@ -201,9 +208,10 @@
           id="max-image-dimension"
           type="number"
           min="0"
+          max={MAX_IMAGE_DIMENSION}
           step="1"
           value={settings.maxImageDimension ?? DEFAULT_MAX_IMAGE_DIMENSION}
-          oninput={(event) => updateMaxImageDimension(event.currentTarget.value)}
+          onchange={(event) => updateMaxImageDimension(event.currentTarget.value)}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>

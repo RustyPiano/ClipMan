@@ -38,6 +38,8 @@ class ClipboardStore {
   activeSearchQuery = $state('');
   isLoading = $state(false);
   isSearchPending = $state(false);
+  historyError = $state<string | null>(null);
+  searchError = $state<string | null>(null);
   // Keyset pagination of the recent list: `recentItems` accumulates pages of
   // unpinned clips ordered (timestamp DESC, id DESC). `hasMoreRecent` gates the
   // scroll/keyboard "load more" trigger; `isLoadingMore` debounces it.
@@ -93,9 +95,8 @@ class ClipboardStore {
       return;
     }
 
-    await this.refreshSettings();
-    await this.loadHistory();
-
+    // Subscribe before the first query. Any copy that lands while history is
+    // loading is recorded and replayed over the response by loadHistory.
     await listen<ClipItem>('clipboard-changed', async (event) => {
       if (this.searchQuery.trim()) {
         await this.reloadFromBackend();
@@ -115,6 +116,9 @@ class ClipboardStore {
       this.clearSelection();
       void this.clearSearch({ reload: false });
     });
+
+    await this.refreshSettings();
+    await this.loadHistory();
   }
 
   async loadHistory(options: LoadHistoryOptions = {}) {
@@ -130,6 +134,7 @@ class ClipboardStore {
     if (showLoading) {
       this.isLoading = true;
     }
+    this.historyError = null;
 
     // Fetch only the first page on a fresh load; on a reload (pin/delete/label/
     // clear) preserve however many pages the user already scrolled through, so
@@ -160,6 +165,7 @@ class ClipboardStore {
         this.pinnedItems = nextItems.pinnedItems;
         this.hasMoreRecent = hasMore;
         this.isLoadingMore = false;
+        this.historyError = null;
         if (!this.searchQuery.trim()) {
           this.searchResults = [];
         }
@@ -167,6 +173,8 @@ class ClipboardStore {
     } catch (error) {
       if (this.historyRequests.isCurrent(requestId)) {
         console.error('[ERROR] Failed to load clipboard history:', error);
+        this.historyError = error instanceof Error ? error.message : String(error);
+        toastStore.add(`${i18n.t.history}: ${this.historyError}`, 'error');
       }
     } finally {
       // Clear the full-screen spinner for the current request regardless of the
@@ -199,6 +207,7 @@ class ClipboardStore {
     }
 
     this.isLoadingMore = true;
+    this.historyError = null;
     // Share the history sequencer so a reset (loadHistory / resetRecentPagination)
     // that lands mid-fetch supersedes this page and it drops its stale write.
     const requestId = this.historyRequests.next();
@@ -225,9 +234,12 @@ class ClipboardStore {
       const olderItems = pageItems.filter((item) => !existingIds.has(item.id));
       this.recentItems = [...this.recentItems, ...olderItems];
       this.hasMoreRecent = hasMore;
+      this.historyError = null;
     } catch (error) {
       if (this.historyRequests.isCurrent(requestId)) {
         console.error('[ERROR] Failed to load more clipboard history:', error);
+        this.historyError = error instanceof Error ? error.message : String(error);
+        toastStore.add(`${i18n.t.history}: ${this.historyError}`, 'error');
       }
     } finally {
       if (this.historyRequests.isCurrent(requestId)) {
@@ -271,12 +283,14 @@ class ClipboardStore {
     this.searchRequests.next();
     this.searchQuery = query;
     this.isSearchPending = hasTauriRuntime();
+    this.searchError = null;
   }
 
   setSearchDraft(query: string) {
     this.searchRequests.next();
     this.searchQuery = query;
     this.isSearchPending = false;
+    this.searchError = null;
   }
 
   async search(query: string, options: { silent?: boolean } = {}) {
@@ -297,6 +311,7 @@ class ClipboardStore {
     const silent = options.silent ?? false;
     const requestId = this.searchRequests.next();
     this.searchQuery = query;
+    this.searchError = null;
 
     if (!silent) {
       this.isSearchPending = true;
@@ -308,10 +323,20 @@ class ClipboardStore {
       if (this.searchRequests.isCurrent(requestId)) {
         this.searchResults = results;
         this.activeSearchQuery = query;
+        this.searchError = null;
       }
     } catch (error) {
       if (this.searchRequests.isCurrent(requestId)) {
         console.error('Search failed:', error);
+        // A foreground failure must not leave results from an older query under
+        // the new input. A silent refresh is always for the same active query,
+        // so keep its still-valid visible results.
+        if (!silent) {
+          this.searchResults = [];
+          this.activeSearchQuery = query;
+        }
+        this.searchError = error instanceof Error ? error.message : String(error);
+        toastStore.add(`${i18n.t.errorLabel}: ${this.searchError}`, 'error');
       }
     } finally {
       if (!silent && this.searchRequests.isCurrent(requestId)) {
@@ -326,6 +351,7 @@ class ClipboardStore {
     this.activeSearchQuery = '';
     this.searchResults = [];
     this.isSearchPending = false;
+    this.searchError = null;
     this.isLoading = false;
 
     if (options.reload ?? true) {

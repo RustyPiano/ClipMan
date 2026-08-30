@@ -30,7 +30,7 @@ Maintenance rules for agents:
 
 ## Setup Commands
 
-Use **Bun** (matches CI); npm also works (both `bun.lock` and `package-lock.json` are committed).
+Use **Bun** (matches CI); `bun.lock` is the single committed dependency lockfile.
 
 ```bash
 bun install            # install frontend deps (Cargo deps fetch on first build)
@@ -66,6 +66,7 @@ cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo fmt --check
 bun run lint                   # ESLint over src/
 bun run check                  # svelte-check + TypeScript type check
+bun run test:types             # TypeScript-check frontend test files
 bun test tests/                # frontend unit tests
 bun run build                  # frontend bundle (cargo test also needs dist/ to exist)
 ```

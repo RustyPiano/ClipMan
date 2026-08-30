@@ -1143,17 +1143,14 @@ impl StagedSqliteReplacement {
     }
 }
 
-fn stage_sqlite_files_for_replacement(path: &Path) -> Result<StagedSqliteReplacement> {
-    let staged_db_path = replaced_backup_path(path);
-    remove_sqlite_database_files(&staged_db_path)?;
-
+fn stage_sqlite_files(path: &Path, staged_db_path: &Path) -> Result<StagedSqliteReplacement> {
     let mut staged = StagedSqliteReplacement {
         moved_files: Vec::new(),
     };
 
     for suffix in ["-wal", "-shm", "-journal"] {
         let original_path = sqlite_sidecar_path(path, suffix);
-        let staged_path = sqlite_sidecar_path(&staged_db_path, suffix);
+        let staged_path = sqlite_sidecar_path(staged_db_path, suffix);
         match move_file_if_exists(&original_path, &staged_path) {
             Ok(true) => staged.moved_files.push((staged_path, original_path)),
             Ok(false) => {}
@@ -1164,10 +1161,10 @@ fn stage_sqlite_files_for_replacement(path: &Path) -> Result<StagedSqliteReplace
         }
     }
 
-    match move_file_if_exists(path, &staged_db_path) {
+    match move_file_if_exists(path, staged_db_path) {
         Ok(true) => staged
             .moved_files
-            .push((staged_db_path, path.to_path_buf())),
+            .push((staged_db_path.to_path_buf(), path.to_path_buf())),
         Ok(false) => {}
         Err(error) => {
             staged.restore();
@@ -1178,30 +1175,36 @@ fn stage_sqlite_files_for_replacement(path: &Path) -> Result<StagedSqliteReplace
     Ok(staged)
 }
 
+fn stage_sqlite_files_for_replacement(path: &Path) -> Result<StagedSqliteReplacement> {
+    let staged_db_path = replaced_backup_path(path);
+    stage_sqlite_files(path, &staged_db_path)
+}
+
+pub(crate) fn is_corrupt_database_error(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ffi::ErrorCode::DatabaseCorrupt | rusqlite::ffi::ErrorCode::NotADatabase)
+    )
+}
+
 /// Move a (possibly corrupt) sqlite database file and its `-wal`/`-shm`/
-/// `-journal` sidecars out of the way to a `<name>.corrupt-<unix_seconds>`
+/// `-journal` sidecars out of the way to a unique `<name>.corrupt-<uuid>`
 /// backup, so a fresh database can be created in its place. Used by the
 /// startup recovery path in `main.rs` when opening the default database
 /// fails. Returns the path the primary db file was moved to, or `None` if
 /// nothing existed at `db_path`.
 pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<Option<PathBuf>> {
-    let unix_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
     let file_name = db_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("clipman.db");
-    let backup_path = db_path.with_file_name(format!("{file_name}.corrupt-{unix_secs}"));
-
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let original = sqlite_sidecar_path(db_path, suffix);
-        let backup = sqlite_sidecar_path(&backup_path, suffix);
-        move_file_if_exists(&original, &backup)?;
-    }
-
-    let moved = move_file_if_exists(db_path, &backup_path)?;
+    let backup_path =
+        db_path.with_file_name(format!("{file_name}.corrupt-{}", uuid::Uuid::new_v4()));
+    let staged = stage_sqlite_files(db_path, &backup_path)?;
+    let moved = staged
+        .moved_files
+        .iter()
+        .any(|(_, original)| original == db_path);
     Ok(moved.then_some(backup_path))
 }
 
@@ -2275,6 +2278,56 @@ mod tests {
             );
         }
         cleanup_db(&destination_path);
+    }
+
+    #[test]
+    fn staging_failure_restores_database_and_sidecars() {
+        let database_path = temp_db_path("stage_failure_restore");
+        let blocked_backup_path = database_path.with_extension("blocked");
+        fs::write(&database_path, b"original-db").unwrap();
+        for suffix in ["-wal", "-shm", "-journal"] {
+            fs::write(
+                sqlite_sidecar_path(&database_path, suffix),
+                format!("original{suffix}").as_bytes(),
+            )
+            .unwrap();
+        }
+        fs::create_dir(&blocked_backup_path).unwrap();
+
+        assert!(stage_sqlite_files(&database_path, &blocked_backup_path).is_err());
+        assert_eq!(b"original-db".to_vec(), fs::read(&database_path).unwrap());
+        for suffix in ["-wal", "-shm", "-journal"] {
+            assert_eq!(
+                format!("original{suffix}").into_bytes(),
+                fs::read(sqlite_sidecar_path(&database_path, suffix)).unwrap()
+            );
+            assert!(!sqlite_sidecar_path(&blocked_backup_path, suffix).exists());
+        }
+
+        cleanup_db(&database_path);
+        fs::remove_dir(&blocked_backup_path).unwrap();
+    }
+
+    #[test]
+    fn corrupt_database_quarantine_uses_unique_backup_paths() {
+        let database_path = temp_db_path("quarantine_unique");
+        fs::write(&database_path, b"first").unwrap();
+        let first_backup = quarantine_corrupt_database(&database_path)
+            .unwrap()
+            .unwrap();
+
+        fs::write(&database_path, b"second").unwrap();
+        let second_backup = quarantine_corrupt_database(&database_path)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(first_backup, second_backup);
+        assert_eq!(b"first".to_vec(), fs::read(&first_backup).unwrap());
+        assert_eq!(b"second".to_vec(), fs::read(&second_backup).unwrap());
+
+        cleanup_db(&database_path);
+        cleanup_db(&first_backup);
+        cleanup_db(&second_backup);
     }
 
     #[test]

@@ -7,11 +7,14 @@
 # reviewable and needs no Rust/Node toolchain (pure sed/grep). After it runs:
 #
 #   1. edit release_notes_<X.Y.Z>.md
-#   2. git commit -am "release: vX.Y.Z"
-#   3. git tag vX.Y.Z && git push --follow-tags   # the tag fires .github/workflows/release.yml
+#   2. git add package.json src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock} \
+#        README.md README_EN.md release_notes_<X.Y.Z>.md
+#      git commit -m "release: vX.Y.Z" && git push origin main
+#   3. wait for CI, then: git tag vX.Y.Z && git push origin vX.Y.Z
+#      (the tag fires .github/workflows/release.yml)
 #
 # The "Prepare Release" GitHub workflow calls this script and does steps 1-3 for
-# you (see docs/dev/RELEASING.md).
+# you (see .github/RELEASE_GUIDE.md).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -78,5 +81,6 @@ bash "$ROOT/scripts/check-versions.sh" "$VERSION"
 echo ""
 echo "Done. Next:"
 echo "  1. edit $NOTES"
-echo "  2. git commit -am \"release: v${VERSION}\""
-echo "  3. git tag v${VERSION} && git push --follow-tags"
+echo "  2. git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock README.md README_EN.md $NOTES"
+echo "     git commit -m \"release: v${VERSION}\" && git push origin main"
+echo "  3. wait for CI to pass, then: git tag v${VERSION} && git push origin v${VERSION}"

@@ -534,6 +534,22 @@ fn restore_shortcut(
     }
 }
 
+fn shortcut_cleanup_targets<'a>(
+    main_changed: bool,
+    pinned_changed: bool,
+    new_shortcut: &'a str,
+    new_pinned_shortcut: Option<&'a str>,
+) -> [Option<&'a str>; 2] {
+    [
+        main_changed.then_some(new_shortcut),
+        if pinned_changed {
+            new_pinned_shortcut
+        } else {
+            None
+        },
+    ]
+}
+
 fn apply_shortcut_changes(
     app: &AppHandle,
     foreground_store: crate::window::ForegroundWindowStore,
@@ -585,9 +601,16 @@ fn apply_shortcut_changes(
     if result.is_err() {
         // Best effort: drop whatever new bindings landed, restore the old
         // ones. `restore_shortcut` only logs on failure.
-        let _ = app.global_shortcut().unregister(new_shortcut);
-        if let Some(new_pinned) = new_pinned_shortcut {
-            let _ = app.global_shortcut().unregister(new_pinned);
+        for shortcut in shortcut_cleanup_targets(
+            main_changed,
+            pinned_changed,
+            new_shortcut,
+            new_pinned_shortcut,
+        )
+        .into_iter()
+        .flatten()
+        {
+            let _ = app.global_shortcut().unregister(shortcut);
         }
         if main_changed {
             restore_shortcut(
@@ -631,7 +654,7 @@ pub async fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
-) -> Result<(), String> {
+) -> Result<Settings, String> {
     settings = settings.validate_and_normalize()?;
     let _settings_write_guard = safe_lock(&state.settings_write_lock);
     log::info!("Updating settings: {:?}", settings);
@@ -734,7 +757,7 @@ pub async fn update_settings(
         return Err(e);
     }
 
-    state.settings.set(settings);
+    state.settings.set(settings.clone());
 
     // Rebuild tray menu if visible tray settings changed.
     if tray_text_changed || tray_limits_changed || locale_changed {
@@ -742,7 +765,7 @@ pub async fn update_settings(
         update_tray_menu(&app);
     }
 
-    Ok(())
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -873,7 +896,7 @@ pub async fn migrate_data_location(
     state: State<'_, AppState>,
     new_path: String,
     delete_old: bool,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     use crate::storage::ClipStorage;
 
     log::info!(
@@ -892,9 +915,6 @@ pub async fn migrate_data_location(
     let old_path = migration::get_data_directory(default_path, settings.custom_data_path.clone());
     let new_path_buf = std::path::PathBuf::from(&new_path);
     let new_db_path = new_path_buf.join("clipman.db");
-    let new_db_path = new_db_path
-        .to_str()
-        .ok_or_else(|| "Invalid new database path".to_string())?;
 
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
@@ -902,13 +922,12 @@ pub async fn migrate_data_location(
     if was_running {
         log::info!("Clipboard monitoring stopped for migration");
     }
-    let migration_result = (|| -> Result<(), String> {
+    let migration_result = (|| -> Result<Option<String>, String> {
         let mut storage_guard = safe_lock(&state.storage);
         storage_guard
-            .backup_to_path(std::path::Path::new(new_db_path))
+            .backup_to_path(&new_db_path)
             .map_err(|e| format!("Failed to back up database: {}", e))?;
-        let new_storage =
-            ClipStorage::new(std::path::Path::new(new_db_path)).map_err(|e| e.to_string())?;
+        let new_storage = ClipStorage::new(&new_db_path).map_err(|e| e.to_string())?;
 
         let mut new_settings = settings.clone();
         new_settings.custom_data_path = Some(new_path.clone());
@@ -922,12 +941,17 @@ pub async fn migrate_data_location(
         drop(storage_guard);
 
         // Now it is safe to delete the old files; Windows refuses deleting open DBs.
-        if delete_old {
-            migration::remove_data_files(&old_path);
-        }
+        let cleanup_warning = delete_old
+            .then(|| migration::remove_data_files(&old_path).err())
+            .flatten()
+            .map(|e| format!("Data migration completed, but failed to remove old data: {e}"));
 
-        log::info!("Data migration completed successfully");
-        Ok(())
+        if let Some(warning) = &cleanup_warning {
+            log::warn!("{warning}");
+        } else {
+            log::info!("Data migration completed successfully");
+        }
+        Ok(cleanup_warning)
     })();
 
     let restart_result = if was_running {
@@ -938,11 +962,18 @@ pub async fn migrate_data_location(
     crate::tray::update_tray_menu(&app);
 
     match (migration_result, restart_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(e)) => Err(format!(
-            "Data migration completed, but clipboard monitoring failed to restart: {}",
-            e
-        )),
+        (Ok(warning), Ok(())) => Ok(warning),
+        (Ok(cleanup_warning), Err(e)) => {
+            let restart_warning = format!(
+                "Data migration completed, but clipboard monitoring failed to restart: {}",
+                e
+            );
+            Ok(Some(
+                cleanup_warning
+                    .map(|warning| format!("{warning}; additionally: {restart_warning}"))
+                    .unwrap_or(restart_warning),
+            ))
+        }
         (Err(e), Ok(())) => Err(e),
         (Err(migration_error), Err(restart_error)) => Err(format!(
             "{}; additionally clipboard monitoring failed to restart: {}",
@@ -956,6 +987,22 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use tauri_plugin_global_shortcut::ShortcutState;
+
+    #[test]
+    fn shortcut_cleanup_only_targets_changed_bindings() {
+        assert_eq!(
+            super::shortcut_cleanup_targets(true, false, "new-main", Some("unchanged-pinned")),
+            [Some("new-main"), None]
+        );
+        assert_eq!(
+            super::shortcut_cleanup_targets(false, true, "unchanged-main", Some("new-pinned")),
+            [None, Some("new-pinned")]
+        );
+        assert_eq!(
+            super::shortcut_cleanup_targets(true, true, "new-main", Some("new-pinned")),
+            [Some("new-main"), Some("new-pinned")]
+        );
+    }
 
     #[test]
     fn pressed_quickbar_shortcut_uses_main_thread_scheduler() {
