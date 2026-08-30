@@ -107,7 +107,7 @@ mod imp {
 pub use imp::{guide_reauthorization, is_trusted, open_settings};
 
 // Non-macOS platforms have no equivalent permission gate for input simulation;
-// report trusted and make the helpers no-ops so callers stay platform-agnostic.
+// report trusted and make opening settings a no-op so callers stay platform-agnostic.
 #[cfg(not(target_os = "macos"))]
 pub fn is_trusted() -> bool {
     true
@@ -117,6 +117,3 @@ pub fn is_trusted() -> bool {
 pub fn open_settings() -> Result<(), String> {
     Ok(())
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn guide_reauthorization(_app: &tauri::AppHandle) {}

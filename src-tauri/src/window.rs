@@ -323,9 +323,7 @@ fn webview_hwnd(window: &WebviewWindow) -> Result<windows::Win32::Foundation::HW
     use windows::Win32::Foundation::HWND;
 
     // Tauri/wry may use a newer `windows` crate; bridge through the raw handle.
-    Ok(HWND(
-        window.hwnd().map_err(to_string)?.0 as *mut std::ffi::c_void,
-    ))
+    Ok(HWND(window.hwnd().map_err(to_string)?.0))
 }
 
 #[cfg(windows)]

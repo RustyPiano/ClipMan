@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;

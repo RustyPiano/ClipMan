@@ -1,9 +1,10 @@
 use std::{
     borrow::Cow,
-    sync::{mpsc, Arc, Mutex},
-    thread,
+    sync::{Arc, Mutex},
     time::Duration,
 };
+#[cfg(target_os = "macos")]
+use std::{sync::mpsc, thread};
 
 use arboard::{Clipboard, ImageData};
 use chrono::Utc;
