@@ -580,11 +580,9 @@ mod storage_init_tests {
     /// isn't valid UTF-8. `ClipStorage::new` now takes `&Path` directly, so
     /// that unwrap — and its panic — no longer exists anywhere on this path.
     ///
-    /// macOS's filesystem itself also rejects illegal byte sequences in
-    /// filenames (`create_dir_all` fails with `EILSEQ`), so the meaningful
-    /// assertion here is that this returns a graceful `Err` — proving we
-    /// reach and handle it via the normal `DirUnavailable` branch — rather
-    /// than panicking/aborting before we even get that far.
+    /// macOS rejects illegal byte sequences in filenames (`EILSEQ`), while
+    /// Linux accepts them. Both outcomes are valid; a successful open must
+    /// produce usable storage, and neither path may panic.
     #[cfg(unix)]
     #[test]
     fn non_utf8_data_directory_does_not_panic() {
@@ -604,10 +602,10 @@ mod storage_init_tests {
             |_backup| panic!("a fresh directory has no corrupt database to reset"),
         );
 
-        // The important thing is that we got here at all instead of
-        // panicking; whether the OS itself accepts the byte sequence is
-        // platform-dependent (macOS rejects it with EILSEQ).
-        assert!(result.is_err());
+        if let Ok(storage) = result {
+            assert!(storage.get_recent_clip_previews(1).is_ok());
+            drop(storage);
+        }
 
         let _ = fs::remove_dir_all(&root);
     }
