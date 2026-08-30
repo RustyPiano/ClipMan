@@ -4,15 +4,15 @@
 > 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 PLAN.md / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-08-30**
+**最后更新：2026-08-31**
 
 ## 当前状态一句话
 
-**v2.2.0 已发布；v2.2.1 发布候选已完成**：数据库恢复/迁移、前端错误状态/迁移交互、发布与跨平台 CI 已加固，正在等待 CI、标签构建与 Release 验收。
+**v2.2.1 已发布，官网已同步**：数据库恢复/迁移、前端错误状态/迁移交互、发布与跨平台 CI 已加固，四平台 Release 产物和 updater 清单已验收。
 
 ## 工作区
 
-- v2.2.1 可靠性修复已提交，版本清单与发布说明已生成；用户报告 macOS / Windows 当前使用未发现问题。签名私钥目录 `ClipMan-signing/` 保持忽略。
+- v2.2.1 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），`www.clipman.top` 已部署 2.2.1 下载链接；签名私钥目录 `ClipMan-signing/` 保持忽略。
 
 ## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 
@@ -28,7 +28,7 @@ bun run build
 
 ## 待办（按优先级）
 
-1. 完成 v2.2.1 CI、标签构建与 Release 资产验收，然后用正式包验证 Linux 与 v2.1→v2.2/v2.2.1 updater 路径。
+1. 用 v2.2.1 正式包实机验证 Linux，并回归 v2.1→v2.2.1 updater 路径。
 2. 做一次兼容依赖更新并复查 `bun audit`（当前 production audit 为 0，告警在开发/构建链）。
 3. Wave 4 候选（未排期）：搜索 1000 条截断提示、Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
