@@ -52,10 +52,10 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.2.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.2.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.2.0_x64.dmg`
-- **Linux**: `ClipMan_2.2.0_amd64.AppImage`
+- **Windows**: `ClipMan_2.2.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.2.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.2.1_x64.dmg`
+- **Linux**: `ClipMan_2.2.1_amd64.AppImage`
 
 ### macOS 安装与权限
 
