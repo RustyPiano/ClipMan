@@ -8,6 +8,7 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
+    "types": ["vite/client"],
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -20,9 +21,8 @@
     "noFallthroughCasesInSwitch": true,
 
     /* Path mapping */
-    "baseUrl": ".",
     "paths": {
-      "$lib/*": ["src/lib/*"]
+      "$lib/*": ["./src/lib/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"],

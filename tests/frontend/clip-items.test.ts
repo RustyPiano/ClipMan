@@ -172,3 +172,12 @@ describe('clip item helpers', () => {
     expect(items.map((item) => item.id)).toEqual(['recent-match', 'pinned-match']);
   });
 });
+
+test('file previews decode JSON without splitting newlines inside one filename', () => {
+  const paths = ['/tmp/one\ntwo.txt', '/tmp/quoted"name.txt'];
+  const item = {
+    contentType: 'files',
+    content: Buffer.from(JSON.stringify(paths), 'utf8').toString('base64'),
+  } as ClipItem;
+  expect(decodeFilePaths(item)).toEqual(paths);
+});

@@ -1,9 +1,5 @@
 import type { ClipItem } from '$lib/types';
 
-const MAX_DECODE_CACHE_SIZE = 1000;
-
-const decodedTextCache = new Map<string, { content: string; text: string }>();
-
 export function comparePinOrder(a: ClipItem, b: ClipItem) {
   const aOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
   const bOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
@@ -43,7 +39,7 @@ export function getPinnedDisplayItems({
 }
 
 function compareTimestampDesc(a: ClipItem, b: ClipItem) {
-  return b.timestamp - a.timestamp;
+  return b.timestamp - a.timestamp || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 }
 
 function mergeItemsById(items: readonly ClipItem[]) {
@@ -58,29 +54,15 @@ export function decodeClipText(item: ClipItem, emptyContent: string, decodeFaile
   if (item.contentType !== 'text') return '';
   if (!item.content) return emptyContent;
 
-  const cached = decodedTextCache.get(item.id);
-  if (cached?.content === item.content) {
-    return cached.text;
-  }
-
   const text = decodeBase64Text(item.content);
   if (text === null) return decodeFailed;
-
-  decodedTextCache.set(item.id, { content: item.content, text });
-
-  if (decodedTextCache.size > MAX_DECODE_CACHE_SIZE) {
-    const oldestKey = decodedTextCache.keys().next().value;
-    if (oldestKey) decodedTextCache.delete(oldestKey);
-  }
 
   return text;
 }
 
 /**
- * Decode a Files clip's base64 content into its path list. The backend stores
- * paths as newline-joined UTF-8 text (mirrors `split_file_paths` in storage.rs),
- * so blank lines from a trailing newline are dropped. Returns [] for non-files
- * clips or when decoding fails.
+ * Decode the backend's JSON path list, with newline-separated legacy support.
+ * Returns [] for non-files clips or when decoding fails.
  */
 export function decodeFilePaths(item: ClipItem): string[] {
   if (item.contentType !== 'files') return [];
@@ -89,6 +71,12 @@ export function decodeFilePaths(item: ClipItem): string[] {
   const text = decodeBase64Text(item.content);
   if (text === null) return [];
 
+  try {
+    const paths: unknown = JSON.parse(text);
+    if (Array.isArray(paths) && paths.every((path) => typeof path === 'string')) return paths;
+  } catch {
+    /* Legacy records used newline-separated paths. */
+  }
   return text.split('\n').filter((line) => line.length > 0);
 }
 
@@ -130,7 +118,9 @@ export function applyClipboardChanged({
   }
 
   return {
-    recentItems: [incoming, ...recentWithoutIncoming].slice(0, maxHistoryItems),
+    recentItems: [incoming, ...recentWithoutIncoming]
+      .sort(compareTimestampDesc)
+      .slice(0, maxHistoryItems),
     pinnedItems: pinnedWithoutIncoming,
   };
 }

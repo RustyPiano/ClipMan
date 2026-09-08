@@ -12,24 +12,39 @@ beforeEach(() => {
   selectionStore.reset('recent');
 });
 
-test('up from the first item wraps to the last item', () => {
-  selectionStore.move(-1, 3);
+const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
 
-  expect(selectionStore.selectedIndex).toBe(2);
+test('keyboard navigation wraps in both directions and handles empty results', () => {
+  selectionStore.move(-1, items);
+  expect(selectionStore.index(items)).toBe(2);
+  selectionStore.move(1, items);
+  expect(selectionStore.index(items)).toBe(0);
+  selectionStore.move(1, []);
+  expect(selectionStore.selectedId).toBe(null);
 });
 
-test('down from the last item wraps to the first item', () => {
-  selectionStore.setSelectedIndex(2, 3);
-
-  selectionStore.move(1, 3);
-
-  expect(selectionStore.selectedIndex).toBe(0);
+test('selection follows its ID across reordering, and reset always selects the first row', () => {
+  selectionStore.setSelectedIndex(2, items);
+  const reordered = [items[2], items[0], items[1]];
+  expect(selectionStore.index(reordered)).toBe(0);
+  selectionStore.reset('pinned');
+  expect(selectionStore.selectedId).toBe(null);
+  expect(selectionStore.index(items)).toBe(0);
 });
 
-test('clamp writes a stale selected index back into range', () => {
-  selectionStore.setSelectedIndex(8, 10);
+test('removing the selected item falls back to the first available result', () => {
+  selectionStore.setSelectedIndex(2, items);
+  expect(selectionStore.index(items.slice(0, 2))).toBe(0);
+});
 
-  selectionStore.clamp(3);
-
-  expect(selectionStore.selectedIndex).toBe(2);
+test('new input, navigation and window reset invalidate a pending use intent', () => {
+  let revision = selectionStore.beginUse();
+  selectionStore.cancelUse();
+  expect(selectionStore.isCurrentUse(revision)).toBe(false);
+  revision = selectionStore.beginUse();
+  selectionStore.move(1, items);
+  expect(selectionStore.isCurrentUse(revision)).toBe(false);
+  revision = selectionStore.beginUse();
+  selectionStore.reset();
+  expect(selectionStore.isCurrentUse(revision)).toBe(false);
 });

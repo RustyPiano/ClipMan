@@ -12,5 +12,5 @@
     // Ambient externals (bun:test, Buffer) come from env.d.ts, not @types/*.
     "types": []
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../e2e/**/*.ts", "../playwright.config.ts"]
 }

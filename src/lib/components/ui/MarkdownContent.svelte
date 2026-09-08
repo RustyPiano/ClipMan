@@ -81,19 +81,9 @@
 {/snippet}
 
 {#snippet headingToken(token: Tokens.Heading)}
-  {#if token.depth === 1}
-    <h1>{@render inlineTokens(token.tokens)}</h1>
-  {:else if token.depth === 2}
-    <h2>{@render inlineTokens(token.tokens)}</h2>
-  {:else if token.depth === 3}
-    <h3>{@render inlineTokens(token.tokens)}</h3>
-  {:else if token.depth === 4}
-    <h4>{@render inlineTokens(token.tokens)}</h4>
-  {:else if token.depth === 5}
-    <h5>{@render inlineTokens(token.tokens)}</h5>
-  {:else}
-    <h6>{@render inlineTokens(token.tokens)}</h6>
-  {/if}
+  <svelte:element this={['h1', 'h2', 'h3', 'h4', 'h5', 'h6'][token.depth - 1] ?? 'h6'}
+    >{@render inlineTokens(token.tokens)}</svelte:element
+  >
 {/snippet}
 
 {#snippet listToken(token: Tokens.List)}

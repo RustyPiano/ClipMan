@@ -8,7 +8,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;
-use crate::storage::{ClipStorage, ContentType, FrontendClipItem};
+use crate::storage::{ClipStorage, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, safe_lock, AppState};
 
@@ -21,9 +21,19 @@ where
     F: FnOnce(&ClipStorage) -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
+    let queued = std::time::Instant::now();
     tauri::async_runtime::spawn_blocking(move || {
+        let lock_started = std::time::Instant::now();
         let storage = safe_lock(&storage);
-        op(&storage)
+        let operation_started = std::time::Instant::now();
+        let result = op(&storage);
+        log::debug!(
+            "storage: queue {:?}, lock {:?}, operation {:?}",
+            lock_started.duration_since(queued),
+            operation_started.duration_since(lock_started),
+            operation_started.elapsed()
+        );
+        result
     })
     .await
     .map_err(|e| e.to_string())?
@@ -85,7 +95,7 @@ fn restart_clipboard_monitor(app: &AppHandle, state: &AppState) -> Result<(), St
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
     limit: Option<usize>,
-    before_timestamp: Option<i64>,
+    before_timestamp: Option<f64>,
     before_id: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
     let limit = limit.unwrap_or(100);
@@ -126,10 +136,9 @@ pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<Frontend
 pub async fn get_clip(
     state: State<'_, AppState>,
     id: String,
-) -> Result<Option<FrontendClipItem>, String> {
+) -> Result<Option<crate::storage::FrontendClipDetail>, String> {
     with_storage(state.storage.clone(), move |storage| {
-        let item = storage.get_by_id(&id).map_err(|e| e.to_string())?;
-        Ok(item.and_then(FrontendClipItem::from_full_text))
+        storage.get_detail(&id)
     })
     .await
 }
@@ -158,9 +167,10 @@ pub async fn toggle_pin(
     id: String,
     is_pinned: bool,
 ) -> Result<(), String> {
+    let limit = state.settings.get().max_history_items;
     with_storage(state.storage.clone(), move |storage| {
         storage
-            .update_pin(&id, is_pinned)
+            .update_pin(&id, is_pinned, limit)
             .map_err(|e| e.to_string())
     })
     .await?;
@@ -241,51 +251,56 @@ pub async fn clear_non_pinned_history(
 
 /// Copy a clip to the system clipboard (used by the tray menu and the in-window
 /// Copy button). Reuses the paste module's clipboard writer so there is a single
-/// implementation of "touch timestamp + emit + write clipboard".
+/// implementation of "write clipboard, then update history".
 pub async fn copy_clip_to_clipboard_internal(
     app: &AppHandle,
     clip_id: &str,
     show_notification: bool,
-) -> Result<(), String> {
+) -> Result<crate::paste::UseOutcome, String> {
     let state = app.state::<AppState>();
-    let item =
-        crate::paste::fetch_clip_and_touch_timestamp(app, state.inner(), clip_id.to_string())
-            .await?;
-
-    crate::paste::write_clip_to_system_clipboard(
-        &item,
-        state.last_copied_by_us.clone(),
-        false,
+    let outcome = crate::paste::use_clips(
         app,
-    )?;
-
+        state.inner(),
+        crate::paste::UseRequest {
+            ids: vec![clip_id.to_string()],
+            mode: "copy".into(),
+            plain: false,
+            separator: None,
+            hide: false,
+        },
+    )
+    .await?;
     if show_notification {
-        notify_copied(app, &item.content_type);
+        notify_copied(app);
     }
 
-    Ok(())
+    Ok(outcome)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn notify_copied(app: &AppHandle, content_type: &ContentType) {
-    let body = match content_type {
-        ContentType::Text => "文本已复制到剪贴板",
-        ContentType::Image => "图片已复制到剪贴板",
-        ContentType::Files => "文件已复制到剪贴板",
+fn notify_copied(app: &AppHandle) {
+    let chinese = app.state::<AppState>().settings.get().locale == "zh-CN";
+    let body = if chinese {
+        "内容已复制到剪贴板"
+    } else {
+        "Content copied to clipboard"
     };
     let _ = app
         .notification()
         .builder()
-        .title("已复制")
+        .title(if chinese { "已复制" } else { "Copied" })
         .body(body)
         .show();
 }
 
 #[cfg(target_os = "linux")]
-fn notify_copied(_app: &AppHandle, _content_type: &ContentType) {}
+fn notify_copied(_app: &AppHandle) {}
 
 #[tauri::command]
-pub async fn copy_to_system_clipboard(app: AppHandle, clip_id: String) -> Result<(), String> {
+pub async fn copy_to_system_clipboard(
+    app: AppHandle,
+    clip_id: String,
+) -> Result<crate::paste::UseOutcome, String> {
     // Use unified function, no notification for window copy
     copy_clip_to_clipboard_internal(&app, &clip_id, false).await
 }
@@ -301,10 +316,21 @@ pub async fn paste_clip(
     id: String,
     mode: String,
     plain: Option<bool>,
-) -> Result<(), String> {
+) -> Result<crate::paste::UseOutcome, String> {
     // `plain` is optional so a not-yet-upgraded frontend (no ⌥Enter) keeps
     // working: absent => rich paste, identical to previous behavior.
-    crate::paste::paste_clip(app, state.inner(), id, mode, plain.unwrap_or(false)).await
+    crate::paste::use_clips(
+        &app,
+        state.inner(),
+        crate::paste::UseRequest {
+            ids: vec![id],
+            mode,
+            plain: plain.unwrap_or(false),
+            separator: None,
+            hide: true,
+        },
+    )
+    .await
 }
 
 /// Merge several clips (in `ids` order) into a single `separator`-joined text
@@ -317,8 +343,19 @@ pub async fn paste_clips(
     ids: Vec<String>,
     mode: String,
     separator: String,
-) -> Result<(), String> {
-    crate::paste::paste_clips(app, state.inner(), ids, mode, separator).await
+) -> Result<crate::paste::UseOutcome, String> {
+    crate::paste::use_clips(
+        &app,
+        state.inner(),
+        crate::paste::UseRequest {
+            ids,
+            mode,
+            plain: true,
+            separator: Some(separator),
+            hide: true,
+        },
+    )
+    .await
 }
 
 pub fn register_quickbar_shortcut(
@@ -650,17 +687,37 @@ fn apply_autostart_setting(app: &AppHandle, enable_autostart: bool) -> Result<()
     result.map_err(|e| format!("Failed to update autostart: {}", e))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsUpdateResult {
+    settings: Settings,
+    warning: Option<String>,
+}
+
 #[tauri::command]
 pub async fn update_settings(
     app: AppHandle,
-    state: State<'_, AppState>,
-    mut settings: Settings,
-) -> Result<Settings, String> {
-    settings = settings.validate_and_normalize()?;
+    settings: Option<Settings>,
+) -> Result<SettingsUpdateResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_settings_blocking(&app, app.state::<AppState>().inner(), settings)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn update_settings_blocking(
+    app: &AppHandle,
+    state: &AppState,
+    settings: Option<Settings>,
+) -> Result<SettingsUpdateResult, String> {
+    // An explicit null resets through the same validation and rollback path.
+    let mut settings = settings.unwrap_or_default().validate_and_normalize()?;
     let _settings_write_guard = safe_lock(&state.settings_write_lock);
     log::info!("Updating settings: {:?}", settings);
 
     let old_settings = state.settings.get();
+    let history_limit_changed = old_settings.max_history_items != settings.max_history_items;
 
     // Two fields are owned by other subsystems, not the settings page, so a
     // stale/reset settings object must never write over them here:
@@ -695,7 +752,7 @@ pub async fn update_settings(
 
     // Update autostart if changed
     if autostart_changed {
-        if let Err(e) = apply_autostart_setting(&app, settings.enable_autostart) {
+        if let Err(e) = apply_autostart_setting(app, settings.enable_autostart) {
             log::error!("{}", e);
             return Err(e);
         }
@@ -712,7 +769,7 @@ pub async fn update_settings(
 
     if shortcut_changed || pinned_shortcut_changed {
         if let Err(e) = apply_shortcut_changes(
-            &app,
+            app,
             quickbar_foreground_window.clone(),
             old_shortcut.as_str(),
             old_pinned_shortcut.as_deref(),
@@ -720,7 +777,7 @@ pub async fn update_settings(
             new_pinned_shortcut.as_deref(),
         ) {
             if autostart_changed {
-                if let Err(rollback_error) = apply_autostart_setting(&app, old_autostart) {
+                if let Err(rollback_error) = apply_autostart_setting(app, old_autostart) {
                     log::warn!(
                         "Failed to roll back autostart after shortcut update failed: {}",
                         rollback_error
@@ -731,10 +788,10 @@ pub async fn update_settings(
         }
     }
 
-    if let Err(e) = state.settings.save_candidate(&app, &settings) {
+    if let Err(e) = state.settings.save_candidate(app, &settings) {
         if shortcut_changed || pinned_shortcut_changed {
             if let Err(rollback_error) = apply_shortcut_changes(
-                &app,
+                app,
                 quickbar_foreground_window,
                 new_shortcut.as_str(),
                 new_pinned_shortcut.as_deref(),
@@ -748,7 +805,7 @@ pub async fn update_settings(
             }
         }
         if autostart_changed {
-            if let Err(rollback_error) = apply_autostart_setting(&app, old_autostart) {
+            if let Err(rollback_error) = apply_autostart_setting(app, old_autostart) {
                 log::warn!(
                     "Failed to roll back autostart after settings save failed: {}",
                     rollback_error
@@ -759,33 +816,42 @@ pub async fn update_settings(
     }
 
     state.settings.set(settings.clone());
+    let _ = app.emit("settings-changed", ());
 
     // Rebuild tray menu if visible tray settings changed.
     if tray_text_changed || tray_limits_changed || locale_changed {
         log::info!("Tray settings changed, rebuilding menu...");
-        update_tray_menu(&app);
+        update_tray_menu(app);
     }
 
-    Ok(settings)
+    let warning = if history_limit_changed {
+        match safe_lock(&state.storage).enforce_history_limit(settings.max_history_items) {
+            Ok(removed) => {
+                if removed > 0 {
+                    let _ = app.emit("history-cleared", ());
+                }
+                None
+            }
+            Err(error) => Some(format!(
+                "Settings saved, but history cleanup failed: {error}"
+            )),
+        }
+    } else {
+        None
+    };
+    Ok(SettingsUpdateResult { settings, warning })
 }
 
 #[tauri::command]
-pub async fn get_current_data_path(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let default_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
-    let settings = state.settings.get();
-    let data_dir = migration::get_data_directory(default_path, settings.custom_data_path);
-
-    data_dir
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Invalid data path".to_string())
+pub async fn get_current_data_path(state: State<'_, AppState>) -> Result<String, String> {
+    with_storage(state.storage.clone(), |storage| {
+        storage
+            .data_directory()
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "Invalid data path".into())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -834,18 +900,27 @@ pub async fn enable_global_shortcut(
     let current_shortcut = settings.global_shortcut;
     let foreground_store = state.quickbar_foreground_window.clone();
 
-    register_quickbar_shortcut(
-        &app,
-        current_shortcut.as_str(),
-        foreground_store.clone(),
-        crate::window::QuickBarPanel::Recent,
-    )
-    .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
+    if !app
+        .global_shortcut()
+        .is_registered(current_shortcut.as_str())
+    {
+        register_quickbar_shortcut(
+            &app,
+            current_shortcut.as_str(),
+            foreground_store.clone(),
+            crate::window::QuickBarPanel::Recent,
+        )
+        .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
+    }
 
     log::info!("Global shortcut '{}' re-enabled", current_shortcut);
 
     if let Some(pinned_shortcut) = settings.pinned_shortcut {
-        if pinned_shortcut != current_shortcut {
+        if pinned_shortcut != current_shortcut
+            && !app
+                .global_shortcut()
+                .is_registered(pinned_shortcut.as_str())
+        {
             register_quickbar_shortcut(
                 &app,
                 pinned_shortcut.as_str(),
@@ -894,7 +969,19 @@ pub async fn open_folder(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn migrate_data_location(
     app: AppHandle,
-    state: State<'_, AppState>,
+    new_path: String,
+    delete_old: bool,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        migrate_data_location_blocking(&app, app.state::<AppState>().inner(), new_path, delete_old)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn migrate_data_location_blocking(
+    app: &AppHandle,
+    state: &AppState,
     new_path: String,
     delete_old: bool,
 ) -> Result<Option<String>, String> {
@@ -906,14 +993,9 @@ pub async fn migrate_data_location(
         delete_old
     );
 
-    // Resolve old / new paths.
-    let default_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     let _settings_write_guard = safe_lock(&state.settings_write_lock);
     let settings = state.settings.get();
-    let old_path = migration::get_data_directory(default_path, settings.custom_data_path.clone());
+    let old_path = safe_lock(&state.storage).data_directory().to_path_buf();
     let new_path_buf = std::path::PathBuf::from(&new_path);
     let new_db_path = new_path_buf.join("clipman.db");
 
@@ -934,7 +1016,7 @@ pub async fn migrate_data_location(
         new_settings.custom_data_path = Some(new_path.clone());
         state
             .settings
-            .save_candidate(&app, &new_settings)
+            .save_candidate(app, &new_settings)
             .map_err(|e| format!("Failed to save settings: {}", e))?;
 
         *storage_guard = new_storage;
@@ -956,11 +1038,11 @@ pub async fn migrate_data_location(
     })();
 
     let restart_result = if was_running {
-        restart_clipboard_monitor(&app, state.inner())
+        restart_clipboard_monitor(app, state)
     } else {
         Ok(())
     };
-    crate::tray::update_tray_menu(&app);
+    crate::tray::update_tray_menu(app);
 
     match (migration_result, restart_result) {
         (Ok(warning), Ok(())) => Ok(warning),

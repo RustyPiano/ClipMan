@@ -61,3 +61,6 @@ ClipMan-signing/
 # Locally installed Claude skill copies (like node_modules; skills-lock.json is
 # the committed manifest that reproduces them).
 .agents/
+# Browser regression artifacts
+/test-results/
+/playwright-report/

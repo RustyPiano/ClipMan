@@ -5,6 +5,48 @@ use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "zh-CN";
 const SETTINGS_KEY: &str = "settings";
+
+fn locale_for_language(language: &str) -> String {
+    if language.to_ascii_lowercase().starts_with("zh") {
+        "zh-CN"
+    } else {
+        "en"
+    }
+    .into()
+}
+
+#[cfg(target_os = "macos")]
+fn system_locale() -> String {
+    let language = objc2_foundation::NSLocale::preferredLanguages()
+        .firstObject()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    locale_for_language(&language)
+}
+
+#[cfg(windows)]
+fn system_locale() -> String {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetUserDefaultLocaleName(buffer: *mut u16, length: i32) -> i32;
+    }
+    let mut buffer = [0u16; 85];
+    // Windows LOCALE_NAME_MAX_LENGTH includes the terminating NUL.
+    let length = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    locale_for_language(&String::from_utf16_lossy(
+        &buffer[..length.saturating_sub(1) as usize],
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn system_locale() -> String {
+    let language = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()))
+        .unwrap_or_default();
+    locale_for_language(&language)
+}
+
 const LEGACY_SETTINGS_KEYS: [&str; 16] = [
     "global_shortcut",
     "auto_paste",
@@ -72,7 +114,7 @@ impl Default for Settings {
             max_recent_in_tray: 20,
             custom_data_path: None,
             enable_autostart: false,
-            locale: DEFAULT_LOCALE.to_string(),
+            locale: system_locale(),
             max_text_bytes: 2_000_000,
             max_image_dimension: 4096,
             skip_secrets: true,
@@ -263,20 +305,31 @@ impl SettingsManager {
     }
 
     pub fn load(&self, app: &AppHandle) -> Result<(), String> {
-        let store = app
-            .store("settings.json")
-            .map_err(|e| format!("Failed to access store: {}", e))?;
-        let candidate = match store.get(SETTINGS_KEY) {
-            Some(value) => serde_json::from_value(value)
-                .map_err(|e| format!("Failed to parse settings store: {}", e))?,
-            None => settings_from_legacy_store(|key| store.get(key)),
-        };
+        let result = (|| {
+            let store = app
+                .store("settings.json")
+                .map_err(|e| format!("Failed to access store: {e}"))?;
+            match store.get(SETTINGS_KEY) {
+                Some(value) => serde_json::from_value(value)
+                    .map_err(|e| format!("Failed to parse settings store: {e}")),
+                None => Ok(settings_from_legacy_store(|key| store.get(key))),
+            }
+        })();
+        self.apply_load_result(result)
+    }
 
-        let normalized = candidate.normalize_for_load();
-        *crate::safe_lock(&self.settings) = normalized;
-
-        log::info!("Settings loaded: {:?}", self.get());
-        Ok(())
+    fn apply_load_result(&self, result: Result<Settings, String>) -> Result<(), String> {
+        match result {
+            Ok(candidate) => {
+                self.set(candidate.normalize_for_load());
+                Ok(())
+            }
+            Err(error) => {
+                // Retain known preferences and stop capture; never save defaults over a bad file.
+                crate::safe_lock(&self.settings).capture_paused = true;
+                Err(error)
+            }
+        }
     }
 
     pub fn save(&self, app: &AppHandle) -> Result<(), String> {
@@ -324,6 +377,29 @@ impl SettingsManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_load_keeps_privacy_preferences_and_pauses_capture() {
+        let manager = SettingsManager::new();
+        manager.set(Settings {
+            ignored_apps: vec!["Private App".into()],
+            ..Settings::default()
+        });
+        assert!(manager
+            .apply_load_result(Err("unreadable settings".into()))
+            .is_err());
+        assert!(manager.get().capture_paused);
+        assert_eq!(manager.get().ignored_apps, ["Private App"]);
+        manager.apply_load_result(Ok(Settings::default())).unwrap();
+        assert!(!manager.get().capture_paused);
+    }
+
+    #[test]
+    fn initial_locale_tracks_the_system_language() {
+        assert_eq!(locale_for_language("zh-Hant-HK"), "zh-CN");
+        assert_eq!(locale_for_language("en-SG"), "en");
+        assert_eq!(locale_for_language("ja-JP"), "en");
+    }
 
     #[test]
     fn default_settings_include_phase0_fields() {

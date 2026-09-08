@@ -172,8 +172,73 @@ html.quickbar-window body {
 /* Custom Floating Panel: opaque, bordered, shadowless (see note above —
    the native macOS window shadow supplies all elevation). */
 .quickbar-panel {
-  border: 1px solid var(--quickbar-border) !important;
-  background: var(--quickbar-bg) !important;
+  --qb-surface: var(--quickbar-bg);
+  --qb-hover: color-mix(in srgb, var(--foreground) 3%, var(--qb-surface));
+  --qb-selection: color-mix(in srgb, var(--foreground) 7%, var(--qb-surface));
+  --qb-divider: color-mix(in srgb, var(--foreground) 9%, var(--qb-surface));
+  border: 1px solid var(--quickbar-border);
+  background: var(--qb-surface);
+}
+
+.quickbar-panel svg {
+  stroke-width: 1.7;
+}
+.quickbar-panel :is(button, summary, input):focus-visible {
+  outline: 2px solid var(--muted-foreground);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.quickbar-panel .qb-search {
+  border: 0;
+  box-shadow: none;
+  color: var(--foreground);
+}
+.quickbar-panel .qb-search::placeholder {
+  color: var(--muted-foreground);
+}
+.quickbar-panel .qb-search:focus-visible {
+  outline: none;
+  background: var(--qb-hover);
+  box-shadow: inset 0 -1px 0 var(--muted-foreground);
+}
+.qb-header {
+  border-bottom: 1px solid var(--qb-divider);
+}
+.qb-tabs {
+  background: var(--qb-hover);
+}
+.qb-tabs button {
+  color: var(--muted-foreground);
+}
+.qb-tabs button[aria-pressed='true'] {
+  color: var(--foreground);
+  background: var(--qb-surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+.qb-preview {
+  border-left: 1px solid var(--qb-divider);
+  background: var(--qb-hover);
+}
+.qb-footer {
+  border-top: 1px solid var(--qb-divider);
+}
+.qb-footer > div:last-child > button,
+.qb-footer summary {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 6px;
+}
+.quickbar-panel .row-actions button:hover,
+.qb-footer :is(button, summary):hover {
+  background: var(--qb-selection);
+  color: var(--foreground);
+}
+.qb-footer button[aria-pressed='true'] {
+  color: var(--foreground);
+}
+.quickbar-panel .kbd-keycap {
+  background: transparent;
+  border-color: var(--qb-divider);
 }
 
 /* Flat Minimal Keyboard Keycap style */

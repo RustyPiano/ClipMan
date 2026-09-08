@@ -73,15 +73,20 @@ pub fn show_quickbar_with_panel(
     foreground_store: &ForegroundWindowStore,
     panel: QuickBarPanel,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
 
     remember_foreground_window(foreground_store, &quickbar);
-    position_quickbar(&quickbar)?;
+    let geometry_changed = position_quickbar(&quickbar)?;
 
-    quickbar.unminimize().map_err(to_string)?;
+    if quickbar.is_minimized().unwrap_or(false) {
+        quickbar.unminimize().map_err(to_string)?;
+    }
     quickbar.show().map_err(to_string)?;
     focus_quickbar(&quickbar)?;
-    invalidate_quickbar_shadow(&quickbar);
+    if geometry_changed {
+        invalidate_quickbar_shadow(&quickbar);
+    }
     app.emit(
         "quickbar-opened",
         QuickBarOpenedPayload {
@@ -89,7 +94,10 @@ pub fn show_quickbar_with_panel(
         },
     )
     .map_err(to_string)?;
-
+    log::debug!(
+        "quickbar: native show/focus completed in {:?}",
+        started.elapsed()
+    );
     Ok(())
 }
 
@@ -201,6 +209,7 @@ fn register_settings_events(window: &WebviewWindow) {
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            let _ = window_for_event.emit("settings-hidden", ());
             if let Err(e) = window_for_event.hide() {
                 log::error!("Failed to hide settings window on close: {}", e);
             }
@@ -222,10 +231,10 @@ fn ns_window(window: &WebviewWindow) -> Result<&objc2_app_kit::NSWindow, String>
     }
 }
 
-fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
+fn position_quickbar(window: &WebviewWindow) -> Result<bool, String> {
     let Some(monitor) = quickbar_monitor(window) else {
         log::warn!("No monitor detected for QuickBar positioning");
-        return Ok(());
+        return Ok(false);
     };
 
     let work_area = monitor.work_area();
@@ -242,16 +251,21 @@ fn position_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let width = (logical_w * scale).round() as i32;
     let height = (logical_h * scale).round() as i32;
 
-    window
-        .set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32))
-        .map_err(to_string)?;
+    let size = PhysicalSize::new(width.max(1) as u32, height.max(1) as u32);
+    let resized = window.inner_size().ok() != Some(size);
+    if resized {
+        window.set_size(size).map_err(to_string)?;
+    }
 
     let x = work_area.position.x + ((work_width - width) / 2).max(0);
     let y = work_area.position.y + ((work_height - height) / 3).max(0);
 
-    window
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(to_string)
+    let position = PhysicalPosition::new(x, y);
+    let moved = window.outer_position().ok() != Some(position);
+    if moved {
+        window.set_position(position).map_err(to_string)?;
+    }
+    Ok(resized || moved)
 }
 
 /// Pick the monitor the user is actually working on: the one under the cursor,

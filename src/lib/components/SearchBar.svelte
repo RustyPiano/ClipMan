@@ -2,14 +2,14 @@
   import { onDestroy, onMount } from 'svelte';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { Loader2, Search, X } from 'lucide-svelte';
   import { listen } from '@tauri-apps/api/event';
   import { hasTauriRuntime } from '$lib/utils/tauri';
   import { SEARCH_INPUT_ID } from '$lib/constants';
 
-  const SEARCH_DEBOUNCE_MS = 120;
+  let { activeId, expanded }: { activeId?: string; expanded: boolean } = $props();
+  const SEARCH_DEBOUNCE_MS = 30;
 
   const t = $derived(i18n.t);
 
@@ -116,7 +116,7 @@
 
 <div class="relative w-full">
   <div
-    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40 transition-colors"
+    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors"
   >
     {#if clipboardStore.isSearchPending}
       <Loader2 class="h-4 w-4 animate-spin stroke-[2]" />
@@ -125,15 +125,22 @@
     {/if}
   </div>
 
-  <Input
+  <input
     id={SEARCH_INPUT_ID}
     type="text"
+    role="combobox"
+    aria-haspopup="grid"
+    aria-label={t.searchPlaceholder}
+    aria-controls={expanded ? 'clipboard-results' : undefined}
+    aria-expanded={expanded}
+    aria-activedescendant={activeId ? `clip-item-${activeId}` : undefined}
+    aria-autocomplete="list"
     placeholder={t.searchPlaceholder}
     value={clipboardStore.searchQuery}
     oninput={handleInput}
     oncompositionstart={handleCompositionStart}
     oncompositionend={handleCompositionEnd}
-    class="h-10 border-transparent bg-transparent pl-9 pr-10 text-[14px] font-medium placeholder:text-muted-foreground/35 shadow-none transition-colors focus-visible:ring-0"
+    class="qb-search h-10 w-full rounded-lg bg-transparent pl-9 pr-10 text-sm"
   />
 
   {#if clipboardStore.searchQuery}

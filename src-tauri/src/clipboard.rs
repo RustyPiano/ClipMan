@@ -1,5 +1,4 @@
 use arboard::{Clipboard, ImageData};
-use chrono::Utc;
 use clipboard_master::{CallbackResult, ClipboardHandler, Master, Shutdown};
 use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::sync::{
@@ -11,7 +10,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::storage::{join_file_paths, ClipItem, ContentType, CopyMarker};
+use crate::storage::{encode_file_paths, ClipItem, ContentType, CopyMarker};
 
 type MonitorReadySender = mpsc::Sender<Result<(), String>>;
 const MONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -92,7 +91,7 @@ fn read_clipboard_snapshot(clipboard: &mut Clipboard) -> Option<ClipboardSnapsho
 fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
     match snapshot {
         ClipboardSnapshot::Files(paths) => {
-            CopyMarker::from_payload(ContentType::Files, join_file_paths(paths).as_bytes())
+            CopyMarker::from_payload(ContentType::Files, encode_file_paths(paths).as_bytes())
         }
         ClipboardSnapshot::Text { text, .. } => {
             CopyMarker::from_payload(ContentType::Text, text.as_bytes())
@@ -354,7 +353,7 @@ impl ClipboardMonitor {
         // process_image_change needs to snapshot *before* its async
         // processing runs, so placing it here (synchronously, pre-dispatch)
         // preserves that ordering for free.
-        let source_app = frontmost_app_name();
+        let (source_app, source_id) = frontmost_app();
 
         // The ignored-apps check runs after record_marker_and_decide_dispatch
         // has already advanced `last_marker`, mirroring the self-copy skip
@@ -362,11 +361,18 @@ impl ClipboardMonitor {
         // later genuine copy of different content from a *non*-ignored app
         // would be compared against outdated state (§2.2's rationale applies
         // here too).
-        if let Some(app_name) = source_app.as_deref() {
-            if Self::is_ignored_app(app_handle, app_name) {
-                log::info!("Skipping clipboard change from ignored app: {}", app_name);
-                return;
-            }
+        let ignored_apps = app_handle
+            .state::<crate::AppState>()
+            .settings
+            .get()
+            .ignored_apps;
+        if [source_id.as_deref(), source_app.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|identity| app_name_matches_ignore_list(identity, &ignored_apps))
+        {
+            log::debug!("Skipping clipboard change from an excluded application");
+            return;
         }
 
         match snapshot {
@@ -386,14 +392,6 @@ impl ClipboardMonitor {
     fn capture_is_paused(app_handle: &AppHandle) -> bool {
         use crate::AppState;
         app_handle.state::<AppState>().settings.get().capture_paused
-    }
-
-    /// Whether `app_name` (the frontmost app captured just before dispatch)
-    /// is on the configured ignore list (SPEC-4 §3).
-    fn is_ignored_app(app_handle: &AppHandle, app_name: &str) -> bool {
-        use crate::AppState;
-        let ignored_apps = app_handle.state::<AppState>().settings.get().ignored_apps;
-        app_name_matches_ignore_list(app_name, &ignored_apps)
     }
 
     fn process_text_change(
@@ -432,7 +430,7 @@ impl ClipboardMonitor {
             content: text.as_bytes().to_vec(),
             thumbnail: None,
             content_type: ContentType::Text,
-            timestamp: Utc::now().timestamp(),
+            timestamp: crate::storage::current_timestamp(),
             is_pinned: false,
             pin_order: None,
             label: None,
@@ -451,7 +449,7 @@ impl ClipboardMonitor {
         use crate::AppState;
 
         let max_text_bytes = app_handle.state::<AppState>().settings.get().max_text_bytes;
-        let content = join_file_paths(&paths).into_bytes();
+        let content = encode_file_paths(&paths).into_bytes();
 
         if content.len() > max_text_bytes {
             log::info!(
@@ -468,7 +466,7 @@ impl ClipboardMonitor {
             content,
             thumbnail: None,
             content_type: ContentType::Files,
-            timestamp: Utc::now().timestamp(),
+            timestamp: crate::storage::current_timestamp(),
             is_pinned: false,
             pin_order: None,
             label: None,
@@ -486,6 +484,7 @@ impl ClipboardMonitor {
         marker: &CopyMarker,
         source_app: Option<String>,
     ) {
+        let captured_at = crate::storage::current_timestamp();
         let width = image.width;
         let height = image.height;
         // The snapshot already owns its RGBA buffer (arboard hands back a
@@ -539,7 +538,7 @@ impl ClipboardMonitor {
                         content: processed.content_png,
                         thumbnail: Some(processed.thumbnail_png),
                         content_type: processed.marker.content_type,
-                        timestamp: Utc::now().timestamp(),
+                        timestamp: captured_at,
                         is_pinned: false,
                         pin_order: None,
                         label: None,
@@ -574,7 +573,7 @@ impl ClipboardMonitor {
     }
 
     fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
-        use crate::storage::{ClipPreviewItem, FrontendClipItem};
+        use crate::storage::FrontendClipItem;
         use crate::tray::update_tray_menu;
         use crate::AppState;
 
@@ -587,31 +586,21 @@ impl ClipboardMonitor {
             storage
                 .insert(&item, max_history_items)
                 .and_then(|existing_id| {
-                    if let Some(id) = existing_id {
-                        log::debug!("Updated existing item {} timestamp", id);
-                        if let Some(existing_item) = storage.get_preview_by_id(&id)? {
-                            return Ok(FrontendClipItem::from_preview(existing_item));
-                        }
-
-                        log::warn!("Duplicate item {} was not found after timestamp update", id);
-                        return Ok(FrontendClipItem::from_preview(
-                            ClipPreviewItem::from_clip_item_with_id(&item, id),
-                        ));
-                    }
-
-                    Ok(FrontendClipItem::from_preview(
-                        ClipPreviewItem::from_clip_item(&item),
-                    ))
+                    // A delayed old image may already have been pruned; never emit a ghost row.
+                    storage
+                        .get_preview_by_id(existing_id.as_deref().unwrap_or(&item.id))
+                        .map(|item| item.map(FrontendClipItem::from_preview))
                 })
         };
 
         match result {
-            Ok(item_for_emit) => {
+            Ok(Some(item_for_emit)) => {
                 app_handle.emit("clipboard-changed", &item_for_emit).ok();
                 log::debug!("Updating tray menu...");
                 update_tray_menu(app_handle);
                 log::debug!("Clipboard item saved/updated and tray updated");
             }
+            Ok(None) => log::debug!("Captured item was already outside the history limit"),
             Err(e) => {
                 log::error!("Failed to save clipboard item: {}", e);
             }
@@ -632,13 +621,16 @@ impl ClipboardMonitor {
         let image = DynamicImage::ImageRgba8(image);
         let image = Self::downscale_if_oversized(image, max_image_dimension);
 
-        let thumbnail = image.resize(
-            THUMBNAIL_SIZE,
-            THUMBNAIL_SIZE,
-            image::imageops::FilterType::Lanczos3,
-        );
         let content_png = Self::encode_png(&image)?;
-        let thumbnail_png = Self::encode_png(&thumbnail)?;
+        let thumbnail_png = if image.width() <= THUMBNAIL_SIZE && image.height() <= THUMBNAIL_SIZE {
+            content_png.clone()
+        } else {
+            Self::encode_png(&image.resize(
+                THUMBNAIL_SIZE,
+                THUMBNAIL_SIZE,
+                image::imageops::FilterType::Lanczos3,
+            ))?
+        };
 
         log::info!(
             "Processed clipboard image: {}x{} -> {} bytes, thumbnail {} bytes",
@@ -881,19 +873,24 @@ fn clipboard_has_sensitive_marker() -> bool {
 // ponytail: reads NSWorkspace off the monitor thread, same as window.rs does
 // off the command thread; AppKit's frontmostApplication tolerates it.
 #[cfg(target_os = "macos")]
-fn frontmost_app_name() -> Option<String> {
+fn frontmost_app() -> (Option<String>, Option<String>) {
     use objc2_app_kit::NSWorkspace;
 
-    let front = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    let Some(front) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
+        return (None, None);
+    };
     if front.processIdentifier() == std::process::id() as i32 {
-        return None;
+        return (None, None);
     }
-    front.localizedName().map(|name| name.to_string())
+    (
+        front.localizedName().map(|name| name.to_string()),
+        front.bundleIdentifier().map(|id| id.to_string()),
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
-fn frontmost_app_name() -> Option<String> {
-    None
+fn frontmost_app() -> (Option<String>, Option<String>) {
+    (None, None)
 }
 
 #[cfg(test)]
@@ -910,7 +907,7 @@ mod tests {
 
         assert_eq!(marker, processed.marker);
         assert!(!processed.content_png.is_empty());
-        assert!(!processed.thumbnail_png.is_empty());
+        assert_eq!(processed.content_png, processed.thumbnail_png);
     }
 
     #[test]
@@ -1038,10 +1035,10 @@ mod tests {
 
     #[test]
     fn snapshot_marker_matches_primary_content_and_ignores_html() {
-        // Files hash the newline-joined path text.
+        // Files hash the lossless encoded path list.
         let paths = vec!["/a/b.txt".to_string(), "/c/d.png".to_string()];
         assert_eq!(
-            CopyMarker::from_payload(ContentType::Files, join_file_paths(&paths).as_bytes()),
+            CopyMarker::from_payload(ContentType::Files, encode_file_paths(&paths).as_bytes()),
             snapshot_marker(&ClipboardSnapshot::Files(paths.clone()))
         );
 

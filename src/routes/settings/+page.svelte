@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { router } from '$lib/stores/router.svelte';
   import { i18n } from '$lib/i18n';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
@@ -11,7 +10,6 @@
   import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
-  import { createDefaultSettings, normalizeSettingsLocale } from '$lib/utils/settings';
 
   // Import modularized components
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
@@ -24,7 +22,7 @@
 
   const t = $derived(i18n.t);
 
-  let settings = $state<Settings>(createDefaultSettings());
+  let settings = $state<Settings | null>(null);
 
   let loading = $state(true);
   let saving = $state(false);
@@ -57,23 +55,8 @@
   async function loadSettings() {
     try {
       loading = true;
-      const data = await invoke<Settings>('get_settings');
-      const normalized = normalizeSettingsLocale(data);
-      if (normalized.needsSave) {
-        console.warn(
-          `[WARNING] Invalid locale loaded from backend: ${
-            (data as Settings & { locale: unknown }).locale
-          }, falling back to 'zh-CN'`
-        );
-      }
-      settings = normalized.settings;
-      if (settings.locale !== i18n.locale) {
-        i18n.setLocale(settings.locale);
-      }
-      if (normalized.needsSave) {
-        // If we corrected the locale, update backend settings immediately to fix the file on disk
-        await invoke('update_settings', { settings: settings });
-      }
+      settings = await invoke<Settings>('get_settings');
+      i18n.setLocale(settings.locale);
     } catch (err) {
       console.error('Failed to load settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -92,12 +75,17 @@
     }
   }
 
-  async function saveSettings() {
+  async function saveSettings(reset = false) {
+    if (saving || !settings) return;
     try {
       saving = true;
-      settings = await invoke<Settings>('update_settings', { settings: settings });
+      const result = await invoke<{ settings: Settings; warning: string | null }>(
+        'update_settings',
+        { settings: reset ? null : settings }
+      );
+      settings = result.settings;
       i18n.setLocale(settings.locale);
-      toastStore.add(t.saved, 'success');
+      toastStore.add(result.warning ?? t.saved, result.warning ? 'info' : 'success');
     } catch (err) {
       console.error('Failed to save settings:', err);
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -116,10 +104,7 @@
     });
     if (!confirmed) return;
 
-    // saveSettings handles its own success/error toasts, so no try/catch here.
-    // Reset restores defaults; the tray toggle owns capturePaused at runtime.
-    settings = createDefaultSettings();
-    await saveSettings();
+    await saveSettings(true);
   }
 
   async function checkForUpdates() {
@@ -248,15 +233,12 @@
   async function handleBack() {
     try {
       const win = getCurrentWindow();
-      if (win.label === 'settings') {
-        await invoke('show_quickbar');
-        await win.hide();
-      } else {
-        router.goHome();
-      }
+      await win.emit('settings-hidden');
+      await invoke('show_quickbar');
+      await win.hide();
     } catch (err) {
       console.error('Failed to handle back navigation:', err);
-      router.goHome();
+      toastStore.add(String(err), 'error');
     }
   }
 </script>
@@ -285,15 +267,15 @@
       <Button
         variant="outline"
         onclick={resetSettings}
-        disabled={loading || saving || changingDataPath}
+        disabled={!settings || loading || saving || changingDataPath}
         class="gap-2"
       >
         <RotateCcw class="h-4 w-4" />
         {t.reset}
       </Button>
       <Button
-        onclick={saveSettings}
-        disabled={loading || saving || changingDataPath}
+        onclick={() => saveSettings()}
+        disabled={!settings || loading || saving || changingDataPath}
         class="gap-2 min-w-[100px]"
       >
         {#if saving}
@@ -317,7 +299,7 @@
         <div class="flex items-center justify-center h-full">
           <Loader2 class="h-8 w-8 animate-spin text-primary" />
         </div>
-      {:else}
+      {:else if settings}
         <div class="max-w-2xl mx-auto space-y-6">
           {#if activeTab === 'general'}
             <GeneralSettings bind:settings />
@@ -339,6 +321,11 @@
               {installUpdate}
             />
           {/if}
+        </div>
+      {:else}
+        <div class="flex h-full flex-col items-center justify-center gap-3">
+          <p>{t.loadSettingsFailed}</p>
+          <Button onclick={loadSettings}>{t.recheck}</Button>
         </div>
       {/if}
     </main>

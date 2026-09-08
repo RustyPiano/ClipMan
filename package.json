@@ -1,6 +1,6 @@
 {
   "name": "clipman",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "A modern clipboard manager",
   "type": "module",
   "scripts": {
@@ -12,31 +12,31 @@
     "test": "bun test tests/",
     "test:types": "tsc -p tests/tsconfig.json --noEmit",
     "format": "prettier --write \"src/**/*.{ts,svelte}\"",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:ui": "playwright test"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.0",
-    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
     "lucide-svelte": "^1.0.1",
-    "marked": "^18.0.4",
-    "svelte": "^5.56.1"
+    "marked": "^18.0.11",
+    "svelte": "^5.57.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@sveltejs/vite-plugin-svelte": "^7.1.2",
-    "@tailwindcss/vite": "^4.3.0",
-    "@tauri-apps/cli": "^2.11.2",
-    "@typescript-eslint/eslint-plugin": "^8.60.1",
-    "@typescript-eslint/parser": "^8.60.1",
-    "autoprefixer": "^10.5.0",
-    "eslint": "^10.4.1",
+    "@playwright/test": "^1.63.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "@typescript-eslint/eslint-plugin": "^8.69.0",
+    "@typescript-eslint/parser": "^8.69.0",
+    "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.19.0",
-    "postcss": "^8.5.15",
-    "prettier": "^3.8.3",
-    "prettier-plugin-svelte": "^4.1.0",
-    "svelte-check": "^4.5.0",
-    "tailwindcss": "^4.3.0",
-    "vite": "^8.0.16"
+    "eslint-plugin-svelte": "^3.23.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte-check": "^4.7.6",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2"
   }
 }

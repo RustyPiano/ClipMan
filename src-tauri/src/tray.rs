@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use tauri::menu::{
     CheckMenuItemBuilder, IconMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::storage::{ClipPreviewItem, ContentType};
+use crate::storage::{join_file_paths, split_file_paths, ClipPreviewItem, ContentType};
 use crate::AppState;
 
 // Tray configuration constants
@@ -132,39 +132,31 @@ pub fn truncate_content(
     max_len: usize,
     i18n: &TrayI18n,
 ) -> String {
-    match content_type {
-        // Files store their paths as newline-joined text; the newline→space
-        // collapse below makes the path list render on one readable line.
-        ContentType::Text | ContentType::Files => {
-            let text = String::from_utf8_lossy(content);
-            // Replace newlines and carriage returns, then collapse whitespace
-            let text: String = text
-                .chars()
-                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
-                .collect::<String>()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+    if *content_type == ContentType::Image {
+        return i18n.image.to_string();
+    }
+    let text = String::from_utf8_lossy(content);
+    let text = if *content_type == ContentType::Files {
+        join_file_paths(&split_file_paths(&text))
+    } else {
+        text.into_owned()
+    };
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
-            // Smart truncation: show start...end for long text
-            let char_count = text.chars().count();
-            if char_count > max_len {
-                if max_len <= 3 {
-                    return text.chars().take(max_len).collect();
-                }
-
-                let available = max_len - 3;
-                let start_len = (available * 2 / 3).max(1);
-                let end_len = max_len - start_len - 3;
-
-                let start: String = text.chars().take(start_len).collect();
-                let end: String = text.chars().skip(char_count - end_len).collect();
-                format!("{}...{}", start, end)
-            } else {
-                text
-            }
+    let char_count = text.chars().count();
+    if char_count > max_len {
+        if max_len <= 3 {
+            return text.chars().take(max_len).collect();
         }
-        ContentType::Image => i18n.image.to_string(),
+        let start_len = ((max_len - 3) * 2 / 3).max(1);
+        let end_len = max_len - start_len - 3;
+        format!(
+            "{}...{}",
+            text.chars().take(start_len).collect::<String>(),
+            text.chars().skip(char_count - end_len).collect::<String>()
+        )
+    } else {
+        text
     }
 }
 
@@ -196,7 +188,9 @@ fn add_clip_menu_item(
 }
 
 /// Build dynamic tray menu
-pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+pub fn build_tray_menu(
+    app: &AppHandle,
+) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let state = app.state::<AppState>();
 
     // Get settings for tray menu limits
@@ -212,16 +206,12 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
         let pinned_items = if max_pinned_in_tray == 0 {
             Vec::new()
         } else {
-            storage
-                .get_pinned_clip_previews_with_limit(max_pinned_in_tray)
-                .unwrap_or_default()
+            storage.get_pinned_clip_previews_with_limit(max_pinned_in_tray)?
         };
         let recent_items = if max_recent_in_tray == 0 {
             Vec::new()
         } else {
-            storage
-                .get_recent_clip_previews(max_recent_in_tray)
-                .unwrap_or_default()
+            storage.get_recent_clip_previews(max_recent_in_tray)?
         };
         (pinned_items, recent_items)
     };
@@ -271,7 +261,7 @@ pub fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>,
         .item(&MenuItemBuilder::with_id("settings", i18n.settings).build(app)?)
         .item(&MenuItemBuilder::with_id("quit", i18n.quit).build(app)?);
 
-    menu_builder.build()
+    Ok(menu_builder.build()?)
 }
 
 /// Handle a tray menu selection. Lives in this module (not `main.rs`) so all
@@ -304,27 +294,33 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
             }
         }
         "pause_capture" => {
-            let state: tauri::State<AppState> = app.state();
-            // Serialize against `update_settings` so a settings-page save and
-            // this tray toggle can't race each other and clobber one another's
-            // change. `capture_paused` is owned exclusively by this toggle.
-            let _settings_write_guard = crate::safe_lock(&state.settings_write_lock);
+            let app = app.clone();
+            // Native menu callbacks must never wait for a lock whose owner needs the main thread.
+            tauri::async_runtime::spawn_blocking(move || {
+                let state: tauri::State<AppState> = app.state();
+                // Serialize against `update_settings` so a settings-page save and
+                // this tray toggle can't race each other and clobber one another's
+                // change. `capture_paused` is owned exclusively by this toggle.
+                let _settings_write_guard = crate::safe_lock(&state.settings_write_lock);
 
-            let mut settings = state.settings.get();
-            settings.capture_paused = !settings.capture_paused;
-            let now_paused = settings.capture_paused;
-            state.settings.set(settings);
+                let mut settings = state.settings.get();
+                settings.capture_paused = !settings.capture_paused;
+                let now_paused = settings.capture_paused;
+                state.settings.set(settings);
 
-            if let Err(e) = state.settings.save(app) {
-                log::error!("Failed to persist capture_paused toggle: {}", e);
-            }
-            log::info!(
-                "Clipboard capture {} via tray menu",
-                if now_paused { "paused" } else { "resumed" }
-            );
+                if let Err(e) = state.settings.save(&app) {
+                    log::error!("Failed to persist capture_paused toggle: {}", e);
+                }
+                log::info!(
+                    "Clipboard capture {} via tray menu",
+                    if now_paused { "paused" } else { "resumed" }
+                );
 
-            update_tray_menu(app);
+                let _ = app.emit("settings-changed", ());
+                update_tray_menu(&app);
+            });
         }
+
         id if id.starts_with("clip:") => {
             let clip_id = id.strip_prefix("clip:").unwrap().to_string();
             log::info!("Clip item clicked: {}", clip_id);
@@ -348,14 +344,15 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
 
 /// Update tray menu
 pub fn update_tray_menu(app: &AppHandle) {
-    if let Ok(new_menu) = build_tray_menu(app) {
+    // Construct everything first; on failure the existing menu remains usable.
+    let result = build_tray_menu(app).and_then(|menu| {
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
-            if let Err(e) = tray.set_menu(Some(new_menu)) {
-                log::error!("Failed to update tray menu: {}", e);
-            } else {
-                log::debug!("Tray menu updated successfully");
-            }
+            tray.set_menu(Some(menu))?;
         }
+        Ok(())
+    });
+    if let Err(error) = result {
+        log::error!("Failed to refresh tray menu; keeping previous menu: {error}");
     }
 }
 
@@ -425,12 +422,13 @@ mod tests {
     #[test]
     fn test_truncate_content_files_renders_path_text() {
         let i18n = TrayI18n::new("en");
-        let content = b"/Users/alice/a.txt\n/Users/alice/b.png";
-        let result = truncate_content(content, &ContentType::Files, 100, &i18n);
+        let content = crate::storage::encode_file_paths(&[
+            "/Users/alice/a\nfile.txt".into(),
+            "/Users/alice/b.png".into(),
+        ]);
+        let result = truncate_content(content.as_bytes(), &ContentType::Files, 100, &i18n);
 
-        // Path list is shown as readable text (newline collapsed to a space),
-        // not the generic image placeholder.
-        assert_eq!("/Users/alice/a.txt /Users/alice/b.png", result);
+        assert_eq!("/Users/alice/a file.txt /Users/alice/b.png", result);
     }
 
     #[test]

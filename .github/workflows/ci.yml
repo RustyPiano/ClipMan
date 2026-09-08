@@ -49,6 +49,12 @@ jobs:
       - name: build
         run: bun run build
 
+      - name: install browser for UI regression tests
+        run: bunx playwright install --with-deps chromium webkit
+
+      - name: browser interaction tests
+        run: bun run test:ui
+
   rust:
     runs-on: macos-14
     steps:

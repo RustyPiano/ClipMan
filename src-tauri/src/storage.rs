@@ -6,6 +6,12 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Fractional Unix seconds keep captures/uses within one second chronological.
+/// SQLite accepts both legacy INTEGER seconds and new REAL seconds without rewriting rows.
+pub fn current_timestamp() -> f64 {
+    chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ContentType {
@@ -69,7 +75,7 @@ pub struct ClipItem {
     #[serde(with = "serde_bytes")]
     pub thumbnail: Option<Vec<u8>>,
     pub content_type: ContentType,
-    pub timestamp: i64,
+    pub timestamp: f64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
@@ -87,13 +93,15 @@ pub struct ClipPreviewItem {
     pub preview_content: Vec<u8>,
     pub thumbnail: Option<Vec<u8>>,
     pub content_type: ContentType,
-    pub timestamp: i64,
+    pub timestamp: f64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
     pub group_name: Option<String>,
     pub source_app: Option<String>,
     pub has_html: bool,
+    pub content_bytes: usize,
+    pub file_count: usize,
 }
 
 // Frontend-optimized version: converts images to data URLs for zero-cost rendering
@@ -103,13 +111,15 @@ pub struct FrontendClipItem {
     pub id: String,
     pub content: String, // Base64 string or data URL
     pub content_type: ContentType,
-    pub timestamp: i64,
+    pub timestamp: f64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
     pub group_name: Option<String>,
     pub source_app: Option<String>,
     pub has_html: bool,
+    pub content_bytes: usize,
+    pub file_count: usize,
 }
 
 impl ClipPreviewItem {
@@ -119,12 +129,19 @@ impl ClipPreviewItem {
 
     pub fn from_clip_item_with_id(item: &ClipItem, id: String) -> Self {
         let preview_content = match item.content_type {
-            ContentType::Text | ContentType::Files => item
+            ContentType::Text => item
                 .content
                 .iter()
                 .take(TEXT_PREVIEW_BYTES)
                 .copied()
                 .collect(),
+            ContentType::Files => encode_file_paths(
+                &split_file_paths(&String::from_utf8_lossy(&item.content))
+                    .into_iter()
+                    .take(1)
+                    .collect::<Vec<_>>(),
+            )
+            .into_bytes(),
             ContentType::Image => Vec::new(),
         };
 
@@ -140,6 +157,12 @@ impl ClipPreviewItem {
             group_name: item.group_name.clone(),
             source_app: item.source_app.clone(),
             has_html: item.html.is_some(),
+            content_bytes: item.content.len(),
+            file_count: if item.content_type == ContentType::Files {
+                split_file_paths(&String::from_utf8_lossy(&item.content)).len()
+            } else {
+                0
+            },
         }
     }
 }
@@ -154,7 +177,11 @@ impl FrontendClipItem {
                 .as_deref()
                 .map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)))
                 .unwrap_or_default(),
-            ContentType::Text | ContentType::Files => BASE64.encode(&item.preview_content),
+            ContentType::Text | ContentType::Files => {
+                let length = std::str::from_utf8(&item.preview_content)
+                    .map_or_else(|error| error.valid_up_to(), |_| item.preview_content.len());
+                BASE64.encode(&item.preview_content[..length])
+            }
         };
 
         Self {
@@ -168,67 +195,85 @@ impl FrontendClipItem {
             group_name: item.group_name,
             source_app: item.source_app,
             has_html: item.has_html,
+            content_bytes: item.content_bytes,
+            file_count: item.file_count,
         }
     }
+}
 
-    /// Full-fidelity text mapping for the QuickBar preview pane. Text and Files
-    /// return their complete payload (Files so the pane can show the full path
-    /// list); images are intentionally rejected here: the UI reuses thumbnails
-    /// for images so full image payloads do not cross the JSON IPC boundary.
-    pub fn from_full_text(item: ClipItem) -> Option<Self> {
-        use data_encoding::BASE64;
-
-        if !matches!(item.content_type, ContentType::Text | ContentType::Files) {
-            return None;
-        }
-
-        let content = BASE64.encode(&item.content);
-        let has_html = item.html.is_some();
-
-        Some(Self {
-            id: item.id,
-            content,
-            content_type: item.content_type,
-            timestamp: item.timestamp,
-            is_pinned: item.is_pinned,
-            pin_order: item.pin_order,
-            label: item.label,
-            group_name: item.group_name,
-            source_app: item.source_app,
-            has_html,
-        })
-    }
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendClipDetail {
+    pub id: String,
+    pub content_type: ContentType,
+    pub text: String,
+    pub image_url: Option<String>,
+    pub truncated: bool,
 }
 
 pub struct ClipStorage {
     conn: Connection,
+    data_dir: PathBuf,
 }
 
 const CLIP_COLUMNS: &str =
     "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name, source_app, html";
+const FILES_TEXT_SQL: &str = "CASE WHEN content_type='files' AND json_valid(CAST(content AS TEXT))
+    THEN CAST(COALESCE((SELECT group_concat(value, char(10)) FROM json_each(CAST(content AS TEXT))), '') AS BLOB) ELSE content END";
 const CLIP_PREVIEW_COLUMNS: &str = "id,
-     CASE WHEN content_type IN ('text','files') THEN substr(content, 1, 4096) ELSE x'' END AS preview_content,
-     thumbnail,
-     content_type, timestamp, is_pinned, pin_order, label, group_name, source_app,
-     (html IS NOT NULL) AS has_html";
+     CASE WHEN content_type='text' THEN substr(content, 1, 4096)
+       WHEN content_type='files' THEN CASE WHEN json_valid(CAST(content AS TEXT))
+         THEN CAST(CASE WHEN json_array_length(CAST(content AS TEXT))>0 THEN json_array(substr(json_extract(CAST(content AS TEXT), '$[0]'), 1, 4096)) ELSE '[]' END AS BLOB)
+         ELSE substr(content, 1, 4096) END ELSE x'' END AS preview_content,
+     thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name, source_app,
+     (html IS NOT NULL) AS has_html, length(content) AS content_bytes,
+     CASE WHEN content_type='files' THEN CASE WHEN json_valid(CAST(content AS TEXT))
+       THEN json_array_length(CAST(content AS TEXT))
+       WHEN length(content)>0 THEN length(CAST(content AS TEXT))-length(replace(CAST(content AS TEXT),char(10),''))+1 ELSE 0 END
+       ELSE 0 END AS file_count";
 const FTS_REBUILD_BATCH_SIZE: i64 = 100;
 const TEXT_PREVIEW_BYTES: usize = 4096;
 
 impl ClipStorage {
     pub fn new(db_path: &Path) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        let data_dir =
+            data_dir_for_db_path(&fs::canonicalize(db_path).map_err(io_to_rusqlite_error)?);
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version > crate::migration::CURRENT_DB_USER_VERSION {
+            return Err(string_to_rusqlite_error(format!(
+                "Database format {version} is newer than this app supports"
+            )));
+        }
+        let existing: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='clips')",
+            [],
+            |row| row.get(0),
+        )?;
+        if existing && version < crate::migration::CURRENT_DB_USER_VERSION {
+            let backup_path = data_dir.join(format!("clipman.pre-v3-{}.db", uuid::Uuid::new_v4()));
+            backup_connection(&conn, &backup_path)?;
+            let legacy_key = data_dir.join(".clipman.key");
+            if legacy_key.exists() {
+                fs::copy(&legacy_key, backup_path.with_extension("key"))
+                    .map_err(io_to_rusqlite_error)?;
+            }
+            log::info!(
+                "Saved pre-upgrade database backup at {}",
+                backup_path.display()
+            );
+        }
         conn.pragma_update(None, "journal_mode", "WAL")?;
 
         Self::initialize_schema(&conn)?;
 
-        let data_dir = data_dir_for_db_path(db_path);
         let upgrade = crate::migration::upgrade_clip_database_to_current(&conn, &data_dir)
             .map_err(string_to_rusqlite_error)?;
 
         Self::initialize_fts(&conn)?;
         Self::ensure_incremental_auto_vacuum(&conn)?;
 
-        let storage = Self { conn };
+        let storage = Self { conn, data_dir };
         if upgrade.needs_fts_rebuild || storage.fts_needs_rebuild()? {
             storage.rebuild_fts_index()?;
             if upgrade.needs_fts_rebuild {
@@ -237,6 +282,20 @@ impl ClipStorage {
             }
         }
         Ok(storage)
+    }
+
+    pub fn data_directory(&self) -> &Path {
+        &self.data_dir
+    }
+
+    pub fn enforce_history_limit(&self, limit: usize) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let removed = Self::prune_history_with_conn(&tx, limit)?;
+        tx.commit()?;
+        if removed > 0 {
+            self.reclaim_space();
+        }
+        Ok(removed)
     }
 
     /// One-time migration to incremental auto_vacuum (§4). `auto_vacuum`
@@ -323,6 +382,7 @@ impl ClipStorage {
                 item.html.as_deref(),
                 item.source_app.as_deref(),
             )?;
+            Self::prune_history_with_conn(conn, max_history_items)?;
             return Ok(Some(id));
         }
 
@@ -375,7 +435,7 @@ impl ClipStorage {
     pub fn get_recent_clip_previews_page(
         &self,
         limit: usize,
-        before: Option<(i64, &str)>,
+        before: Option<(f64, &str)>,
     ) -> Result<Vec<ClipPreviewItem>> {
         let Some((before_timestamp, before_id)) = before else {
             return self.get_recent_clip_previews(limit);
@@ -426,7 +486,7 @@ impl ClipStorage {
     }
 
     pub fn search_clip_previews(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
-        log::info!("🔍 Searching previews for: {}", query);
+        log::debug!("Searching previews ({} characters)", query.chars().count());
 
         let query = query.trim();
         if query.is_empty() {
@@ -441,66 +501,13 @@ impl ClipStorage {
     }
 
     pub fn backup_to_path(&self, destination_db_path: &Path) -> Result<()> {
-        if let Some(parent) = destination_db_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(io_to_rusqlite_error)?;
-            }
-        }
-
-        let temp_db_path = temp_backup_path(destination_db_path);
-        remove_sqlite_database_files(&temp_db_path)?;
-
-        let backup_result = (|| -> Result<()> {
-            let mut destination = Connection::open(&temp_db_path)?;
-            let backup = rusqlite::backup::Backup::new(&self.conn, &mut destination)?;
-            backup.run_to_completion(5, Duration::from_millis(25), None)?;
-            Ok(())
-        })();
-
-        if let Err(error) = backup_result {
-            if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
-                log::warn!(
-                    "Failed to clean incomplete backup {}: {}",
-                    temp_db_path.display(),
-                    cleanup_error
-                );
-            }
-            return Err(error);
-        }
-
-        let mut staged_destination = stage_sqlite_files_for_replacement(destination_db_path)?;
-        if let Err(error) = fs::rename(&temp_db_path, destination_db_path) {
-            staged_destination.restore();
-            if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
-                log::warn!(
-                    "Failed to clean unused backup {}: {}",
-                    temp_db_path.display(),
-                    cleanup_error
-                );
-            }
-            return Err(io_to_rusqlite_error(error));
-        }
-        if let Err(cleanup_error) = remove_sqlite_sidecars(&temp_db_path) {
-            log::warn!(
-                "Failed to clean temporary backup sidecars for {}: {}",
-                temp_db_path.display(),
-                cleanup_error
-            );
-        }
-        if let Err(cleanup_error) = staged_destination.cleanup() {
-            log::warn!(
-                "Failed to clean replaced destination backup for {}: {}",
-                destination_db_path.display(),
-                cleanup_error
-            );
-        }
-
-        Ok(())
+        backup_connection(&self.conn, destination_db_path)
     }
 
-    pub fn update_pin(&self, id: &str, is_pinned: bool) -> Result<()> {
+    pub fn update_pin(&self, id: &str, is_pinned: bool, limit: usize) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         Self::update_pin_with_conn(&tx, id, is_pinned)?;
+        Self::prune_history_with_conn(&tx, limit)?;
         tx.commit()
     }
 
@@ -638,6 +645,84 @@ impl ClipStorage {
         stmt.query_row([id], Self::clip_from_row).optional()
     }
 
+    /// Bound preview bytes in SQL; paste paths continue to read the complete item.
+    pub fn get_detail(&self, id: &str) -> std::result::Result<Option<FrontendClipDetail>, String> {
+        const TEXT_LIMIT: usize = 1024 * 1024;
+        const IMAGE_LIMIT: usize = 16 * 1024 * 1024;
+        let result = self
+            .conn
+            .query_row(
+                &format!("WITH payload AS (SELECT content_type, {FILES_TEXT_SQL} AS data FROM clips WHERE id=?1)
+                 SELECT content_type, length(data), CASE WHEN content_type='image' THEN
+                   CASE WHEN length(data)<=?3 THEN data ELSE x'' END ELSE substr(data,1,?2) END FROM payload"),
+                params![id, TEXT_LIMIT, IMAGE_LIMIT],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, usize>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((kind, size, bytes)) = result else {
+            return Ok(None);
+        };
+        let content_type = ContentType::from_db_value(&kind);
+        let image = content_type == ContentType::Image;
+        if image && size > IMAGE_LIMIT {
+            return Err("Image exceeds the 16 MiB preview limit".into());
+        }
+        let truncated = !image && size > bytes.len();
+        let end = if truncated {
+            std::str::from_utf8(&bytes).map_or_else(|e| e.valid_up_to(), |_| bytes.len())
+        } else {
+            bytes.len()
+        };
+        Ok(Some(FrontendClipDetail {
+            id: id.into(),
+            content_type,
+            truncated,
+            text: if image {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&bytes[..end]).into_owned()
+            },
+            image_url: image.then(|| {
+                format!(
+                    "data:image/png;base64,{}",
+                    data_encoding::BASE64.encode(&bytes)
+                )
+            }),
+        }))
+    }
+
+    /// Merge needs metadata but never the original bytes of skipped images.
+    pub fn get_for_merge(&self, id: &str, budget: usize) -> Result<Option<ClipItem>> {
+        let size: Option<usize> = self.conn.query_row(
+            "SELECT CASE WHEN content_type='image' THEN 0 ELSE length(content) END FROM clips WHERE id=?1", [id], |row| row.get(0)
+        ).optional()?;
+        if size.is_some_and(|size| size > budget) {
+            return Err(string_to_rusqlite_error(
+                "Merge exceeds the 50 MB content limit".into(),
+            ));
+        }
+        let columns = CLIP_COLUMNS.replacen(
+            "content,",
+            "CASE WHEN content_type = 'image' THEN x'' ELSE content END,",
+            1,
+        );
+        let columns = columns.replace("thumbnail,", "NULL,").replace(
+            "label, group_name, source_app, html",
+            "NULL, NULL, NULL, NULL",
+        );
+        self.conn
+            .prepare(&format!("SELECT {columns} FROM clips WHERE id = ?1"))?
+            .query_row([id], Self::clip_from_row)
+            .optional()
+    }
+
     pub fn get_preview_by_id(&self, id: &str) -> Result<Option<ClipPreviewItem>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {CLIP_PREVIEW_COLUMNS}
@@ -648,21 +733,11 @@ impl ClipStorage {
         stmt.query_row([id], Self::preview_from_row).optional()
     }
 
-    /// Update the timestamp of a clip item (move it to the top of recent list)
-    pub fn update_timestamp(&self, id: &str, new_timestamp: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE clips SET timestamp = ?1 WHERE id = ?2",
-            params![new_timestamp, id],
-        )?;
-        log::debug!("📍 Updated timestamp for item {}", id);
-        Ok(())
-    }
-
     /// Bump several clips' timestamps to the same value in a single transaction,
     /// so a merge paste moves every touched clip to the top of the recent list
     /// with one write instead of one round-trip (and one prepared statement) per
-    /// clip (#38). The single-clip path keeps using `update_timestamp`.
-    pub fn touch_timestamps(&self, ids: &[String], new_timestamp: i64) -> Result<()> {
+    /// clip (#38). Single and merge use the same update path.
+    pub fn touch_timestamps(&self, ids: &[String], new_timestamp: f64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare("UPDATE clips SET timestamp = ?1 WHERE id = ?2")?;
@@ -680,7 +755,7 @@ impl ClipStorage {
     fn refresh_duplicate_with_conn(
         conn: &Connection,
         id: &str,
-        new_timestamp: i64,
+        new_timestamp: f64,
         html: Option<&str>,
         source_app: Option<&str>,
     ) -> Result<()> {
@@ -837,6 +912,8 @@ impl ClipStorage {
             group_name: row.get(8)?,
             source_app: row.get(9)?,
             has_html: row.get::<_, i32>(10)? != 0,
+            content_bytes: row.get(11)?,
+            file_count: row.get(12)?,
         })
     }
 
@@ -844,8 +921,8 @@ impl ClipStorage {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {CLIP_PREVIEW_COLUMNS}
              FROM clips
-             ORDER BY timestamp DESC
-             LIMIT 1000"
+             ORDER BY timestamp DESC, id DESC
+             LIMIT 1001"
         ))?;
 
         let items = stmt.query_map([], Self::preview_from_row)?;
@@ -854,35 +931,40 @@ impl ClipStorage {
 
     fn search_previews_with_fts(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
         let fts_query = escape_fts_query(query);
+        let columns = CLIP_PREVIEW_COLUMNS.replace("substr(content, 1, 4096)",
+            "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)");
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
-             WHERE (rowid, id) IN (
-                SELECT rowid, clip_id FROM clips_fts WHERE clips_fts MATCH ?1
+             WHERE rowid IN (
+                SELECT rowid FROM clips WHERE (rowid, id) IN (
+                    SELECT rowid, clip_id FROM clips_fts WHERE clips_fts MATCH ?1
+                ) ORDER BY timestamp DESC, id DESC LIMIT 1001
              )
-             ORDER BY timestamp DESC
-             LIMIT 1000"
+             ORDER BY timestamp DESC, id DESC"
         ))?;
 
-        let items = stmt.query_map([fts_query], Self::preview_from_row)?;
+        let items = stmt.query_map(params![fts_query, query], Self::preview_from_row)?;
         items.collect()
     }
 
     fn search_previews_with_like(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
         let like_query = format!("%{}%", escape_like_query(query));
+        let columns = CLIP_PREVIEW_COLUMNS.replace("substr(content, 1, 4096)",
+            "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)");
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              WHERE (
                 content_type IN ('text','files')
-                AND CAST(substr(content, 1, {TEXT_PREVIEW_BYTES}) AS TEXT) LIKE ?1 ESCAPE '\\'
+                AND CAST(({FILES_TEXT_SQL}) AS TEXT) LIKE ?1 ESCAPE '\\'
              )
              OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
-             ORDER BY timestamp DESC
-             LIMIT 1000"
+             ORDER BY timestamp DESC, id DESC
+             LIMIT 1001"
         ))?;
 
-        let items = stmt.query_map([like_query], Self::preview_from_row)?;
+        let items = stmt.query_map(params![like_query, query], Self::preview_from_row)?;
         items.collect()
     }
 
@@ -1003,34 +1085,38 @@ struct FtsPayload {
     label: Option<String>,
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
-/// Canonical on-disk representation of a Files clip: absolute paths joined by
-/// newlines (D3). Newlines are illegal in a single path entry, so this is a
-/// lossless, FTS-friendly encoding.
+/// Lossless file-list storage and self-copy marker representation.
+pub fn encode_file_paths(paths: &[String]) -> String {
+    serde_json::to_string(paths).expect("a list of strings is JSON serializable")
+}
+
+/// Human-readable path text, used only for merge/fallback display.
 pub fn join_file_paths(paths: &[String]) -> String {
     paths.join("\n")
 }
 
-/// Inverse of [`join_file_paths`]: split newline-joined paths, dropping blank
-/// lines so a trailing newline or accidental gap never yields an empty path.
+/// Read v3 JSON arrays and legacy newline-separated records.
 pub fn split_file_paths(content: &str) -> Vec<String> {
-    content
-        .split('\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| line.to_string())
-        .collect()
+    serde_json::from_str::<Vec<String>>(content).unwrap_or_else(|_| {
+        content
+            .split('\n')
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
     match content_type {
-        // Files store their paths as newline-joined text, so they index and
-        // search exactly like text (search by path).
-        ContentType::Text | ContentType::Files => String::from_utf8_lossy(content).into_owned(),
+        // Search file records through their decoded, human-readable paths.
+        ContentType::Text => String::from_utf8_lossy(content).into_owned(),
+        ContentType::Files => join_file_paths(&split_file_paths(&String::from_utf8_lossy(content))),
         ContentType::Image => String::new(),
     }
 }
@@ -1065,6 +1151,64 @@ fn string_to_rusqlite_error(error: String) -> rusqlite::Error {
 
 fn io_to_rusqlite_error(error: std::io::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+fn backup_connection(conn: &Connection, destination_db_path: &Path) -> Result<()> {
+    if let Some(parent) = destination_db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(io_to_rusqlite_error)?;
+        }
+    }
+
+    let temp_db_path = temp_backup_path(destination_db_path);
+    remove_sqlite_database_files(&temp_db_path)?;
+
+    let backup_result = (|| -> Result<()> {
+        let mut destination = Connection::open(&temp_db_path)?;
+        let backup = rusqlite::backup::Backup::new(conn, &mut destination)?;
+        backup.run_to_completion(512, Duration::from_millis(1), None)?;
+        Ok(())
+    })();
+
+    if let Err(error) = backup_result {
+        if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
+            log::warn!(
+                "Failed to clean incomplete backup {}: {}",
+                temp_db_path.display(),
+                cleanup_error
+            );
+        }
+        return Err(error);
+    }
+
+    let mut staged_destination = stage_sqlite_files_for_replacement(destination_db_path)?;
+    if let Err(error) = fs::rename(&temp_db_path, destination_db_path) {
+        staged_destination.restore();
+        if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
+            log::warn!(
+                "Failed to clean unused backup {}: {}",
+                temp_db_path.display(),
+                cleanup_error
+            );
+        }
+        return Err(io_to_rusqlite_error(error));
+    }
+    if let Err(cleanup_error) = remove_sqlite_sidecars(&temp_db_path) {
+        log::warn!(
+            "Failed to clean temporary backup sidecars for {}: {}",
+            temp_db_path.display(),
+            cleanup_error
+        );
+    }
+    if let Err(cleanup_error) = staged_destination.cleanup() {
+        log::warn!(
+            "Failed to clean replaced destination backup for {}: {}",
+            destination_db_path.display(),
+            cleanup_error
+        );
+    }
+
+    Ok(())
 }
 
 fn temp_backup_path(destination_db_path: &Path) -> PathBuf {
@@ -1238,7 +1382,7 @@ mod tests {
             content: content.to_vec(),
             thumbnail: None,
             content_type: ContentType::Text,
-            timestamp,
+            timestamp: timestamp as f64,
             is_pinned,
             pin_order,
             label: None,
@@ -1246,6 +1390,170 @@ mod tests {
             source_app: None,
             html: None,
         }
+    }
+
+    #[test]
+    fn history_limit_applies_to_recopies_unpins_and_delayed_images() {
+        let root = std::env::temp_dir().join(format!("clipman-limit-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
+        for i in 0..3 {
+            storage
+                .insert(&test_item(&i.to_string(), &[i as u8], i, false, None), 3)
+                .unwrap();
+        }
+        storage
+            .insert(&test_item("recopy", &[2], 4, false, None), 1)
+            .unwrap();
+        assert_eq!(storage.get_recent_clip_previews(10).unwrap().len(), 1);
+        storage
+            .insert(&test_item("pin", b"pin", 1, true, Some(1)), 1)
+            .unwrap();
+        storage.update_pin("pin", false, 1).unwrap();
+        assert!(storage.get_by_id("pin").unwrap().is_none());
+        let old_image = ClipItem {
+            content_type: ContentType::Image,
+            ..test_item("late", b"image", 0, false, None)
+        };
+        storage.insert(&old_image, 1).unwrap();
+        assert!(storage.get_preview_by_id("late").unwrap().is_none());
+        assert_eq!(storage.enforce_history_limit(0).unwrap(), 1);
+        assert!(storage.search_clip_previews("").unwrap().is_empty());
+        drop(storage);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn v3_upgrade_backs_up_then_converts_files_once_and_rejects_newer_formats() {
+        let root = std::env::temp_dir().join(format!("clipman-upgrade-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("clipman.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            ClipStorage::initialize_schema(&conn).unwrap();
+            conn.execute("INSERT INTO clips(id,content,content_type,timestamp,is_pinned) VALUES('legacy',?1,'files',1,1)", [b"/tmp/first.txt\n/tmp/second.txt".as_slice()]).unwrap();
+            conn.pragma_update(None, "user_version", 2).unwrap();
+        }
+        let storage = ClipStorage::new(&path).unwrap();
+        let backups = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| {
+                let p = e.unwrap().path();
+                p.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("clipman.pre-v3-")
+                    .then_some(p)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        let backup = Connection::open(&backups[0]).unwrap();
+        assert_eq!(
+            backup
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        let old: Vec<u8> = backup
+            .query_row("SELECT content FROM clips WHERE id='legacy'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(old, b"/tmp/first.txt\n/tmp/second.txt");
+        let paths = vec!["/tmp/first.txt".to_string(), "/tmp/second.txt".to_string()];
+        assert_eq!(
+            storage.get_by_id("legacy").unwrap().unwrap().content,
+            encode_file_paths(&paths).as_bytes()
+        );
+        assert_eq!(
+            storage.get_detail("legacy").unwrap().unwrap().text,
+            join_file_paths(&paths)
+        );
+        drop(backup);
+        drop(storage);
+        let reopened = ClipStorage::new(&path).unwrap();
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter(|e| e
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("clipman.pre-v3-"))
+                .count(),
+            1
+        );
+        reopened
+            .conn
+            .pragma_update(None, "user_version", 99)
+            .unwrap();
+        drop(reopened);
+        assert!(ClipStorage::new(&path).is_err());
+        assert_eq!(
+            Connection::open(&path)
+                .unwrap()
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            99
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn json_file_paths_and_bounded_merge_reads_preserve_content() {
+        let root = std::env::temp_dir().join(format!("clipman-paths-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
+        let paths = vec!["/tmp/one\ntwo.txt".to_string(), "/tmp/quote\".txt".into()];
+        let payload = encode_file_paths(&paths);
+        assert_eq!(split_file_paths(&payload), paths);
+        let item = ClipItem {
+            content_type: ContentType::Files,
+            ..test_item("files", payload.as_bytes(), 1, false, None)
+        };
+        storage.insert(&item, 100).unwrap();
+        let preview = storage.get_preview_by_id("files").unwrap().unwrap();
+        assert_eq!(preview.file_count, 2);
+        assert_eq!(
+            split_file_paths(std::str::from_utf8(&preview.preview_content).unwrap()),
+            paths[..1]
+        );
+        assert_eq!(
+            storage.get_detail("files").unwrap().unwrap().text,
+            join_file_paths(&paths)
+        );
+        assert!(!storage.get_detail("files").unwrap().unwrap().truncated);
+        assert_eq!(storage.search_clip_previews("two").unwrap().len(), 1);
+        assert_eq!(storage.search_clip_previews("tw").unwrap().len(), 1);
+        assert!(storage.get_for_merge("files", 1).is_err());
+        assert_eq!(
+            storage
+                .get_for_merge("files", payload.len())
+                .unwrap()
+                .unwrap()
+                .content,
+            payload.as_bytes()
+        );
+        drop(storage);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_data_directory_follows_the_opened_database_symlink() {
+        let root = std::env::temp_dir().join(format!("clipman-active-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let actual = root.join("actual");
+        fs::create_dir(&actual).unwrap();
+        drop(ClipStorage::new(&actual.join("clipman.db")).unwrap());
+        let alias = root.join("alias.db");
+        std::os::unix::fs::symlink(actual.join("clipman.db"), &alias).unwrap();
+        let storage = ClipStorage::new(&alias).unwrap();
+        assert_eq!(storage.data_directory(), fs::canonicalize(&actual).unwrap());
+        drop(storage);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn labeled_item(id: &str, content: &[u8], label: &str, timestamp: i64) -> ClipItem {
@@ -1411,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn short_search_query_only_scans_preview_window() {
+    fn short_search_query_matches_beyond_preview_window() {
         let db_path = temp_db_path("short_query_preview_window");
         let storage = ClipStorage::new(&db_path).unwrap();
         let mut content = vec![b'a'; TEXT_PREVIEW_BYTES];
@@ -1428,7 +1736,7 @@ mod tests {
             .map(|item| item.id)
             .collect();
 
-        assert!(search_ids.is_empty());
+        assert_eq!(search_ids, vec!["long"]);
         drop(storage);
         cleanup_db(&db_path);
     }
@@ -1497,13 +1805,13 @@ mod tests {
         storage
             .touch_timestamps(
                 &["a".to_string(), "b".to_string(), "missing".to_string()],
-                99,
+                99.0,
             )
             .unwrap();
 
-        assert_eq!(storage.get_by_id("a").unwrap().unwrap().timestamp, 99);
-        assert_eq!(storage.get_by_id("b").unwrap().unwrap().timestamp, 99);
-        assert_eq!(storage.get_by_id("c").unwrap().unwrap().timestamp, 30);
+        assert_eq!(storage.get_by_id("a").unwrap().unwrap().timestamp, 99.0);
+        assert_eq!(storage.get_by_id("b").unwrap().unwrap().timestamp, 99.0);
+        assert_eq!(storage.get_by_id("c").unwrap().unwrap().timestamp, 30.0);
 
         // Both touched clips now sort above the untouched one; the id DESC
         // tiebreak orders the two equal-timestamp clips (b before a).
@@ -1570,7 +1878,7 @@ mod tests {
 
         assert_eq!(Some("pinned".to_string()), duplicate_id);
         assert_eq!("pinned", stored.id);
-        assert_eq!(20, stored.timestamp);
+        assert_eq!(20.0, stored.timestamp);
         assert!(stored.is_pinned);
         assert_eq!(Some(2), stored.pin_order);
         assert_eq!(Some("favorite".to_string()), stored.label);
@@ -1803,6 +2111,51 @@ mod tests {
     }
 
     #[test]
+    fn fractional_seconds_preserve_capture_recopy_and_paste_order_with_legacy_rows() {
+        let path = temp_db_path("subsecond_order");
+        let storage = ClipStorage::new(&path).unwrap();
+        // Legacy INTEGER seconds remain readable alongside fractional seconds.
+        storage
+            .insert(&test_item("legacy", b"legacy", 100, false, None), 100)
+            .unwrap();
+        let mut first = test_item("z-first", b"first", 100, false, None);
+        first.timestamp = 100.1;
+        let mut next = test_item("a-next", b"next", 100, false, None);
+        next.timestamp = 100.2;
+        storage.insert(&first, 100).unwrap();
+        storage.insert(&next, 100).unwrap();
+        let page = storage.get_recent_clip_previews_page(1, None).unwrap();
+        assert_eq!(page[0].id, "a-next");
+        let rest = storage
+            .get_recent_clip_previews_page(10, Some((page[0].timestamp, &page[0].id)))
+            .unwrap();
+        assert_eq!(
+            rest.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["z-first", "legacy"]
+        );
+        first.timestamp = 100.3;
+        storage.insert(&first, 100).unwrap();
+        assert_eq!(
+            storage.get_recent_clip_previews(1).unwrap()[0].id,
+            "z-first"
+        );
+        storage.touch_timestamps(&[next.id], 100.4).unwrap();
+        assert_eq!(storage.get_recent_clip_previews(1).unwrap()[0].id, "a-next");
+        drop(storage);
+        let reopened = ClipStorage::new(&path).unwrap();
+        assert_eq!(
+            reopened.get_by_id("legacy").unwrap().unwrap().timestamp,
+            100.0
+        );
+        assert_eq!(
+            reopened.get_by_id("a-next").unwrap().unwrap().timestamp,
+            100.4
+        );
+        drop(reopened);
+        cleanup_db(&path);
+    }
+
+    #[test]
     fn keyset_pagination_covers_duplicate_timestamps_without_loss_or_repeat() {
         let db_path = temp_db_path("keyset_duplicate_timestamps");
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -1824,7 +2177,7 @@ mod tests {
 
         let page_size = 2;
         let mut collected: Vec<String> = Vec::new();
-        let mut cursor: Option<(i64, String)> = None;
+        let mut cursor: Option<(f64, String)> = None;
         loop {
             let before = cursor.as_ref().map(|(ts, id)| (*ts, id.as_str()));
             let page = storage
@@ -1922,7 +2275,12 @@ mod tests {
                 params![rowid],
             )
             .unwrap();
-            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.pragma_update(
+                None,
+                "user_version",
+                crate::migration::CURRENT_DB_USER_VERSION,
+            )
+            .unwrap();
         }
 
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -1970,7 +2328,12 @@ mod tests {
                 params![rowid],
             )
             .unwrap();
-            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.pragma_update(
+                None,
+                "user_version",
+                crate::migration::CURRENT_DB_USER_VERSION,
+            )
+            .unwrap();
         }
 
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -2045,7 +2408,12 @@ mod tests {
             }
             conn.execute("DELETE FROM clips WHERE id IN ('clip-010', 'clip-077')", [])
                 .unwrap();
-            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.pragma_update(
+                None,
+                "user_version",
+                crate::migration::CURRENT_DB_USER_VERSION,
+            )
+            .unwrap();
         }
 
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -2100,7 +2468,7 @@ mod tests {
                     content: b"full image payload".to_vec(),
                     thumbnail: Some(b"thumbnail".to_vec()),
                     content_type: ContentType::Image,
-                    timestamp: 2,
+                    timestamp: 2.0,
                     is_pinned: false,
                     pin_order: None,
                     label: None,
@@ -2154,29 +2522,157 @@ mod tests {
         cleanup_db(&db_path);
     }
 
+    /// Synthetic data only. Run with `cargo test --release search_latency_baseline -- --ignored --nocapture`.
     #[test]
-    fn full_text_mapping_returns_complete_text_payload() {
-        use data_encoding::BASE64;
-
-        let mut long_text = vec![b'a'; TEXT_PREVIEW_BYTES];
-        long_text.extend(vec![b'b'; 128]);
-        let item = test_item("text", &long_text, 1, false, None);
-
-        let full = FrontendClipItem::from_full_text(item).unwrap();
-
-        assert_eq!(BASE64.encode(&long_text), full.content);
-        assert_eq!(ContentType::Text, full.content_type);
+    #[ignore]
+    fn search_latency_baseline() {
+        let path = temp_db_path("search_latency");
+        let storage = ClipStorage::new(&path).unwrap();
+        let mut previous = 0;
+        for total in [100, 1000, 10_000] {
+            let tx = storage.conn.unchecked_transaction().unwrap();
+            for count in previous + 1..=total {
+                let mut item = test_item(&format!("clip-{count}"), b"", count, false, None);
+                item.content_type = match count % 10 {
+                    0 => ContentType::Image,
+                    1 => ContentType::Files,
+                    _ => ContentType::Text,
+                };
+                item.content = match item.content_type {
+                    ContentType::Image => vec![0; 1024],
+                    ContentType::Files => format!("/tmp/report-{count}.txt").into_bytes(),
+                    ContentType::Text => format!(
+                        "{}needle-{count}中文",
+                        "x".repeat(if count % 20 == 2 { 65536 } else { 256 })
+                    )
+                    .into_bytes(),
+                };
+                ClipStorage::insert_with_conn(&tx, &item, 10_000).unwrap();
+            }
+            tx.commit().unwrap();
+            previous = total;
+            let count = total;
+            for query in ["中", "zz", "needle-99", "missing", "needle"] {
+                let mut samples = Vec::new();
+                for _ in 0..20 {
+                    let start = std::time::Instant::now();
+                    let result = storage.search_clip_previews(query).unwrap();
+                    assert!(result.len() <= 1001);
+                    samples.push(start.elapsed().as_secs_f64() * 1000.0);
+                }
+                samples.sort_by(f64::total_cmp);
+                println!(
+                    "rows={count} query={query:?} p50={:.2}ms p95={:.2}ms",
+                    samples[10], samples[18]
+                );
+            }
+        }
+        drop(storage);
+        cleanup_db(&path);
     }
 
     #[test]
-    fn full_text_mapping_rejects_image_payloads() {
-        let item = ClipItem {
+    fn merge_read_omits_original_images_but_keeps_text() {
+        let path = temp_db_path("merge_read");
+        let storage = ClipStorage::new(&path).unwrap();
+        let image = ClipItem {
             content_type: ContentType::Image,
-            thumbnail: Some(b"thumbnail".to_vec()),
-            ..test_item("image", b"full image payload", 1, false, None)
+            ..test_item("image", &vec![7; 1_000_000], 1, false, None)
         };
+        storage.insert(&image, 100).unwrap();
+        storage
+            .insert(&test_item("text", b"complete text", 2, false, None), 100)
+            .unwrap();
+        assert!(storage
+            .get_for_merge("image", 100)
+            .unwrap()
+            .unwrap()
+            .content
+            .is_empty());
+        assert_eq!(
+            storage.get_for_merge("text", 100).unwrap().unwrap().content,
+            b"complete text"
+        );
+        drop(storage);
+        cleanup_db(&path);
+    }
 
-        assert!(FrontendClipItem::from_full_text(item).is_none());
+    #[test]
+    fn preview_encoding_does_not_split_utf8() {
+        let item = test_item("unicode", "中".repeat(2000).as_bytes(), 1, false, None);
+        let preview = FrontendClipItem::from_preview(ClipPreviewItem::from_clip_item(&item));
+        let bytes = data_encoding::BASE64
+            .decode(preview.content.as_bytes())
+            .unwrap();
+        assert!(std::str::from_utf8(&bytes).is_ok());
+        assert_eq!(bytes.len(), 4095);
+        assert_eq!(preview.content_bytes, 6000);
+    }
+
+    #[test]
+    fn search_returns_excerpt_around_a_late_match() {
+        let path = temp_db_path("late_excerpt");
+        let storage = ClipStorage::new(&path).unwrap();
+        let content = format!("{}needle中", "a".repeat(5000));
+        storage
+            .insert(&test_item("late", content.as_bytes(), 1, false, None), 100)
+            .unwrap();
+        for query in ["needle", "中"] {
+            let result = storage.search_clip_previews(query).unwrap();
+            assert!(String::from_utf8_lossy(&result[0].preview_content).contains(query));
+            assert_eq!(result[0].content_bytes, content.len());
+        }
+        drop(storage);
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn detail_bounds_payloads_without_changing_stored_content() {
+        let path = temp_db_path("detail_bounds");
+        let storage = ClipStorage::new(&path).unwrap();
+        let text = "中".repeat(400_000);
+        storage
+            .insert(&test_item("text", text.as_bytes(), 1, false, None), 100)
+            .unwrap();
+        let detail = storage.get_detail("text").unwrap().unwrap();
+        assert!(detail.truncated);
+        assert_eq!(detail.text.len(), 1024 * 1024 - 1);
+        assert!(text.starts_with(&detail.text));
+        assert_eq!(
+            storage.get_by_id("text").unwrap().unwrap().content,
+            text.as_bytes()
+        );
+        storage
+            .insert(&test_item("small", b"complete", 2, false, None), 100)
+            .unwrap();
+        assert!(!storage.get_detail("small").unwrap().unwrap().truncated);
+        assert_eq!(
+            storage.get_detail("small").unwrap().unwrap().text,
+            "complete"
+        );
+        let image = ClipItem {
+            content_type: ContentType::Image,
+            ..test_item("image", b"image bytes", 3, false, None)
+        };
+        storage.insert(&image, 100).unwrap();
+        assert!(storage
+            .get_detail("image")
+            .unwrap()
+            .unwrap()
+            .image_url
+            .is_some());
+        // Oversized BLOB is never returned to Rust by the detail projection.
+        storage
+            .conn
+            .execute(
+                "UPDATE clips SET content = zeroblob(?1) WHERE id = 'image'",
+                [16 * 1024 * 1024 + 1],
+            )
+            .unwrap();
+        assert!(storage.get_detail("image").unwrap_err().contains("16 MiB"));
+        assert!(storage.get_detail("missing").unwrap().is_none());
+        drop(storage);
+        cleanup_db(&path);
     }
 
     #[test]
@@ -2356,7 +2852,7 @@ mod tests {
                 .map(|item| item.id.clone())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(4096, previews[0].preview_content.len());
+        assert!(previews[0].preview_content.len() <= 2048);
 
         drop(storage);
         cleanup_db(&db_path);
@@ -2493,7 +2989,7 @@ mod tests {
         let after_plain = storage.get_by_id("rich").unwrap().unwrap();
         assert_eq!(Some("<b>hello</b>".to_string()), after_plain.html);
         assert_eq!(Some("Browser".to_string()), after_plain.source_app);
-        assert_eq!(2, after_plain.timestamp);
+        assert_eq!(2.0, after_plain.timestamp);
 
         // A newer rich re-copy wins and replaces the stored metadata.
         storage

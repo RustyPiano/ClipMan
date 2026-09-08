@@ -16,7 +16,7 @@ export interface ClipItem {
   /** Base64 encoded content or data URL for images */
   content: string;
   contentType: ContentType;
-  /** Unix timestamp in seconds */
+  /** Unix seconds, including the fractional part for chronological ordering. */
   timestamp: number;
   isPinned: boolean;
   pinOrder: number | null;
@@ -26,6 +26,17 @@ export interface ClipItem {
   sourceApp: string | null;
   /** Whether a text clip carries an HTML (rich-text) companion. */
   hasHtml: boolean;
+  contentBytes?: number;
+  fileCount?: number;
+}
+
+/** Bounded, decoded content fetched only for a selected preview. */
+export interface ClipDetail {
+  id: string;
+  contentType: ContentType;
+  text: string;
+  imageUrl: string | null;
+  truncated: boolean;
 }
 
 /**
@@ -91,11 +102,6 @@ export interface Toast {
   message: string;
   type: ToastType;
 }
-
-/**
- * Router routes
- */
-export type Route = 'home' | 'settings';
 
 /**
  * Settings page tabs

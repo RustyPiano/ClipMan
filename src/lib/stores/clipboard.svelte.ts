@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { SvelteSet } from 'svelte/reactivity';
+import { selectionStore } from './selection.svelte';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
-import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
+import type { ClipItem, ClipDetail, PasteMode, ReorderDirection } from '$lib/types';
 import {
   applyClipboardChanged,
   getPinnedDisplayItems,
@@ -23,11 +23,6 @@ interface ClearSearchOptions {
   reload?: boolean;
 }
 
-interface IncomingItemEvent {
-  revision: number;
-  item: ClipItem;
-}
-
 const QUICKBAR_HIDDEN_EVENT = 'quickbar-hidden';
 
 class ClipboardStore {
@@ -40,30 +35,29 @@ class ClipboardStore {
   isSearchPending = $state(false);
   historyError = $state<string | null>(null);
   searchError = $state<string | null>(null);
-  // Keyset pagination of the recent list: `recentItems` accumulates pages of
-  // unpinned clips ordered (timestamp DESC, id DESC). `hasMoreRecent` gates the
-  // scroll/keyboard "load more" trigger; `isLoadingMore` debounces it.
+  // Recent pages accumulate until a deliberate session/panel reset.
   hasMoreRecent = $state(false);
   isLoadingMore = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
-  // Multi-select set for merge paste (task #13). Insertion order == selection
-  // order, which the backend merge preserves. SvelteSet makes membership/size
-  // reads reactive so the list and footer update as items toggle. Cleared at the
-  // deliberate reset points (panel switch / quickbar refresh / search / hide).
-  selectedIds = new SvelteSet<string>();
+  isUsing = $state(false);
+  useNotice = $state('');
+  capturePaused = $state(false);
+  searchHasMore = $state(false);
+  private pageRequests = new RequestSequencer();
+  private pendingSearch: Promise<void> | null = null;
+  private pendingSearchQuery = '';
   private static readonly PAGE_SIZE = 100;
   private historyRequests = new RequestSequencer();
   private searchRequests = new RequestSequencer();
-  private incomingRevision = 0;
-  private incomingEvents: IncomingItemEvent[] = [];
-  // Full-text cache for the preview pane, keyed by id. A clip's content is
-  // immutable for a given id (only label/pin/timestamp change), so entries are
-  // only dropped when the clip is deleted/cleared. Images are not cached — the
-  // preview reuses the 256px thumbnail the list already holds, so large image
-  // data URLs never accumulate in renderer memory.
-  private fullClipCache = new Map<string, ClipItem>();
-  private static readonly FULL_CLIP_CACHE_LIMIT = 100;
+  private historyPending = false;
+  private pendingReload: Promise<void> | null = null;
+  private reloadNeeded = false;
+  private incomingEvents: ClipItem[] = [];
+  // One bounded cache of decoded details; original images are never cached.
+  private cacheRevision = 0;
+  private fullClipCache = new Map<string, ClipDetail>();
+  private static readonly FULL_CLIP_CACHE_LIMIT = 16;
   // Skip caching very large payloads to bound memory; they re-fetch on demand
   // (rare, and only one item is previewed at a time).
   private static readonly MAX_CACHEABLE_CONTENT_LENGTH = 256 * 1024;
@@ -97,6 +91,12 @@ class ClipboardStore {
 
     // Subscribe before the first query. Any copy that lands while history is
     // loading is recorded and replayed over the response by loadHistory.
+    await listen('clips-used', () => {
+      void this.reloadFromBackend();
+    });
+    await listen('settings-changed', () => {
+      void this.refreshSettings();
+    });
     await listen<ClipItem>('clipboard-changed', async (event) => {
       if (this.searchQuery.trim()) {
         await this.reloadFromBackend();
@@ -107,14 +107,16 @@ class ClipboardStore {
     });
 
     await listen('history-cleared', async () => {
+      this.cacheRevision += 1;
       this.fullClipCache.clear();
-      this.clearSelection();
+      selectionStore.clearSelection();
       await this.reloadFromBackend();
     });
 
     await listen(QUICKBAR_HIDDEN_EVENT, () => {
-      this.clearSelection();
+      selectionStore.reset();
       void this.clearSearch({ reload: false });
+      this.resetRecentPagination();
     });
 
     await this.refreshSettings();
@@ -129,7 +131,10 @@ class ClipboardStore {
 
     const showLoading = options.showLoading ?? true;
     const requestId = this.historyRequests.next();
-    const startIncomingRevision = this.incomingRevision;
+    this.pageRequests.next();
+    this.isLoadingMore = false;
+    this.historyPending = true;
+    this.incomingEvents = [];
 
     if (showLoading) {
       this.isLoading = true;
@@ -155,11 +160,14 @@ class ClipboardStore {
         const hasMore = recentRaw.length > pageLimit;
         const recent = hasMore ? recentRaw.slice(0, pageLimit) : recentRaw;
 
-        const nextItems = this.replayIncomingItemsSince({
-          recentItems: recent,
-          pinnedItems: pinned,
-          revision: startIncomingRevision,
-        });
+        let nextItems = { recentItems: recent, pinnedItems: pinned };
+        for (const incoming of this.incomingEvents) {
+          nextItems = applyClipboardChanged({
+            ...nextItems,
+            incoming,
+            maxHistoryItems: this.maxHistoryItems,
+          });
+        }
 
         this.recentItems = nextItems.recentItems;
         this.pinnedItems = nextItems.pinnedItems;
@@ -184,6 +192,8 @@ class ClipboardStore {
       // manages isSearchPending, so the spinner never went away.
       if (this.historyRequests.isCurrent(requestId)) {
         this.isLoading = false;
+        this.historyPending = false;
+        this.incomingEvents = [];
       }
     }
   }
@@ -208,9 +218,8 @@ class ClipboardStore {
 
     this.isLoadingMore = true;
     this.historyError = null;
-    // Share the history sequencer so a reset (loadHistory / resetRecentPagination)
-    // that lands mid-fetch supersedes this page and it drops its stale write.
-    const requestId = this.historyRequests.next();
+    // Page resets invalidate append requests without cancelling the initial load.
+    const requestId = this.pageRequests.next();
 
     try {
       // limit + 1: the sentinel row past the page is the authoritative "there is
@@ -222,7 +231,7 @@ class ClipboardStore {
         beforeId: cursor.id,
       });
 
-      if (!this.historyRequests.isCurrent(requestId)) return;
+      if (!this.pageRequests.isCurrent(requestId)) return;
 
       const hasMore = page.length > ClipboardStore.PAGE_SIZE;
       const pageItems = hasMore ? page.slice(0, ClipboardStore.PAGE_SIZE) : page;
@@ -236,13 +245,13 @@ class ClipboardStore {
       this.hasMoreRecent = hasMore;
       this.historyError = null;
     } catch (error) {
-      if (this.historyRequests.isCurrent(requestId)) {
+      if (this.pageRequests.isCurrent(requestId)) {
         console.error('[ERROR] Failed to load more clipboard history:', error);
         this.historyError = error instanceof Error ? error.message : String(error);
         toastStore.add(`${i18n.t.history}: ${this.historyError}`, 'error');
       }
     } finally {
-      if (this.historyRequests.isCurrent(requestId)) {
+      if (this.pageRequests.isCurrent(requestId)) {
         this.isLoadingMore = false;
       }
     }
@@ -255,7 +264,7 @@ class ClipboardStore {
    * scroll accumulated, and supersedes any in-flight page load.
    */
   resetRecentPagination() {
-    this.historyRequests.next();
+    this.pageRequests.next();
     this.isLoadingMore = false;
     if (this.recentItems.length > ClipboardStore.PAGE_SIZE) {
       this.recentItems = this.recentItems.slice(0, ClipboardStore.PAGE_SIZE);
@@ -267,10 +276,13 @@ class ClipboardStore {
     if (!hasTauriRuntime()) return;
 
     try {
-      const settings = await invoke<{ autoPaste: boolean; maxHistoryItems: number }>(
-        'get_settings'
-      );
+      const settings = await invoke<{
+        autoPaste: boolean;
+        maxHistoryItems: number;
+        capturePaused: boolean;
+      }>('get_settings');
       this.autoPaste = settings.autoPaste;
+      this.capturePaused = settings.capturePaused;
       this.maxHistoryItems = settings.maxHistoryItems;
     } catch (error) {
       console.error('Failed to refresh settings:', error);
@@ -281,6 +293,8 @@ class ClipboardStore {
     // Empty input is routed to clearSearch by SearchBar; this only stages a
     // non-empty draft.
     this.searchRequests.next();
+    this.pendingSearch = null;
+    selectionStore.cancelUse();
     this.searchQuery = query;
     this.isSearchPending = hasTauriRuntime();
     this.searchError = null;
@@ -288,12 +302,33 @@ class ClipboardStore {
 
   setSearchDraft(query: string) {
     this.searchRequests.next();
+    this.pendingSearch = null;
+    selectionStore.cancelUse();
     this.searchQuery = query;
     this.isSearchPending = false;
     this.searchError = null;
   }
 
-  async search(query: string, options: { silent?: boolean } = {}) {
+  search(query: string, options: { silent?: boolean } = {}) {
+    // Share an in-flight query. A background refresh must not steal its pending state.
+    if (
+      this.pendingSearch &&
+      this.pendingSearchQuery === query &&
+      this.searchQuery === query &&
+      this.isSearchPending
+    ) {
+      return this.pendingSearch;
+    }
+    this.pendingSearchQuery = query;
+    const task = this.runSearch(query, options);
+    this.pendingSearch = task;
+    void task.finally(() => {
+      if (this.pendingSearch === task) this.pendingSearch = null;
+    });
+    return task;
+  }
+
+  private async runSearch(query: string, options: { silent?: boolean } = {}) {
     if (query.trim() && this.searchQuery !== query) {
       return;
     }
@@ -321,7 +356,9 @@ class ClipboardStore {
     try {
       const results = await invoke<ClipItem[]>('search_clips', { query });
       if (this.searchRequests.isCurrent(requestId)) {
-        this.searchResults = results;
+        this.searchHasMore = results.length > 1000;
+        this.searchResults = results.slice(0, 1000);
+        if (this.activeSearchQuery !== query) selectionStore.resetSelection();
         this.activeSearchQuery = query;
         this.searchError = null;
       }
@@ -339,7 +376,7 @@ class ClipboardStore {
         toastStore.add(`${i18n.t.errorLabel}: ${this.searchError}`, 'error');
       }
     } finally {
-      if (!silent && this.searchRequests.isCurrent(requestId)) {
+      if (this.searchRequests.isCurrent(requestId)) {
         this.isSearchPending = false;
       }
     }
@@ -347,6 +384,9 @@ class ClipboardStore {
 
   async clearSearch(options: ClearSearchOptions = {}) {
     this.searchRequests.next();
+    this.pendingSearch = null;
+    selectionStore.cancelUse();
+    this.searchHasMore = false;
     this.searchQuery = '';
     this.activeSearchQuery = '';
     this.searchResults = [];
@@ -381,7 +421,7 @@ class ClipboardStore {
       await invoke('toggle_pin', { id, isPinned: !item.isPinned });
       await this.reloadFromBackend();
     } catch (error) {
-      console.error('Failed to toggle pin:', error);
+      toastStore.add(String(error), 'error');
     }
   }
 
@@ -390,7 +430,7 @@ class ClipboardStore {
       await invoke('delete_clip', { id });
       this.removeClipLocally(id);
     } catch (error) {
-      console.error('Failed to delete item:', error);
+      toastStore.add(String(error), 'error');
     }
   }
 
@@ -420,13 +460,22 @@ class ClipboardStore {
   }
 
   async useClip(item: ClipItem, mode: PasteMode = 'default', options: { plain?: boolean } = {}) {
+    await this.performUse('paste_clip', { id: item.id, mode, plain: options.plain ?? false }, mode);
+  }
+
+  private async performUse(command: string, args: Record<string, unknown>, mode: PasteMode) {
+    if (this.isUsing) return false;
+    this.isUsing = true;
+    this.useNotice = '';
     try {
-      // `plain` (⌥Enter) forces a plain-text paste. The backend ignores it for
-      // non-text clips, so it is passed through without a frontend type branch.
-      await invoke('paste_clip', { id: item.id, mode, plain: options.plain ?? false });
+      const result = await invoke<'copied' | 'pasteRequested' | 'copiedOnly'>(command, args);
+      if (result === 'copiedOnly') this.useNotice = i18n.t.copiedOnly;
+      return true;
     } catch (error) {
-      console.error('[ERROR] Failed to use clip:', error);
-      toastStore.add(this.pasteFailureMessage(mode), 'error');
+      toastStore.add(`${this.pasteFailureMessage(mode)}: ${String(error)}`, 'error');
+      return false;
+    } finally {
+      this.isUsing = false;
     }
   }
 
@@ -441,43 +490,21 @@ class ClipboardStore {
     return isPaste ? i18n.t.pasteFailed : i18n.t.copyFailed;
   }
 
-  isSelected(id: string): boolean {
-    return this.selectedIds.has(id);
-  }
-
-  toggleSelected(id: string) {
-    if (this.selectedIds.has(id)) {
-      this.selectedIds.delete(id);
-    } else {
-      this.selectedIds.add(id);
-    }
-  }
-
-  clearSelection() {
-    if (this.selectedIds.size > 0) {
-      this.selectedIds.clear();
-    }
-  }
-
   /**
    * Merge the multi-selected clips (in selection order) into a single clipboard
    * write and paste them, newline-separated (task #13). No-op when nothing is
    * selected; clears the selection once the paste is dispatched.
    */
   async useSelectedClips(mode: PasteMode = 'default') {
-    const ids = [...this.selectedIds];
-    if (ids.length === 0) return;
-
-    try {
-      await invoke('paste_clips', { ids, mode, separator: '\n' });
-      this.clearSelection();
-    } catch (error) {
-      console.error('[ERROR] Failed to merge-paste clips:', error);
-      toastStore.add(this.pasteFailureMessage(mode), 'error');
+    const ids = [...selectionStore.selectedIds];
+    if (!ids.length || this.isSearchPending) return;
+    if (await this.performUse('paste_clips', { ids, mode, separator: '\n' }, mode)) {
+      selectionStore.clearSelection();
     }
   }
 
   async hideQuickbar() {
+    selectionStore.cancelUse();
     try {
       await invoke('hide_quickbar');
     } catch (error) {
@@ -486,71 +513,74 @@ class ClipboardStore {
   }
 
   async copyToClipboard(item: ClipItem) {
-    try {
-      // 使用后端命令来复制，这样可以防止重复捕获
-      await invoke('copy_to_system_clipboard', { clipId: item.id });
-      console.log('[SUCCESS] Successfully copied to clipboard');
-
-      const t = i18n.t;
-      const contentPreview = item.contentType === 'image' ? t.image : t.text;
-      toastStore.add(`${t.copied} ${contentPreview}`, 'success');
-    } catch (error) {
-      console.error('[ERROR] Failed to copy to clipboard:', error);
-      toastStore.add(i18n.t.copyFailed, 'error');
-      throw error;
+    if (
+      await this.performUse(
+        'copy_to_system_clipboard',
+        { clipId: item.id },
+        this.autoPaste ? 'opposite' : 'default'
+      )
+    ) {
+      toastStore.add(i18n.t.copied, 'success');
     }
   }
 
   /** Synchronously read a cached full clip (no fetch). */
-  getCachedFullClip(id: string): ClipItem | undefined {
+  getCachedFullClip(id: string): ClipDetail | undefined {
     return this.fullClipCache.get(id);
   }
 
-  /**
-   * Fetch the full, untruncated text or files clip by id for the preview pane.
-   * Both carry small newline-joined text payloads. Images use list thumbnails and
-   * are ignored here so full image payloads never cross IPC. Results are cached;
-   * callers should guard against stale selections since this resolves async.
-   */
-  async fetchFullClip(id: string): Promise<ClipItem | null> {
+  /** Fetch decoded details on demand, caching only small text/file payloads. */
+  async fetchFullClip(id: string): Promise<ClipDetail | null> {
     const cached = this.getCachedFullClip(id);
     if (cached) return cached;
     if (!hasTauriRuntime()) return null;
 
+    const revision = this.cacheRevision;
     try {
-      const full = await invoke<ClipItem | null>('get_clip', { id });
-      // A null result (or any non text/files type) has no cacheable preview
-      // payload; this guard also narrows `full` to non-null for the cache call.
-      if (full?.contentType !== 'text' && full?.contentType !== 'files') return null;
-      this.cacheFullClip(full);
+      const full = await invoke<ClipDetail | null>('get_clip', { id });
+      if (revision !== this.cacheRevision) return null;
+      if (
+        full &&
+        full.contentType !== 'image' &&
+        full.text.length <= ClipboardStore.MAX_CACHEABLE_CONTENT_LENGTH
+      ) {
+        this.fullClipCache.set(id, full);
+        while (this.fullClipCache.size > ClipboardStore.FULL_CLIP_CACHE_LIMIT) {
+          this.fullClipCache.delete(this.fullClipCache.keys().next().value!);
+        }
+      }
       return full;
     } catch (error) {
-      console.error('[ERROR] Failed to fetch full clip:', error);
+      toastStore.add(String(error), 'error');
       return null;
     }
   }
 
-  private cacheFullClip(item: ClipItem) {
-    if (item.content.length > ClipboardStore.MAX_CACHEABLE_CONTENT_LENGTH) return;
-
-    this.fullClipCache.set(item.id, item);
-    while (this.fullClipCache.size > ClipboardStore.FULL_CLIP_CACHE_LIMIT) {
-      const oldestKey = this.fullClipCache.keys().next().value;
-      if (!oldestKey) break;
-      this.fullClipCache.delete(oldestKey);
-    }
+  private reloadFromBackend(): Promise<void> {
+    this.reloadNeeded = true;
+    if (this.pendingReload) return this.pendingReload;
+    this.pendingReload = this.drainReloads();
+    return this.pendingReload;
   }
 
-  private async reloadFromBackend() {
-    await this.loadHistory({ showLoading: false });
-
-    if (this.searchQuery.trim()) {
-      await this.search(this.searchQuery, { silent: true });
+  private async drainReloads() {
+    try {
+      do {
+        this.reloadNeeded = false;
+        await this.loadHistory({ showLoading: false });
+        await this.pendingSearch;
+        // A newer invalidation needs fresh history before another search.
+        if (!this.reloadNeeded && this.searchQuery.trim()) {
+          await this.search(this.searchQuery, { silent: true });
+        }
+      } while (this.reloadNeeded);
+    } finally {
+      this.pendingReload = null;
     }
   }
 
   private applyIncomingItem(incoming: ClipItem) {
-    this.recordIncomingItem(incoming);
+    if (this.historyPending) this.incomingEvents.push(incoming);
 
     const nextItems = applyClipboardChanged({
       recentItems: this.recentItems,
@@ -564,52 +594,20 @@ class ClipboardStore {
   }
 
   private removeClipLocally(id: string) {
+    selectionStore.cancelUse();
     this.historyRequests.next();
+    this.historyPending = false;
+    this.incomingEvents = [];
+    this.pageRequests.next();
     this.searchRequests.next();
+    this.cacheRevision += 1;
     this.fullClipCache.delete(id);
-    this.selectedIds.delete(id);
+    selectionStore.selectedIds.delete(id);
     this.recentItems = this.recentItems.filter((item) => item.id !== id);
     this.pinnedItems = this.pinnedItems.filter((item) => item.id !== id);
     this.searchResults = this.searchResults.filter((item) => item.id !== id);
     this.isLoading = false;
     this.isSearchPending = false;
-  }
-
-  private recordIncomingItem(item: ClipItem) {
-    this.incomingRevision += 1;
-    this.incomingEvents.push({ revision: this.incomingRevision, item });
-
-    if (this.incomingEvents.length > this.maxHistoryItems) {
-      this.incomingEvents = this.incomingEvents.slice(-this.maxHistoryItems);
-    }
-  }
-
-  private replayIncomingItemsSince({
-    recentItems,
-    pinnedItems,
-    revision,
-  }: {
-    recentItems: readonly ClipItem[];
-    pinnedItems: readonly ClipItem[];
-    revision: number;
-  }) {
-    let nextItems = {
-      recentItems: [...recentItems],
-      pinnedItems: [...pinnedItems],
-    };
-
-    for (const event of this.incomingEvents) {
-      if (event.revision <= revision) continue;
-
-      nextItems = applyClipboardChanged({
-        recentItems: nextItems.recentItems,
-        pinnedItems: nextItems.pinnedItems,
-        incoming: event.item,
-        maxHistoryItems: this.maxHistoryItems,
-      });
-    }
-
-    return nextItems;
   }
 
   private findItem(id: string) {

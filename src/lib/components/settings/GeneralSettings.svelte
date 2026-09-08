@@ -3,7 +3,9 @@
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import { Keyboard, X } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
@@ -76,36 +78,66 @@
   let recordingTimeout: ReturnType<typeof setTimeout> | undefined;
   const formattedKeys = $derived(formatShortcut(settings.globalShortcut));
 
-  async function startRecording() {
+  let shortcutTask = Promise.resolve();
+  let recordingRevision = 0;
+
+  function unlistenQuietly(unlisten: () => void) {
     try {
-      // Disable global shortcut to prevent triggering during recording
-      await invoke('disable_global_shortcut');
-      isRecording = true;
-      recordedKeys = [];
-      recordingWarning = '';
-    } catch (err) {
-      console.error('Failed to disable shortcut:', err);
-      recordingWarning = t.disableHotkeyFailed;
+      void Promise.resolve(unlisten()).catch(() => {});
+    } catch {
+      // The native window may already be gone during teardown.
     }
   }
 
-  async function stopRecording() {
+  function startRecording() {
+    if (isRecording) return shortcutTask;
+    const revision = ++recordingRevision;
+    isRecording = true;
+    recordedKeys = [];
+    recordingWarning = '';
+    shortcutTask = shortcutTask
+      .then(() => invoke<void>('disable_global_shortcut'))
+      .catch((error) => {
+        if (revision === recordingRevision) {
+          isRecording = false;
+          recordingWarning = t.disableHotkeyFailed;
+        }
+        toastStore.add(String(error), 'error');
+      });
+    return shortcutTask;
+  }
+
+  function stopRecording() {
     clearTimeout(recordingTimeout);
     recordingTimeout = undefined;
-
-    try {
-      // Re-enable global shortcut
-      if (isRecording) {
-        await invoke('enable_global_shortcut');
-      }
-    } catch (err) {
-      console.error('Failed to re-enable shortcut:', err);
-    } finally {
-      isRecording = false;
-      recordedKeys = [];
-      recordingWarning = '';
-    }
+    if (!isRecording) return shortcutTask;
+    recordingRevision++;
+    isRecording = false;
+    recordedKeys = [];
+    recordingWarning = '';
+    // Serialize restoration after an in-flight disable, including hide/unmount.
+    shortcutTask = shortcutTask
+      .then(() => invoke<void>('enable_global_shortcut'))
+      .catch((error) => {
+        toastStore.add(String(error), 'error');
+      });
+    return shortcutTask;
   }
+
+  onMount(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen('settings-hidden', () => {
+      void stopRecording();
+    }).then((stop) => {
+      if (disposed) unlistenQuietly(stop);
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      if (unlisten) unlistenQuietly(unlisten);
+    };
+  });
 
   function handleKeyDown(event: KeyboardEvent) {
     if (!isRecording) return;
@@ -173,14 +205,16 @@
   }
 
   onDestroy(() => {
-    clearTimeout(recordingTimeout);
-    if (isRecording) {
-      void invoke('enable_global_shortcut');
-    }
+    void stopRecording();
   });
 </script>
 
-<svelte:window onkeydown={handleKeyDown} />
+<svelte:window
+  onkeydown={handleKeyDown}
+  onblur={() => {
+    void stopRecording();
+  }}
+/>
 
 <div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
   <div>
@@ -239,7 +273,7 @@
               </div>
             {:else if recordedKeys.length > 0}
               <div class="flex items-center justify-center gap-1.5">
-                {#each recordedKeys as label}
+                {#each recordedKeys as label (label)}
                   <kbd
                     class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                                bg-gradient-to-b from-background to-muted
@@ -262,7 +296,7 @@
           </div>
         {:else}
           <div class="flex items-center gap-1.5">
-            {#each formattedKeys as label, index}
+            {#each formattedKeys as label, index (index)}
               <kbd
                 class="inline-flex items-center justify-center min-w-[2rem] h-8 px-2.5 text-sm font-semibold
                                        bg-gradient-to-b from-background to-muted

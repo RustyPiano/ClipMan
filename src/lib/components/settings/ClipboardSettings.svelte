@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isMac } from '$lib/utils/platform';
   import Card from '$lib/components/ui/Card.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
@@ -41,10 +42,7 @@
   }
 
   // --- Ignored apps (SPEC-4 §3) ---
-  // `ignoredApps` is optional on Settings so this component doesn't depend on
-  // every caller's default-settings literal already knowing about it; it is
-  // always populated once the real settings load from the backend.
-  const ignoredApps = $derived(settings.ignoredApps ?? []);
+  const ignoredApps = $derived(settings.ignoredApps);
 
   let newIgnoredApp = $state('');
 
@@ -75,14 +73,12 @@
 
   // --- Capture size limits (SPEC-3 §5 UI) ---
   const BYTES_PER_MB = 1_000_000;
-  const DEFAULT_MAX_TEXT_BYTES = 2_000_000;
-  const DEFAULT_MAX_IMAGE_DIMENSION = 4096;
   const MIN_TEXT_BYTES = 4096;
   const MAX_TEXT_BYTES = 50_000_000;
   const MIN_IMAGE_DIMENSION = 512;
   const MAX_IMAGE_DIMENSION = 16384;
 
-  const maxTextMb = $derived((settings.maxTextBytes ?? DEFAULT_MAX_TEXT_BYTES) / BYTES_PER_MB);
+  const maxTextMb = $derived(settings.maxTextBytes / BYTES_PER_MB);
 
   function updateMaxTextMb(raw: string) {
     const value = Number.parseFloat(raw);
@@ -168,13 +164,7 @@
           {t.skipSecretsDesc}
         </p>
       </div>
-      <Switch
-        id="skip-secrets"
-        checked={settings.skipSecrets ?? true}
-        onchange={(event: Event) => {
-          settings.skipSecrets = (event.currentTarget as HTMLInputElement).checked;
-        }}
-      />
+      <Switch id="skip-secrets" bind:checked={settings.skipSecrets} />
     </div>
 
     <div class="pt-4 border-t border-border space-y-4">
@@ -210,7 +200,7 @@
           min="0"
           max={MAX_IMAGE_DIMENSION}
           step="1"
-          value={settings.maxImageDimension ?? DEFAULT_MAX_IMAGE_DIMENSION}
+          value={settings.maxImageDimension}
           onchange={(event) => updateMaxImageDimension(event.currentTarget.value)}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
@@ -223,6 +213,7 @@
         <p class="text-xs text-muted-foreground">
           {t.ignoredAppsDesc}
         </p>
+        {#if !isMac}<p class="text-xs text-muted-foreground">{t.ignoredAppsPlatform}</p>{/if}
       </div>
 
       <div class="flex gap-2">

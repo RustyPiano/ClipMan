@@ -35,7 +35,9 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 - **📌 置顶常用内容** - 一键置顶代码片段、命令、链接等，永久保存
 - **💾 持久化存储** - SQLite 本地数据库，重启不丢失，智能去重
 - **🔍 全文搜索** - SQLite FTS5 + trigram 索引，支持中英文实时搜索
+- **📋 多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览
 - **⌨️ QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`），键盘选择并按设置自动粘贴或仅复制
+- **🖱️ 键鼠操作** - 每行可直接复制、置顶、编辑标签、删除或多选合并
 - **🎯 托盘菜单** - 快速访问最近和置顶内容
 - **🎨 多主题** - 浅色/深色/淡粉色主题，跟随系统
 - **🌐 多语言** - 支持中文和英文，自动检测系统语言
@@ -52,10 +54,10 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.2.1_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.2.1_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.2.1_x64.dmg`
-- **Linux**: `ClipMan_2.2.1_amd64.AppImage`
+- **Windows**: `ClipMan_2.3.0_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.3.0_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.3.0_x64.dmg`
+- **Linux**: `ClipMan_2.3.0_amd64.AppImage`
 
 ### macOS 安装与权限
 
@@ -103,7 +105,7 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 - Bun 1.3+（推荐）或 Node.js 20.19+
 - Rust 1.96.0（项目通过 `rust-toolchain.toml` 固定）
-- 系统: Windows 10+ / macOS 10.13+ / Linux
+- 系统: Windows 10+（WebView2 111+） / macOS 13.3+ / Linux（WebKitGTK 4.1，支持现代 CSS）
 
 ### 快速开始
 

@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { flushSync, onMount, untrack } from 'svelte';
+  import { onMount } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
-  import { router } from '$lib/stores/router.svelte';
-  import { clampIndex, selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
+  import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
@@ -13,7 +12,7 @@
   import { hasTauriRuntime } from '$lib/utils/tauri';
   import { isMac } from '$lib/utils/platform';
   import { SEARCH_INPUT_ID } from '$lib/constants';
-  import type { ClipItem, PasteMode, ReorderDirection } from '$lib/types';
+  import type { ClipItem, PasteMode } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
   import ClipPreview from '$lib/components/ClipPreview.svelte';
@@ -22,332 +21,238 @@
   import Toast from '$lib/components/Toast.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import {
-    Sun,
-    Moon,
-    Monitor,
-    Settings,
-    Trash2,
-    Pin,
-    ClipboardList,
-    Loader2,
-    Heart,
-    Search,
-  } from 'lucide-svelte';
+  import { Settings, PanelRight, MoreHorizontal, Loader2, Search } from 'lucide-svelte';
 
-  // Tauri injects __TAURI_INTERNALS__ before page scripts run, so the window
-  // identity is known at module scope (getCurrentWindow() reads this same
-  // field and can never disagree with it).
   const isSettingsWindow =
     typeof window !== 'undefined' &&
     (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'settings';
-
-  if (isSettingsWindow) {
-    router.goToSettings();
-  }
-
-  let resultsScroller: HTMLDivElement | null = $state(null);
-
-  const SCROLL_EDGE_PADDING = 6;
-  // Prefetch the next recent page when scrolled within this many viewport
-  // heights of the bottom, or when the keyboard selection lands within this
-  // many rows of the loaded tail — so continuation feels seamless.
-  const LOAD_MORE_SCROLL_SCREENS = 2;
-  const LOAD_MORE_KEYBOARD_THRESHOLD = 10;
-  const shortcutModifierLabel = isMac ? '⌘' : 'Ctrl';
-  const altModifierLabel = isMac ? '⌥' : 'Alt';
-
-  interface QuickBarOpenedPayload {
-    panel?: QuickBarPanel;
-  }
-
+  $effect(() => {
+    document.documentElement.lang = i18n.locale;
+  });
   const t = $derived(i18n.t);
+  const modifier = isMac ? '⌘' : 'Ctrl';
   const displayItems = $derived(
     selectionStore.panel === 'pinned'
       ? clipboardStore.pinnedDisplayItems
       : clipboardStore.recentDisplayItems
   );
-  const selectedIndex = $derived(clampIndex(selectionStore.selectedIndex, displayItems.length));
+  const selectedIndex = $derived(selectionStore.index(displayItems));
   const selectedItem = $derived(displayItems[selectedIndex]);
-
-  // Master-detail: show the preview pane only when the window is wide enough and
-  // there's an actual list to preview (loading/empty states span full width).
-  const PREVIEW_MIN_VIEWPORT = 620;
-  let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1024);
-  const showPreview = $derived(
-    viewportWidth >= PREVIEW_MIN_VIEWPORT && !clipboardStore.isLoading && displayItems.length > 0
-  );
   const displayError = $derived(
     clipboardStore.activeSearchQuery.trim()
       ? clipboardStore.searchError
-      : selectionStore.panel === 'recent'
-        ? clipboardStore.historyError
-        : null
+      : clipboardStore.historyError
+  );
+  let resultsScroller: HTMLDivElement | undefined = $state();
+  let actions: globalThis.HTMLDetailsElement | undefined = $state();
+  let hoverSelectArmed = false;
+  let scrollTop = $state(0);
+  let viewportHeight = $state(480);
+  let viewportWidth = $state(typeof window === 'undefined' ? 820 : window.innerWidth);
+  let previewEnabled = $state(localStorage.getItem('preview-enabled') !== 'false');
+  const showPreview = $derived(previewEnabled && viewportWidth >= 620 && !!selectedItem);
+  // One shared rem-based height keeps CSS, keyboard reveal and virtualization in sync.
+  let rowHeight = $state(64);
+  const OVERSCAN = 4;
+  const startIndex = $derived(
+    Math.max(0, Math.min(displayItems.length - 1, Math.floor(scrollTop / rowHeight) - OVERSCAN))
+  );
+  const endIndex = $derived(
+    Math.min(displayItems.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN)
+  );
+  const visibleItems = $derived(displayItems.slice(startIndex, endIndex));
+  const selectedVisible = $derived(selectedIndex >= startIndex && selectedIndex < endIndex);
+  const skippedImages = $derived(
+    displayItems.filter(
+      (item) => selectionStore.selectedIds.has(item.id) && item.contentType === 'image'
+    ).length
   );
 
-  async function retryDisplayLoad() {
-    if (clipboardStore.activeSearchQuery.trim()) {
-      await clipboardStore.search(clipboardStore.activeSearchQuery);
-    } else {
-      await clipboardStore.loadHistory();
-    }
-  }
-
-  // Hover-to-select is only honored after a genuine pointer move, so keyboard
-  // navigation isn't hijacked when the list scrolls under a stationary cursor.
-  let hoverSelectArmed = $state(true);
-
-  // Keep the stored selection index in range as the list length changes. The
-  // store owns the clamp (single owner of the selection semantics); assigning an
-  // unchanged value is a reactive no-op, so this settles without looping.
-  $effect(() => {
-    selectionStore.clamp(displayItems.length);
-  });
-
-  // Keep the highlight anchored to a specific clip across list mutations:
-  // - When the active query settles to a NEW value (including clearing back to
-  //   the full history), jump to the first row so Enter pastes the top match
-  //   instead of a stale middle item the previous query left selected.
-  // - When the SAME query's list reorders (e.g. copying a row bumps it to the
-  //   top via a live clipboard-changed event), follow the anchored clip so the
-  //   highlight stays on it rather than on whatever now occupies its old index.
-  // anchoredId is updated by the user-driven selection helpers; this effect only
-  // reacts to query/list changes, so it never fights normal keyboard navigation.
-  let anchoredId: string | null = null;
-  let lastSelectionQuery = clipboardStore.activeSearchQuery;
+  let lastQuery = clipboardStore.activeSearchQuery;
   $effect(() => {
     const query = clipboardStore.activeSearchQuery;
-    const items = displayItems;
-
-    if (query !== lastSelectionQuery) {
-      lastSelectionQuery = query;
-      // A changed query (including clearing back to full history) drops any
-      // multi-selection (task #13).
-      clipboardStore.clearSelection();
-      selectionStore.selectedIndex = 0;
-      anchoredId = items[0]?.id ?? null;
-      untrack(() => {
-        if (resultsScroller) {
-          resultsScroller.scrollTop = 0;
-        }
-      });
-      return;
-    }
-
-    if (anchoredId === null) return;
-
-    const currentIndex = untrack(() => selectionStore.selectedIndex);
-    const nextIndex = items.findIndex((item) => item.id === anchoredId);
-    if (nextIndex >= 0) {
-      if (nextIndex !== currentIndex) {
-        selectionStore.selectedIndex = nextIndex;
-      }
-    } else {
-      // Anchored clip is gone (deleted/pruned); re-anchor to whatever now sits
-      // at the current index so later reorders still track the right row.
-      anchoredId = items[clampIndex(currentIndex, items.length)]?.id ?? null;
+    if (query !== lastQuery) {
+      lastQuery = query;
+      scrollTop = 0;
+      if (resultsScroller) resultsScroller.scrollTop = 0;
     }
   });
 
-  function isTextInput(element: Element | null) {
-    return (
-      element instanceof HTMLInputElement ||
-      element instanceof HTMLTextAreaElement ||
-      element instanceof HTMLSelectElement ||
-      element?.hasAttribute('contenteditable')
-    );
-  }
-
-  function scrollItemIntoView(index: number) {
-    const scroller = resultsScroller;
-    const item = displayItems[index];
-    if (!scroller || !item) return;
-
-    const element = document.getElementById(`clip-item-${item.id}`);
-    if (!element) return;
-
-    const scrollerRect = scroller.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    const topOverflow = scrollerRect.top + SCROLL_EDGE_PADDING - elementRect.top;
-    const bottomOverflow = elementRect.bottom - (scrollerRect.bottom - SCROLL_EDGE_PADDING);
-
-    if (topOverflow > 0) {
-      scroller.scrollTop -= topOverflow;
-    } else if (bottomOverflow > 0) {
-      scroller.scrollTop += bottomOverflow;
+  $effect(() => {
+    if (selectionStore.selectedId && selectedItem?.id !== selectionStore.selectedId) {
+      selectionStore.setSelectedIndex(0, displayItems);
+      revealSelection();
     }
+  });
+
+  function focusSearch() {
+    document.getElementById(SEARCH_INPUT_ID)?.focus({ preventScroll: true });
   }
 
-  // Record which clip the highlight is on so the anchor effect can follow it
-  // when the list reorders underneath the user (live copies, refreshes).
-  function anchorToSelection() {
-    anchoredId = displayItems[selectionStore.selectedIndex]?.id ?? null;
-  }
-
-  function selectIndex(index: number, itemCount: number) {
-    selectionStore.setSelectedIndex(index, itemCount);
-    anchorToSelection();
+  function resetPanel(panel: QuickBarPanel) {
+    selectionStore.reset(panel);
+    if (panel === 'recent') clipboardStore.resetRecentPagination();
+    if (resultsScroller) resultsScroller.scrollTop = 0;
+    scrollTop = 0;
+    focusSearch();
   }
 
   function revealSelection() {
-    anchorToSelection();
-    flushSync();
-    scrollItemIntoView(selectionStore.selectedIndex);
+    if (!resultsScroller) return;
+    const top = selectionStore.index(displayItems) * rowHeight;
+    const next = Math.max(top + rowHeight - viewportHeight, Math.min(scrollTop, top));
+    resultsScroller.scrollTop = next;
+    scrollTop = next;
   }
 
-  function selectIndexAndReveal(index: number, itemCount: number) {
-    selectionStore.setSelectedIndex(index, itemCount);
-    revealSelection();
+  function select(index: number) {
+    selectionStore.setSelectedIndex(index, displayItems);
   }
 
-  // Wrap-around move through the store (single owner of the clamp/wrap), then
-  // anchor + scroll the new selection into view.
-  function moveSelectionAndReveal(delta: number) {
-    selectionStore.move(delta, displayItems.length);
-    revealSelection();
+  function observeScroller(element: HTMLDivElement) {
+    const observer = new globalThis.ResizeObserver(() => {
+      viewportHeight = element.clientHeight;
+      rowHeight = parseFloat(globalThis.getComputedStyle(document.documentElement).fontSize) * 4;
+    });
+    observer.observe(element);
+    observer.observe(document.documentElement);
+    return () => observer.disconnect();
   }
 
-  function resetPanelAndReveal(panel: QuickBarPanel) {
-    // Landing on the recent list (quickbar open, tab switch) resets keyset
-    // pagination to the first page (§1 reset points).
-    if (panel === 'recent') {
-      clipboardStore.resetRecentPagination();
-    }
-    // Panel switch / quickbar refresh drops any multi-selection (task #13).
-    clipboardStore.clearSelection();
-    selectionStore.reset(panel);
-    // Drop the stale anchor BEFORE flushSync: the reset changes displayItems
-    // (a tracked dep), so the anchor effect re-runs here. With the old anchor
-    // still set it would find that clip at a non-zero index and drag the
-    // selection back off row 0 while the viewport scrolls to the top —
-    // highlight offscreen, Enter pastes an invisible row (§10). Nulling it lets
-    // the effect no-op; anchorToSelection() below re-anchors to the new row 0.
-    anchoredId = null;
-    flushSync();
-    anchorToSelection();
-    scrollItemIntoView(0);
-  }
-
-  // Continuation loading only applies to the live recent list — never the
-  // pinned panel (fully loaded) or search results (their own capped set).
-  function maybeLoadMoreRecent() {
-    if (selectionStore.panel !== 'recent') return;
-    if (clipboardStore.activeSearchQuery.trim()) return;
-    void clipboardStore.loadMoreRecent();
-  }
-
-  function handleResultsScroll() {
-    const scroller = resultsScroller;
-    if (!scroller) return;
-
-    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    if (remaining <= scroller.clientHeight * LOAD_MORE_SCROLL_SCREENS) {
-      maybeLoadMoreRecent();
+  function handleScroll() {
+    if (!resultsScroller) return;
+    scrollTop = resultsScroller.scrollTop;
+    if (
+      selectionStore.panel === 'recent' &&
+      resultsScroller.scrollHeight - scrollTop < viewportHeight * 3
+    ) {
+      void clipboardStore.loadMoreRecent();
     }
   }
 
-  function focusSearchInput() {
-    const input = document.getElementById(SEARCH_INPUT_ID);
-    if (input instanceof HTMLInputElement) {
-      input.focus();
-      return input;
+  async function useSelection(mode: PasteMode = 'default', plain = false, slot?: number) {
+    if (clipboardStore.isUsing) return;
+    const revision = selectionStore.beginUse();
+    const query = clipboardStore.searchQuery;
+    if (clipboardStore.isSearchPending) {
+      let timer: ReturnType<typeof setTimeout>;
+      const ready = await Promise.race([
+        clipboardStore.search(query).then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 1500);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (!ready) {
+        toastStore.add(t.searchPendingHint, 'info');
+        return;
+      }
+      if (
+        clipboardStore.isSearchPending ||
+        clipboardStore.searchError ||
+        clipboardStore.activeSearchQuery !== query
+      )
+        return;
     }
-
-    return null;
-  }
-
-  function typeIntoSearch(event: KeyboardEvent) {
-    const input = focusSearchInput();
-    if (!input) return;
-
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? input.value.length;
-    const nextValue = `${input.value.slice(0, start)}${event.key}${input.value.slice(end)}`;
-    const nextPosition = start + event.key.length;
-
-    input.value = nextValue;
-    input.setSelectionRange(nextPosition, nextPosition);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  function switchPanel(panel: QuickBarPanel) {
-    if (selectionStore.panel !== panel) {
-      resetPanelAndReveal(panel);
+    if (!selectionStore.isCurrentUse(revision)) return;
+    if (slot === undefined && selectionStore.selectedIds.size >= 2) {
+      await clipboardStore.useSelectedClips(mode);
+    } else {
+      const item = displayItems[slot ?? selectionStore.index(displayItems)];
+      if (item) await clipboardStore.useClip(item, mode, { plain });
     }
-    focusSearchInput();
   }
 
-  async function useItem(item: ClipItem | undefined, mode: PasteMode = 'default', plain = false) {
-    if (!item) return;
+  async function useItem(item: ClipItem) {
     if (clipboardStore.isSearchPending) return;
-
-    await clipboardStore.useClip(item, mode, { plain });
-  }
-
-  async function useSelectedItem(opposite = false, plain = false) {
-    await useItem(selectedItem, opposite ? 'opposite' : 'default', plain);
-  }
-
-  async function useSlot(slotNumber: number) {
-    if (clipboardStore.isSearchPending) return;
-
-    const item = displayItems[slotNumber - 1];
-    if (!item) return;
-
-    selectIndexAndReveal(slotNumber - 1, displayItems.length);
-    await useItem(item);
-  }
-
-  async function toggleSelectedPin() {
-    const item = selectedItem;
-    if (!item) return;
-    await clipboardStore.togglePin(item.id);
-  }
-
-  async function deleteSelectedItem() {
-    const item = selectedItem;
-    if (!item) return;
-    await clipboardStore.deleteItem(item.id);
-  }
-
-  async function reorderSelectedPinned(direction: ReorderDirection) {
-    if (selectionStore.panel !== 'pinned') return;
-
-    const item = selectedItem;
-    if (!item?.isPinned) return;
-
-    await clipboardStore.reorderPinned(item.id, direction);
-
-    const nextIndex = clipboardStore.pinnedDisplayItems.findIndex(
-      (pinnedItem) => pinnedItem.id === item.id
-    );
-    if (nextIndex >= 0) {
-      selectIndexAndReveal(nextIndex, clipboardStore.pinnedDisplayItems.length);
-    }
+    await clipboardStore.useClip(item);
   }
 
   async function clearHistory() {
-    const confirmed = await confirmStore.ask({
-      title: t.clearNonPinned,
-      message: t.confirmClearHistory,
-      confirmLabel: t.clear,
-      destructive: true,
-    });
-    if (confirmed) {
+    if (
+      await confirmStore.ask({
+        title: t.clearNonPinned,
+        message: t.confirmClearHistory,
+        confirmLabel: t.clear,
+        destructive: true,
+      })
+    ) {
       try {
         await clipboardStore.clearNonPinned();
-      } catch (_error) {
-        toastStore.add(t.clearFailed, 'error');
+      } catch (error) {
+        toastStore.add(String(error), 'error');
       }
     }
-    focusSearchInput();
+    focusSearch();
   }
 
-  async function openSettingsWindow() {
-    try {
-      await invoke('open_settings_window');
-    } catch (error) {
-      console.error('[ERROR] Failed to open settings window:', error);
+  function handleKey(event: KeyboardEvent) {
+    if (isSettingsWindow || event.defaultPrevented || event.isComposing || confirmStore.open)
+      return;
+    const target = event.target as globalThis.HTMLElement;
+    if (target.closest('[data-row-editor]')) return;
+    if (target.closest('[data-actions]')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (actions) actions.open = false;
+        focusSearch();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      selectionStore.cancelUse();
+      if (selectionStore.selectedIds.size) selectionStore.clearSelection();
+      else void clipboardStore.hideQuickbar();
+      return;
+    }
+    const input = target.id === SEARCH_INPUT_ID;
+    if (!input && target.closest('button, a, summary, input, textarea, select')) return;
+    const mod = event.metaKey || event.ctrlKey;
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      resetPanel(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      hoverSelectArmed = false;
+      if (mod && event.shiftKey && selectionStore.panel === 'pinned' && selectedItem) {
+        void clipboardStore
+          .reorderPinned(selectedItem.id, event.key === 'ArrowUp' ? 'up' : 'down')
+          .catch((error) => toastStore.add(String(error), 'error'));
+      } else {
+        selectionStore.move(event.key === 'ArrowDown' ? 1 : -1, displayItems);
+        revealSelection();
+        if (selectionStore.panel === 'recent' && selectedIndex >= displayItems.length - 10) {
+          void clipboardStore.loadMoreRecent();
+        }
+      }
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!event.repeat) void useSelection(mod ? 'opposite' : 'default', event.altKey);
+    } else if (mod && /^[1-9]$/.test(event.key)) {
+      event.preventDefault();
+      if (!event.repeat) void useSelection('default', false, Number(event.key) - 1);
+    } else if (
+      mod &&
+      event.key.toLowerCase() === 'p' &&
+      selectedItem &&
+      !clipboardStore.isSearchPending
+    ) {
+      event.preventDefault();
+      void clipboardStore.togglePin(selectedItem.id);
+    } else if (
+      mod &&
+      ['Backspace', 'Delete'].includes(event.key) &&
+      selectedItem &&
+      !clipboardStore.isSearchPending
+    ) {
+      event.preventDefault();
+      void clipboardStore.deleteItem(selectedItem.id);
+    } else if (!input && !mod && !event.altKey && event.key.length === 1) {
+      event.preventDefault();
+      focusSearch();
+      const search = document.getElementById(SEARCH_INPUT_ID) as HTMLInputElement;
+      search.setRangeText(event.key, search.selectionStart ?? 0, search.selectionEnd ?? 0, 'end');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
 
@@ -382,429 +287,214 @@
     };
   }
 
-  function handleArrowNavigation(event: KeyboardEvent, hasModifier: boolean) {
-    event.preventDefault();
-    hoverSelectArmed = false;
-
-    if (selectionStore.panel === 'pinned' && hasModifier && event.shiftKey) {
-      void reorderSelectedPinned(event.key === 'ArrowUp' ? 'up' : 'down');
-      return;
-    }
-
-    moveSelectionAndReveal(event.key === 'ArrowUp' ? -1 : 1);
-    // Arrowing toward the loaded tail prefetches the next page before the user
-    // reaches the bottom.
-    if (
-      event.key === 'ArrowDown' &&
-      selectionStore.selectedIndex >= displayItems.length - LOAD_MORE_KEYBOARD_THRESHOLD
-    ) {
-      maybeLoadMoreRecent();
-    }
-  }
-
-  function handleTabNavigation(event: KeyboardEvent) {
-    event.preventDefault();
-    hoverSelectArmed = false;
-    resetPanelAndReveal(selectionStore.panel === 'recent' ? 'pinned' : 'recent');
-    focusSearchInput();
-  }
-
-  function handleEnter(event: KeyboardEvent, hasModifier: boolean) {
-    event.preventDefault();
-    if (clipboardStore.selectedIds.size >= 2) {
-      // A real multi-selection (≥2) merge-pastes the selected clips
-      // (newline-joined), honoring the ⌘ paste/copy swap like a single paste.
-      // Below 2 the footer still shows the single-paste hints, so Enter keeps
-      // acting on the keyboard-highlighted row.
-      void clipboardStore.useSelectedClips(hasModifier ? 'opposite' : 'default');
-    } else {
-      // ⌥Enter forces a plain-text paste (strips rich HTML). Harmless for
-      // non-text clips — the backend ignores `plain` for them.
-      void useSelectedItem(hasModifier, event.altKey);
-    }
-  }
-
-  function handleEscape(event: KeyboardEvent) {
-    event.preventDefault();
-    // Esc clears an active multi-selection first; a second Esc (or Esc with no
-    // selection) falls through to the original hide behavior.
-    if (clipboardStore.selectedIds.size > 0) {
-      clipboardStore.clearSelection();
-      return;
-    }
-    void clipboardStore.hideQuickbar();
-  }
-
-  function handleQuickBarKeydown(event: KeyboardEvent) {
-    if (router.currentRoute !== 'home' || event.defaultPrevented || event.isComposing) return;
-    if (confirmStore.open) return;
-
-    const activeElement = document.activeElement;
-    const activeTextInput = isTextInput(activeElement);
-    const activeSearchInput =
-      activeElement instanceof HTMLInputElement && activeElement.id === SEARCH_INPUT_ID;
-    const hasModifier = event.metaKey || event.ctrlKey;
-
-    if (activeTextInput && !activeSearchInput) return;
-
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      handleArrowNavigation(event, hasModifier);
-      return;
-    }
-
-    if (event.key === 'Tab') {
-      handleTabNavigation(event);
-      return;
-    }
-
-    if (event.key === 'Enter') {
-      handleEnter(event, hasModifier);
-      return;
-    }
-
-    if (event.key === 'Escape') {
-      handleEscape(event);
-      return;
-    }
-
-    if (hasModifier && event.key.toLowerCase() === 'p') {
-      event.preventDefault();
-      void toggleSelectedPin();
-      return;
-    }
-
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      if (hasModifier) {
-        event.preventDefault();
-        void deleteSelectedItem();
-      }
-
-      return;
-    }
-
-    // Slot quick-paste lives on the modifier (⌘/Ctrl+1-9) so plain digits stay
-    // available to type into the always-focused search box.
-    if (hasModifier && !event.altKey && /^[1-9]$/.test(event.key)) {
-      event.preventDefault();
-      void useSlot(Number(event.key));
-      return;
-    }
-
-    if (!activeTextInput && !hasModifier && !event.altKey && event.key.length === 1) {
-      event.preventDefault();
-      typeIntoSearch(event);
-    }
-  }
-
   onMount(() => {
-    const tauriAvailable = hasTauriRuntime();
-
-    if (isSettingsWindow) {
-      return;
-    }
-
-    // Transparent body so the rounded panel corners + shadow show (main window
-    // only). The panel stays opaque — no frosted glass.
+    if (isSettingsWindow) return;
     document.documentElement.classList.add('quickbar-window');
-
-    // Boot the clipboard store here rather than in its constructor: the settings
-    // window imports the same singleton and must NOT load history or subscribe
-    // to events. `initialize` also refreshes settings, so no separate fetch here.
-    selectionStore.reset('recent');
     void clipboardStore.initialize();
-    focusSearchInput();
-
-    if (!tauriAvailable) {
-      return () => {
-        document.documentElement.classList.remove('quickbar-window');
-      };
+    focusSearch();
+    const unlisteners: (() => void)[] = [];
+    let disposed = false;
+    if (hasTauriRuntime()) {
+      for (const subscription of [
+        listen<{ panel?: QuickBarPanel }>('quickbar-opened', (event) => {
+          resetPanel(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
+          void clipboardStore.refreshSettings();
+        }),
+        listen('quickbar-hidden', () => {
+          scrollTop = 0;
+          if (actions) actions.open = false;
+        }),
+      ])
+        void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
     }
-
-    let unlistenQuickbarOpened: (() => void) | undefined;
-
-    void listen<QuickBarOpenedPayload>('quickbar-opened', (event) => {
-      resetPanelAndReveal(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
-      if (clipboardStore.searchQuery.trim()) {
-        void clipboardStore.clearSearch();
-      }
-      void clipboardStore.refreshSettings();
-      focusSearchInput();
-    }).then((unlisten) => {
-      unlistenQuickbarOpened = unlisten;
-    });
-
     return () => {
-      unlistenQuickbarOpened?.();
+      disposed = true;
+      unlisteners.forEach((stop) => stop());
       document.documentElement.classList.remove('quickbar-window');
     };
   });
 </script>
 
 <svelte:window
-  onkeydowncapture={handleQuickBarKeydown}
+  onkeydowncapture={handleKey}
   onresize={() => (viewportWidth = window.innerWidth)}
   onpointermove={() => (hoverSelectArmed = true)}
 />
-
 <Toast />
 <ConfirmDialog />
-
-{#if isSettingsWindow || router.currentRoute === 'settings'}
-  <div class="contents" {@attach syncTheme(themeStore.current)}>
-    <SettingsPage />
-  </div>
+{#if isSettingsWindow}
+  <div class="contents" {@attach syncTheme(themeStore.current)}><SettingsPage /></div>
 {:else}
-  <!-- No transparent margin: the panel fills the window so its rounded shape
-       IS the window's alpha shape, and the native macOS shadow hugs it exactly
-       (translucent CSS pixels around the panel would distort that shape). -->
-  <div class="flex h-screen flex-col" {@attach syncTheme(themeStore.current)}>
-    <div class="quickbar-panel flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
-      <PermissionCheck />
-
-      <!-- Spotlight-style search row -->
-      <div
-        class="flex flex-none items-center gap-2 border-b border-border/60 px-4 py-2.5 bg-transparent"
-      >
-        <div class="min-w-0 flex-1">
-          <SearchBar />
-        </div>
-
-        <!-- Sliding Capsule Tab Switcher -->
-        <div
-          class="relative flex w-40 flex-none rounded-lg bg-muted/65 p-0.5 text-[11px] font-semibold border border-border/10 select-none"
-          role="tablist"
-        >
-          <!-- Sliding pill background -->
+  <div
+    class="quickbar-panel flex h-screen flex-col overflow-hidden rounded-xl"
+    {@attach syncTheme(themeStore.current)}
+  >
+    <PermissionCheck />
+    <header class="qb-header flex flex-none items-center gap-3 px-3 py-3">
+      <div class="min-w-0 flex-1">
+        <SearchBar
+          activeId={selectedVisible ? selectedItem?.id : undefined}
+          expanded={displayItems.length > 0}
+        />
+      </div>
+      <div class="qb-tabs flex flex-none gap-0.5 rounded-lg p-0.5" aria-label={t.switchPanel}>
+        {#each ['recent', 'pinned'] as panel (panel)}
+          <button
+            class="rounded-md px-3 py-1.5 text-xs font-medium"
+            aria-pressed={selectionStore.panel === panel}
+            onclick={() => resetPanel(panel as QuickBarPanel)}
+          >
+            {panel === 'recent' ? t.history : t.pinned}
+          </button>
+        {/each}
+      </div>
+    </header>
+    {#if clipboardStore.capturePaused || clipboardStore.useNotice}
+      <p class="border-b border-border px-4 py-2 text-xs text-muted-foreground" role="status">
+        {clipboardStore.useNotice || t.capturePausedNotice}
+      </p>
+    {/if}
+    <div class="flex min-h-0 flex-1">
+      <main class="flex min-w-0 flex-1 flex-col py-2">
+        {#if clipboardStore.isLoading && !displayItems.length}
+          <div class="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 class="h-5 w-5 animate-spin" />{t.loading}
+          </div>
+        {:else if !displayItems.length}
           <div
-            class="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-background shadow-sm transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style="width: calc(50% - 2px); transform: translateX({selectionStore.panel === 'pinned'
-              ? '100%'
-              : '0'});"
-          ></div>
-
-          <button
-            role="tab"
-            aria-selected={selectionStore.panel === 'recent'}
-            aria-controls="clipboard-content"
-            tabindex={selectionStore.panel === 'recent' ? 0 : -1}
-            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel ===
-            'recent'
-              ? 'text-foreground font-semibold'
-              : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => switchPanel('recent')}
+            class="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-center text-sm text-muted-foreground"
           >
-            {t.history}
-          </button>
-          <button
-            role="tab"
-            aria-selected={selectionStore.panel === 'pinned'}
-            aria-controls="clipboard-content"
-            tabindex={selectionStore.panel === 'pinned' ? 0 : -1}
-            class="relative z-10 flex-1 py-1 rounded-md text-center cursor-pointer transition-colors duration-200 {selectionStore.panel ===
-            'pinned'
-              ? 'text-foreground font-semibold'
-              : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => switchPanel('pinned')}
-          >
-            {t.pinned}<span class="ml-1 opacity-60">{clipboardStore.pinnedDisplayItems.length}</span
-            >
-          </button>
-        </div>
-      </div>
-
-      <!-- Results + Preview (master-detail) -->
-      <div class="flex min-h-0 flex-1 overflow-hidden">
-        <main
-          id="clipboard-content"
-          class="flex min-h-0 flex-1 flex-col overflow-hidden {showPreview
-            ? 'border-r border-border/60'
-            : ''}"
-        >
-          {#if clipboardStore.isLoading}
-            <div
-              class="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"
-            >
-              <Loader2 class="h-6 w-6 animate-spin" />
-              <p class="text-sm">{t.loading}</p>
-            </div>
-          {:else if displayItems.length === 0 && displayError}
-            <div
-              class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground"
-              role="alert"
-            >
-              <p class="text-sm font-medium text-foreground">{t.errorLabel}</p>
-              <p class="max-w-sm text-xs opacity-80">{displayError}</p>
-              <Button variant="outline" onclick={retryDisplayLoad}>{t.recheck}</Button>
-            </div>
-          {:else if displayItems.length === 0}
-            <div
-              class="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-muted-foreground"
-            >
-              {#if clipboardStore.activeSearchQuery.trim()}
-                {#if selectionStore.panel === 'pinned' && clipboardStore.recentDisplayItems.length > 0}
-                  <!-- Matches exist, just none pinned: point the user to History
-                       instead of implying nothing matched at all. -->
-                  <Pin class="h-8 w-8 opacity-20" />
-                  <p class="text-sm font-medium">{t.noPinnedMatches}</p>
-                  <button
-                    class="text-xs text-primary underline-offset-2 hover:underline cursor-pointer"
-                    onclick={() => switchPanel('recent')}
-                  >
-                    {i18n.format(t.noPinnedMatchesHint, {
-                      n: clipboardStore.recentDisplayItems.length,
-                    })}
-                  </button>
-                {:else}
-                  <Search class="h-8 w-8 opacity-20" />
-                  <p class="text-sm font-medium">{t.noSearchResults}</p>
-                  <p class="text-xs opacity-70">{t.noSearchResultsHint}</p>
-                {/if}
-              {:else if selectionStore.panel === 'pinned'}
-                <Pin class="h-8 w-8 opacity-20" />
-                <p class="text-sm font-medium">{t.noPinnedItems}</p>
-                <p class="text-xs opacity-70">{t.noPinnedItemsHint}</p>
-              {:else}
-                <ClipboardList class="h-8 w-8 opacity-20" />
-                <p class="text-sm font-medium">{t.noClipboardHistory}</p>
-                <p class="text-xs opacity-70">{t.noClipboardHistoryHint}</p>
-              {/if}
-            </div>
-          {:else}
-            <div
-              bind:this={resultsScroller}
-              role="list"
-              class="flex-1 space-y-1 overflow-y-auto p-2"
-              onscroll={handleResultsScroll}
-            >
-              {#each displayItems as item, index (item.id)}
-                <ClipboardItem
-                  {item}
-                  selected={index === selectedIndex}
-                  multiSelected={clipboardStore.isSelected(item.id)}
-                  slotNumber={index < 9 ? index + 1 : null}
-                  onSelect={() => selectIndex(index, displayItems.length)}
-                  onToggleSelect={() => clipboardStore.toggleSelected(item.id)}
-                  onHover={() => {
-                    if (hoverSelectArmed) selectIndex(index, displayItems.length);
-                  }}
-                  onUse={() => useItem(item)}
-                />
-              {/each}
-            </div>
-          {/if}
-        </main>
-
-        {#if showPreview}
-          <aside class="flex w-[42%] min-w-0 flex-none flex-col overflow-hidden">
-            <ClipPreview item={selectedItem} />
-          </aside>
-        {/if}
-      </div>
-
-      <!-- Footer: shortcut hints + quick actions -->
-      <div
-        class="flex flex-none items-center justify-between gap-2 border-t border-border/60 bg-muted/15 px-2.5 py-1.5 text-[11px] text-muted-foreground animate-in fade-in duration-300"
-      >
-        <div class="flex min-w-0 items-center gap-3 overflow-hidden select-none">
-          {#if clipboardStore.selectedIds.size >= 2}
-            <span class="flex flex-none items-center gap-1.5 font-medium text-foreground">
-              {i18n.format(t.selectedCount, { n: clipboardStore.selectedIds.size })}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
-              {t.mergePasteHint}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
-              {t.clearSelection}
-            </span>
-          {:else}
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-4 h-4 scale-95">↵</kbd>
-              {clipboardStore.autoPaste ? t.paste : t.copy}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}↵</kbd>
-              {clipboardStore.autoPaste ? t.copy : t.paste}
-            </span>
-            {#if selectedItem?.contentType === 'text'}
-              <span class="flex flex-none items-center gap-1.5">
-                <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{altModifierLabel}↵</kbd>
-                {t.pastePlain}
-              </span>
-            {/if}
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-10 h-4 scale-95"
-                >{shortcutModifierLabel}1-9</kbd
+            <Search class="h-7 w-7" />
+            {#if displayError}
+              <p role="alert">{displayError}</p>
+              <Button
+                variant="outline"
+                onclick={() =>
+                  clipboardStore.activeSearchQuery
+                    ? clipboardStore.search(clipboardStore.activeSearchQuery)
+                    : clipboardStore.loadHistory()}>{t.recheck}</Button
               >
-              {t.slot}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}P</kbd>
-              {t.pin}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">{shortcutModifierLabel}⌫</kbd>
-              {t.delete}
-            </span>
-            {#if selectionStore.panel === 'pinned'}
-              <span class="flex flex-none items-center gap-1.5">
-                <kbd class="kbd-keycap text-[9px] min-w-12 h-4 scale-95"
-                  >{shortcutModifierLabel}⇧↑↓</kbd
-                >
-                {t.reorder}
-              </span>
-            {/if}
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">Tab</kbd>
-              {t.switchPanel}
-            </span>
-            <span class="flex flex-none items-center gap-1.5">
-              <kbd class="kbd-keycap text-[9px] min-w-8 h-4 scale-95">esc</kbd>
-              {t.close}
-            </span>
-          {/if}
-        </div>
-
-        <div class="flex flex-none items-center gap-0.5">
-          <span class="mr-1 tabular-nums opacity-70">{displayItems.length}</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6 text-muted-foreground hover:text-destructive"
-            title={t.clearNonPinned}
-            onclick={clearHistory}
-          >
-            <Trash2 class="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6 text-muted-foreground hover:text-foreground"
-            title={t.switchTheme}
-            onclick={() => themeStore.toggle()}
-          >
-            {#if themeStore.current === 'light'}
-              <Sun class="h-3.5 w-3.5" />
-            {:else if themeStore.current === 'dark'}
-              <Moon class="h-3.5 w-3.5" />
-            {:else if themeStore.current === 'light-pink'}
-              <Heart class="h-3.5 w-3.5" />
             {:else}
-              <Monitor class="h-3.5 w-3.5" />
+              <p>
+                {clipboardStore.activeSearchQuery
+                  ? t.noSearchResults
+                  : selectionStore.panel === 'pinned'
+                    ? t.noPinnedItems
+                    : t.noClipboardHistory}
+              </p>
+              {#if selectionStore.panel === 'pinned' && clipboardStore.recentDisplayItems.length}
+                <Button variant="ghost" onclick={() => resetPanel('recent')}>{t.history}</Button>
+              {/if}
             {/if}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6 text-muted-foreground hover:text-foreground"
-            title={t.settings}
-            onclick={() => void openSettingsWindow()}
+          </div>
+        {:else}
+          <div
+            id="clipboard-results"
+            role="grid"
+            aria-rowcount={displayItems.length}
+            aria-colcount="2"
+            aria-label={t.history}
+            aria-multiselectable="true"
+            aria-busy={clipboardStore.isSearchPending}
+            bind:this={resultsScroller}
+            {@attach observeScroller}
+            class="min-h-0 flex-1 overflow-y-auto px-2"
+            onscroll={handleScroll}
           >
-            <Settings class="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+            <div style:height={`${startIndex * rowHeight}px`} aria-hidden="true"></div>
+            {#each visibleItems as item, index (item.id)}
+              {@const position = startIndex + index}
+              <ClipboardItem
+                {item}
+                selected={position === selectedIndex}
+                multiSelected={selectionStore.selectedIds.has(item.id)}
+                multiSelecting={selectionStore.selectedIds.size > 0}
+                slotNumber={position < 9 ? position + 1 : null}
+                {position}
+                onSelect={() => select(position)}
+                onToggleSelect={() => selectionStore.toggleSelected(item.id)}
+                onHover={() => {
+                  if (hoverSelectArmed) select(position);
+                }}
+                onUse={() => useItem(item)}
+              />
+            {/each}
+            <div
+              style:height={`${(displayItems.length - endIndex) * rowHeight}px`}
+              aria-hidden="true"
+            ></div>
+          </div>
+        {/if}
+        {#if clipboardStore.searchHasMore}<p
+            class="px-3 py-1 text-xs text-muted-foreground"
+            role="status"
+          >
+            {t.searchLimit}
+          </p>{/if}
+      </main>
+      {#if showPreview}<aside class="qb-preview w-[40%] flex-none overflow-hidden">
+          <ClipPreview item={selectedItem} />
+        </aside>{/if}
     </div>
+    <footer
+      class="qb-footer relative flex flex-none items-center justify-between gap-3 px-4 py-2 text-[11px] text-muted-foreground"
+    >
+      <div class="min-w-0 truncate" aria-live="polite">
+        {#if clipboardStore.isUsing}{t.loading}
+        {:else if selectionStore.selectedIds.size >= 2}
+          {i18n.format(t.selectedCount, { n: selectionStore.selectedIds.size })} · ↵ {t.mergePasteHint}
+          {#if skippedImages}
+            · {i18n.format(t.mergeImagesSkipped, { n: skippedImages })}{/if}
+        {:else}<span class="inline-flex items-center gap-3">
+            <span
+              ><kbd class="kbd-keycap">↵</kbd> {clipboardStore.autoPaste ? t.paste : t.copy}</span
+            >
+            <span
+              ><kbd class="kbd-keycap">{modifier}↵</kbd>
+              {clipboardStore.autoPaste ? t.copy : t.paste}</span
+            >
+            <span><kbd class="kbd-keycap">Esc</kbd> {t.close}</span>
+          </span>{/if}
+      </div>
+      <div class="flex flex-none items-center gap-1">
+        <span class="px-1 tabular-nums"
+          >{displayItems.length}{clipboardStore.searchHasMore ? '+' : ''}</span
+        >
+        <Button
+          variant="ghost"
+          size="icon"
+          title={t.previewToggle}
+          aria-pressed={previewEnabled}
+          onclick={() => {
+            previewEnabled = !previewEnabled;
+            localStorage.setItem('preview-enabled', String(previewEnabled));
+          }}><PanelRight class="h-4 w-4" /></Button
+        >
+        <details bind:this={actions} data-actions class="relative">
+          <summary
+            class="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-md hover:bg-muted"
+            aria-label={t.actions}><MoreHorizontal class="h-4 w-4" /></summary
+          >
+          <fieldset
+            disabled={clipboardStore.isUsing || clipboardStore.isSearchPending}
+            class="absolute bottom-11 right-0 z-20 flex w-64 flex-col gap-1 rounded-lg border border-border bg-background p-2 shadow-lg"
+          >
+            <Button variant="ghost" onclick={clearHistory}>{t.clearNonPinned}</Button>
+            <p class="border-t border-border px-2 pt-2 text-[11px] leading-relaxed">
+              {modifier}1–9 {t.slot}<br />⌥↵ {t.pastePlain}<br />Alt ←/→ {t.switchPanel}<br
+              />{modifier}⇧↑↓ {t.reorder}
+            </p>
+          </fieldset>
+        </details>
+        <Button
+          variant="ghost"
+          size="icon"
+          title={t.settings}
+          onclick={() =>
+            invoke('open_settings_window').catch((error) => toastStore.add(String(error), 'error'))}
+          ><Settings class="h-4 w-4" /></Button
+        >
+      </div>
+    </footer>
   </div>
 {/if}

@@ -57,6 +57,7 @@ Object.defineProperty(globalThis, 'window', {
 });
 
 const { clipboardStore } = await import('../../src/lib/stores/clipboard.svelte');
+const { selectionStore } = await import('../../src/lib/stores/selection.svelte');
 const { toastStore } = await import('../../src/lib/stores/toast.svelte');
 const { i18n } = await import('../../src/lib/i18n');
 
@@ -98,7 +99,7 @@ function resetStore() {
   clipboardStore.isLoadingMore = false;
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
-  clipboardStore.selectedIds.clear();
+  selectionStore.selectedIds.clear();
   toastStore.toasts = [];
 }
 
@@ -148,7 +149,7 @@ describe('clipboard store races', () => {
     installTauriInvoke((cmd, args) => {
       if (cmd === 'get_clip') {
         getClipCalls += 1;
-        return clip({ id: String(args?.id), content: 'ZnVsbA==' });
+        return { id: String(args?.id), contentType: 'text', text: 'full', imageUrl: null };
       }
       if (cmd === 'delete_clip') return null;
       if (cmd === 'get_recent_clips' || cmd === 'get_pinned_clips') return [];
@@ -196,23 +197,22 @@ describe('clipboard store races', () => {
     expect(clipboardStore.isLoading).toBe(false);
   });
 
-  test('fetchFullClip ignores non-text responses and does not cache them', async () => {
-    let getClipCalls = 0;
-    installTauriInvoke((cmd, args) => {
-      if (cmd === 'get_clip') {
-        getClipCalls += 1;
-        return clip({
-          id: String(args?.id),
-          content: 'data:image/png;base64,aW1hZ2U=',
-          contentType: 'image',
-        });
-      }
-      return null;
+  test('full image previews are returned on demand without caching image data', async () => {
+    let requests = 0;
+    installTauriInvoke(() => {
+      requests++;
+      return {
+        id: 'image',
+        contentType: 'image',
+        text: '',
+        imageUrl: 'data:image/png;base64,eA==',
+      };
     });
-
-    await expect(clipboardStore.fetchFullClip('image')).resolves.toBeNull();
-    await expect(clipboardStore.fetchFullClip('image')).resolves.toBeNull();
-    expect(getClipCalls).toBe(2);
+    expect((await clipboardStore.fetchFullClip('image'))?.imageUrl).toBe(
+      'data:image/png;base64,eA=='
+    );
+    await clipboardStore.fetchFullClip('image');
+    expect(requests).toBe(2);
   });
 
   test('replays incoming clipboard events over an older in-flight history response', async () => {
@@ -306,19 +306,19 @@ describe('clipboard store races', () => {
     // autoPaste on: 'default' resolves to a paste, 'opposite' (⌘Enter) to a copy.
     clipboardStore.autoPaste = true;
     await clipboardStore.useClip(item, 'default');
-    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
     expect(toastStore.toasts.at(-1)?.type).toBe('error');
 
     await clipboardStore.useClip(item, 'opposite');
-    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.copyFailed);
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.copyFailed);
 
     // autoPaste off: the paste/copy mapping inverts.
     clipboardStore.autoPaste = false;
     await clipboardStore.useClip(item, 'default');
-    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.copyFailed);
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.copyFailed);
 
     await clipboardStore.useClip(item, 'opposite');
-    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
   });
 
   test('useSelectedClips toasts on merge-paste failure and keeps the selection', async () => {
@@ -328,15 +328,15 @@ describe('clipboard store races', () => {
     });
 
     clipboardStore.autoPaste = true;
-    clipboardStore.toggleSelected('a');
-    clipboardStore.toggleSelected('b');
+    selectionStore.toggleSelected('a');
+    selectionStore.toggleSelected('b');
 
     await clipboardStore.useSelectedClips('default');
 
-    expect(toastStore.toasts.at(-1)?.message).toBe(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
     expect(toastStore.toasts.at(-1)?.type).toBe('error');
     // A failed merge-paste must not silently drop the selection.
-    expect([...clipboardStore.selectedIds]).toEqual(['a', 'b']);
+    expect([...selectionStore.selectedIds]).toEqual(['a', 'b']);
   });
 
   test('loadHistory clears isLoading even when a search becomes active mid-load', async () => {
@@ -382,19 +382,19 @@ describe('clipboard store races', () => {
   });
 
   test('toggleSelected preserves selection order and clears cleanly', () => {
-    clipboardStore.toggleSelected('a');
-    clipboardStore.toggleSelected('b');
-    clipboardStore.toggleSelected('c');
-    expect([...clipboardStore.selectedIds]).toEqual(['a', 'b', 'c']);
+    selectionStore.toggleSelected('a');
+    selectionStore.toggleSelected('b');
+    selectionStore.toggleSelected('c');
+    expect([...selectionStore.selectedIds]).toEqual(['a', 'b', 'c']);
 
     // Toggling an existing id removes it; re-adding appends at the end.
-    clipboardStore.toggleSelected('b');
-    expect([...clipboardStore.selectedIds]).toEqual(['a', 'c']);
-    clipboardStore.toggleSelected('b');
-    expect([...clipboardStore.selectedIds]).toEqual(['a', 'c', 'b']);
+    selectionStore.toggleSelected('b');
+    expect([...selectionStore.selectedIds]).toEqual(['a', 'c']);
+    selectionStore.toggleSelected('b');
+    expect([...selectionStore.selectedIds]).toEqual(['a', 'c', 'b']);
 
-    clipboardStore.clearSelection();
-    expect(clipboardStore.selectedIds.size).toBe(0);
+    selectionStore.clearSelection();
+    expect(selectionStore.selectedIds.size).toBe(0);
   });
 
   test('useSelectedClips merges selected ids in order then clears the selection', async () => {
@@ -404,9 +404,9 @@ describe('clipboard store races', () => {
       return null;
     });
 
-    clipboardStore.toggleSelected('first');
-    clipboardStore.toggleSelected('second');
-    clipboardStore.toggleSelected('third');
+    selectionStore.toggleSelected('first');
+    selectionStore.toggleSelected('second');
+    selectionStore.toggleSelected('third');
 
     await clipboardStore.useSelectedClips();
 
@@ -419,7 +419,7 @@ describe('clipboard store races', () => {
       separator: '\n',
     });
     // Paste clears the selection (task #13).
-    expect(clipboardStore.selectedIds.size).toBe(0);
+    expect(selectionStore.selectedIds.size).toBe(0);
   });
 
   test('useSelectedClips forwards the resolved mode and is a no-op with no selection', async () => {
@@ -434,7 +434,7 @@ describe('clipboard store races', () => {
     expect(calls.filter((entry) => entry.cmd === 'paste_clips')).toHaveLength(0);
 
     // ⌘Enter resolves to the opposite paste mode, passed straight through.
-    clipboardStore.toggleSelected('x');
+    selectionStore.toggleSelected('x');
     await clipboardStore.useSelectedClips('opposite');
     const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
     expect(pastes).toHaveLength(1);
@@ -447,11 +447,11 @@ describe('clipboard store races', () => {
       return null;
     });
 
-    clipboardStore.toggleSelected('keep');
-    clipboardStore.toggleSelected('gone');
+    selectionStore.toggleSelected('keep');
+    selectionStore.toggleSelected('gone');
     await clipboardStore.deleteItem('gone');
 
-    expect([...clipboardStore.selectedIds]).toEqual(['keep']);
+    expect([...selectionStore.selectedIds]).toEqual(['keep']);
   });
 
   test('silent search refreshes results without toggling the pending spinner', async () => {
@@ -629,7 +629,9 @@ describe('clipboard store races', () => {
 
     await clipboardStore.initialize();
 
-    expect(calls.slice(0, 3)).toEqual([
+    expect(calls.filter((call) => call.startsWith('listen:'))).toEqual([
+      'listen:clips-used',
+      'listen:settings-changed',
       'listen:clipboard-changed',
       'listen:history-cleared',
       'listen:quickbar-hidden',
@@ -637,5 +639,146 @@ describe('clipboard store races', () => {
     expect(calls.indexOf('listen:clipboard-changed')).toBeLessThan(
       calls.indexOf('get_recent_clips')
     );
+  });
+  test('a silent refresh shares an active search and clears the pending state', async () => {
+    let finish!: (items: ClipItem[]) => void;
+    let calls = 0;
+    installTauriInvoke(() => {
+      calls++;
+      return new Promise<ClipItem[]>((resolve) => {
+        finish = resolve;
+      });
+    });
+    clipboardStore.setSearchQuery('needle');
+    const foreground = clipboardStore.search('needle');
+    const refresh = clipboardStore.search('needle', { silent: true });
+    finish([clip({ id: 'result' })]);
+    await Promise.all([foreground, refresh]);
+    expect(calls).toBe(1);
+    expect(clipboardStore.isSearchPending).toBe(false);
+    expect(clipboardStore.searchResults[0].id).toBe('result');
+  });
+
+  test('opening during the initial history request cannot discard that request', async () => {
+    let finish!: (items: ClipItem[]) => void;
+    installTauriInvoke((cmd) =>
+      cmd === 'get_recent_clips'
+        ? new Promise<ClipItem[]>((resolve) => {
+            finish = resolve;
+          })
+        : []
+    );
+    const loading = clipboardStore.loadHistory();
+    clipboardStore.resetRecentPagination();
+    finish([clip({ id: 'first' })]);
+    await loading;
+    expect(clipboardStore.isLoading).toBe(false);
+    expect(clipboardStore.recentItems[0].id).toBe('first');
+  });
+
+  test('only one clipboard action can run, including copy and merge entry points', async () => {
+    let finish!: (result: string) => void;
+    let calls = 0;
+    installTauriInvoke(() => {
+      calls++;
+      return new Promise<string>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const first = clipboardStore.useClip(clip({ id: 'first' }));
+    await clipboardStore.useClip(clip({ id: 'second' }));
+    await clipboardStore.copyToClipboard(clip({ id: 'third' }));
+    finish('copiedOnly');
+    await first;
+    expect(calls).toBe(1);
+    expect(clipboardStore.isUsing).toBe(false);
+    expect(clipboardStore.useNotice).toBe(i18n.t.copiedOnly);
+  });
+
+  test('search exposes the sentinel without rendering it', async () => {
+    installTauriInvoke(() => Array.from({ length: 1001 }, (_, i) => clip({ id: String(i) })));
+    clipboardStore.setSearchQuery('many');
+    await clipboardStore.search('many');
+    expect(clipboardStore.searchHasMore).toBe(true);
+    expect(clipboardStore.searchResults.length).toBe(1000);
+    await clipboardStore.clearSearch({ reload: false });
+    expect(clipboardStore.searchHasMore).toBe(false);
+  });
+  test('a late detail response cannot resurrect a deleted item in the cache', async () => {
+    let finish!: (value: unknown) => void;
+    installTauriInvoke((cmd) =>
+      cmd === 'get_clip'
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : null
+    );
+    const detail = clipboardStore.fetchFullClip('deleted-while-loading');
+    await clipboardStore.deleteItem('deleted-while-loading');
+    finish({
+      id: 'deleted-while-loading',
+      contentType: 'text',
+      text: 'private text',
+      imageUrl: null,
+    });
+    expect(await detail).toBe(null);
+    expect(clipboardStore.getCachedFullClip('deleted-while-loading')).toBe(undefined);
+  });
+  test('detail cache evicts old entries at sixteen and skips large text', async () => {
+    installTauriInvoke((_cmd, args) => ({
+      id: String(args?.id),
+      contentType: 'text',
+      text: 'x'.repeat(args?.id === 'large' ? 256 * 1024 + 1 : 10),
+      imageUrl: null,
+      truncated: false,
+    }));
+    for (let i = 0; i < 17; i++) await clipboardStore.fetchFullClip(`bounded-${i}`);
+    expect(clipboardStore.getCachedFullClip('bounded-0')).toBeUndefined();
+    expect(clipboardStore.getCachedFullClip('bounded-16')).toBeDefined();
+    await clipboardStore.fetchFullClip('large');
+    expect(clipboardStore.getCachedFullClip('large')).toBeUndefined();
+  });
+
+  test('a burst during history and search refreshes is coalesced without losing the last update', async () => {
+    const reload = () =>
+      (clipboardStore as unknown as { reloadFromBackend(): Promise<void> }).reloadFromBackend();
+    let finishHistory!: (items: ClipItem[]) => void;
+    let finishSearch!: (items: ClipItem[]) => void;
+    let historyCalls = 0;
+    let searchCalls = 0;
+    installTauriInvoke((cmd) => {
+      if (cmd === 'get_recent_clips') {
+        historyCalls++;
+        if (historyCalls === 1)
+          return new Promise<ClipItem[]>((resolve) => {
+            finishHistory = resolve;
+          });
+        return [clip({ id: 'latest' })];
+      }
+      if (cmd === 'search_clips') {
+        searchCalls++;
+        if (searchCalls === 1)
+          return new Promise<ClipItem[]>((resolve) => {
+            finishSearch = resolve;
+          });
+        return [clip({ id: 'latest' })];
+      }
+      return [];
+    });
+    clipboardStore.searchQuery = 'needle';
+    const first = reload();
+    const burst = Array.from({ length: 20 }, reload);
+    expect(historyCalls).toBe(1);
+    finishHistory([]);
+    while (!finishSearch) await Promise.resolve();
+    expect(historyCalls).toBe(2);
+    const last = reload();
+    finishSearch([]);
+    await Promise.all([first, ...burst, last]);
+    expect(historyCalls).toBe(3);
+    expect(searchCalls).toBe(2);
+    expect(clipboardStore.searchResults[0].id).toBe('latest');
+    await reload();
+    expect(historyCalls).toBe(4);
   });
 });

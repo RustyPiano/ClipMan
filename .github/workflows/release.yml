@@ -51,6 +51,8 @@ jobs:
           bun test tests/
           bun run test:types
           bun run build
+          bunx playwright install --with-deps chromium webkit
+          bun run test:ui
 
       - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable

@@ -35,7 +35,9 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 - **📌 Pin Content** - Pin code snippets, commands, links, etc. permanently
 - **💾 Persistent Storage** - SQLite database, survives restarts, smart deduplication
 - **🔍 Full-Text Search** - SQLite FTS5 + trigram index with real-time Chinese/English search
+- **📋 Multiple Content Types** - Store plain text, HTML, images, and file lists with details loaded on demand
 - **⌨️ QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, then auto-paste or copy based on settings
+- **🖱️ Mouse and Keyboard** - Copy, pin, label, delete, or merge-select directly from each row
 - **🎯 Tray Menu** - Quick access to recent and pinned items
 - **🎨 Multiple Themes** - Light/Dark/Pink themes, follow system
 - **🌐 Multi-Language** - English and Chinese support, auto-detect system language
@@ -52,10 +54,10 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 
 Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
 
-- **Windows**: `ClipMan_2.2.1_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.2.1_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.2.1_x64.dmg`
-- **Linux**: `ClipMan_2.2.1_amd64.AppImage`
+- **Windows**: `ClipMan_2.3.0_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.3.0_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.3.0_x64.dmg`
+- **Linux**: `ClipMan_2.3.0_amd64.AppImage`
 
 ### macOS Install & Permissions
 
@@ -100,7 +102,7 @@ Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) t
 
 - Bun 1.3+ or Node.js 20.19+
 - Rust 1.96.0 (pinned by `rust-toolchain.toml`)
-- System: Windows 10+ / macOS 10.13+ / Linux
+- System: Windows 10+ (WebView2 111+) / macOS 13.3+ / Linux (WebKitGTK 4.1 with modern CSS support)
 
 ### Quick Start
 

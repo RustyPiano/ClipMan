@@ -42,6 +42,7 @@ pub fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Application state shared across commands
 pub struct AppState {
     pub storage: Arc<Mutex<ClipStorage>>,
+    pub clipboard_use_lock: tokio::sync::Mutex<()>,
     pub monitor: Mutex<Option<ClipboardMonitor>>,
     pub settings: Arc<SettingsManager>,
     pub settings_write_lock: Mutex<()>,
@@ -304,7 +305,9 @@ fn main() {
             // Initialize settings first
             let settings_manager = Arc::new(SettingsManager::new());
             if let Err(e) = settings_manager.load(app.handle()) {
-                log::warn!("Failed to load settings, using defaults: {}", e);
+                log::error!("Failed to load settings; capture paused: {e}");
+                notify_storage_issue(app.handle(), "设置读取失败 / Settings could not be loaded",
+                    &format!("已暂停采集，原设置文件未被覆盖。请检查设置文件后重启，或确认偏好后保存再恢复采集。\nCapture is paused. The original settings file was not overwritten. Review your preferences before resuming.\n\n{e}"));
             }
 
             let settings = settings_manager.get();
@@ -339,6 +342,7 @@ fn main() {
 
             let app_state = AppState {
                 storage: Arc::new(Mutex::new(storage)),
+                clipboard_use_lock: tokio::sync::Mutex::new(()),
                 monitor: Mutex::new(None),
                 settings: settings_manager.clone(),
                 settings_write_lock: Mutex::new(()),

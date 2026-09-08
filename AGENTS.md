@@ -68,10 +68,16 @@ bun run lint                   # ESLint over src/
 bun run check                  # svelte-check + TypeScript type check
 bun run test:types             # TypeScript-check frontend test files
 bun test tests/                # frontend unit tests
+bun run test:ui                # Chromium + WebKit interaction tests (install browsers once)
 bun run build                  # frontend bundle (cargo test also needs dist/ to exist)
 ```
 
 Add or update tests for logic you change (Rust and frontend both).
+Browser setup: `bunx playwright install chromium webkit` (Linux CI adds `--with-deps`).
+`e2e/` exercises compiled Svelte with a synthetic IPC backend; it does not replace native focus/permission tests.
+Native macOS smoke: `python3 scripts/native-qa/run.py "/absolute/path/ClipMan QA.app"` (requires an isolated `com.clipman.nativeqa` build and Accessibility grants). `--storage-only` checks thumbnails/tray failures without auto-paste permission; see `docs/dev/REFACTOR-QUICKBAR.md`.
+`bun run test:types` checks both Bun and browser suites. Optional synthetic DB benchmark:
+`cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.
 
 ## Code Style
 
@@ -90,9 +96,11 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 
 - Rust modules: `snake_case.rs` under `src-tauri/src/`. Structs/enums PascalCase, fields snake_case.
 - Svelte components: `PascalCase.svelte` under `src/lib/components/`. Routes follow Svelte conventions (`+page.svelte`).
-- Svelte 5 rune stores: `*.svelte.ts` with singleton named exports (`clipboardStore`, `themeStore`, `router`, `toastStore`, `i18n`).
+- Svelte 5 rune stores: `*.svelte.ts` with singleton named exports (`clipboardStore`, `themeStore`, `toastStore`, `i18n`).
 - **Tauri commands are snake_case and must match the string passed to `invoke('…')`.** Register every command in the `invoke_handler![]` macro in `main.rs`.
 - **IPC boundary uses camelCase:** Rust stays snake_case internally but serializes with `#[serde(rename_all = "camelCase")]` (see `settings.rs`, `storage.rs`). Keep TS types in `src/lib/types.ts` in sync.
+- `update_settings` takes a settings object to save, or `null` to reset from Rust defaults through the same validation/rollback path. The backend preserves migration-owned data paths and tray-owned capture pause state. The frontend has no duplicate defaults; failed loading disables saves and offers retry.
+- Settings writes and data migration run through `spawn_blocking`; never wait for `settings_write_lock` from a Tauri main-thread callback. A failed persisted-settings load pauses capture and keeps the original store for recovery.
 - Command boundary returns `Result<T, String>`; service code uses `map_err(|e| e.to_string())`. UI wraps calls in try/catch and surfaces failures via toast/inline text.
 - Constants: `UPPER_SNAKE_CASE` in both TS and Rust.
 
@@ -135,9 +143,19 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 ## Gotchas
 
 - **One clipboard change = one record.** The monitor reads a single representative snapshot per change with priority `Files > Text(+html companion) > Image` (`clipboard.rs`). Never re-introduce independent text/image reads — that's the old double-record bug.
-- Self-copy guard: when ClipMan writes to the clipboard it marks `last_copied_by_us` with a normalized `CopyMarker` (Text hashes the plain text only — never the html; Files hash the newline-joined "effective" path list — stored paths on macOS, canonicalized elsewhere). A self-copy or dedup skip must still advance `last_marker` — there's a test locking this.
+- Self-copy guard: when ClipMan writes to the clipboard it marks `last_copied_by_us` with a normalized `CopyMarker` (Text hashes the plain text only — never the html; Files hash the JSON-encoded "effective" path list — stored paths on macOS, canonicalized elsewhere). A self-copy or dedup skip must still advance `last_marker` — there's a test locking this.
 - **macOS file paste must NOT go through arboard, and "write succeeded" must be verified.** Two layered traps, both empirically proven on macOS 26: (1) arboard's `file_list` canonicalizes (stats) every path and TCC denies that to a Finder-launched GUI app — `paste.rs::write_file_list` therefore writes `NSURL`s to `NSPasteboard` directly. (2) The Tahoe pasteboard server **validates the writer's access to each file URL and silently drops unauthorized items while `writeObjects` still returns `true`** (Desktop file → `items=0`; `/Users/Shared` file → pastes fine). So `write_file_list` pre-opens each file (surfaces the one-time Files-and-Folders TCC prompt; terminal-launched processes inherit the terminal's grants, which masks all of this) and then confirms `pasteboardItems.count > 0` before claiming success. Full Disk Access covers everything including other apps' containers.
+- QuickBar surface/focus tokens (`--qb-*`) live in `src/app.css`, scoped to `.quickbar-panel`. Row action backgrounds use the row surface, avoiding unrelated white/dark toolbar patches.
 - QuickBar shadow is the **native macOS window shadow** derived from the window's alpha shape. Do not add CSS drop shadows or translucent pixels around `.quickbar-panel` — they distort the alpha shape and the shadow renders as a gray halo. Windows keeps `shadow: false` (DWM shadows follow the rectangular frame).
-- Tray menu is rebuilt from the DB on every clipboard change — keep that path cheap.
-- Image storage is now "always store original + derived thumbnail"; do not reintroduce `store_original_image`.
-- Search uses SQLite FTS5 with a short-query LIKE fallback; keep FTS index maintenance in the storage layer.
+- Tray menu is rebuilt from the DB on every clipboard change — keep that path cheap. Propagate query/build errors and preserve the previous menu on refresh failure.
+- Runtime data-path reporting and migration source/cleanup come from `ClipStorage::data_directory()`, the canonical parent of the database actually opened. `custom_data_path` remains only the next-start preference.
+- Images always store original + thumbnail. If both dimensions are ≤256px, reuse the original PNG bytes for the thumbnail; never upscale small images. Do not reintroduce `store_original_image`.
+- Clip timestamps are fractional Unix seconds (`f64` / JS number); preserve fractions through capture, dedup, paste history touch and pagination cursors. SQLite reads legacy integer seconds alongside new real values; do not truncate to whole seconds.
+- Database format v3 stores file lists as JSON string arrays while reading legacy newline-separated rows. Upgrades create a SQLite backup before changing rows and reject newer schema versions; do not lower `CURRENT_DB_USER_VERSION` or write newline-joined file records.
+- Search uses SQLite FTS5 with a full-text short-query LIKE fallback. Results contain match excerpts and at most 1001 rows (1000 visible + sentinel); keep FTS maintenance in storage. Limit FTS candidates before generating excerpts.
+- QuickBar rows are 4rem tall and virtualized. Keep CSS height and the measured rem size in sync; do not reintroduce per-arrow `flushSync`/row geometry reads. Selection/multi-selection belong to `selectionStore`, keyed by ID. Common mouse actions overlay the lower-right metadata area of each hovered/selected row, never reserve text width or cover the content line; label editing replaces the row body without changing height. Results use grid/row/gridcell semantics to expose action buttons accessibly. Alt+Left/Right switches panels; Tab follows native focus navigation.
+- `get_clip` returns decoded `ClipDetail` (`text` / optional original `imageUrl`), distinct from base64 list summaries. Small text details have one bounded cache (16 × 256K UTF-16 units). SQL caps text/file details at 1 MiB and rejects images above 16 MiB before returning their BLOB; `truncated` drives the preview notice. Copy/paste still read complete content.
+- Copy, single paste and merge paste share `paste::use_clips`, guarded across all callers. Write succeeds before history touch; `clips-used` invalidates the entire affected view after the action, while `clipboard-changed` remains the capture upsert event. Results distinguish `copied`, `pasteRequested`, and `copiedOnly`; never turn post-write maintenance failure into a retryable paste failure.
+- Merge paste has a 50 MB aggregate text budget. History limits are enforced on new/duplicate capture, settings reduction, and unpinning; keep pruning and FTS updates in the same storage transaction.
+- History initialization and append pagination have independent request sequences. Background invalidations share one running refresh with a pending flag. Incoming capture events are retained only during a history reload; do not restore a permanent duplicate event cache.
+- App exclusions on macOS accept bundle identifiers as well as legacy display names; Windows/Linux display their unsupported status. New settings choose the system language; saved language preferences remain authoritative.

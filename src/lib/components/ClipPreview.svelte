@@ -1,153 +1,102 @@
 <script lang="ts">
-  import type { ClipItem } from '$lib/types';
+  import type { ClipItem, ClipDetail } from '$lib/types';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
   import { decodeClipText, decodeFilePaths } from '$lib/utils/clip-items';
-  import { FileText, Image as ImageIcon, Files, Pin, Clock } from 'lucide-svelte';
+  import Button from './ui/Button.svelte';
 
-  interface Props {
-    item: ClipItem | undefined;
-  }
-
-  let { item }: Props = $props();
-
+  let { item }: { item: ClipItem | undefined } = $props();
   const t = $derived(i18n.t);
-  // Wait for the selection to settle before fetching, so holding an arrow key to
-  // scroll the list doesn't fire an IPC request per row.
-  const SETTLE_MS = 90;
+  let detail = $state.raw<ClipDetail | null>(null);
+  let settled = $state.raw<ClipItem | undefined>();
+  let loading = $state(false);
+  let body: HTMLDivElement | undefined = $state();
+  let generation = 0;
 
-  // Full-fidelity text payload for the selected item.
-  let fullItem = $state<ClipItem | null>(null);
+  async function load(current: ClipItem, revision: number) {
+    loading = true;
+    const full = await clipboardStore.fetchFullClip(current.id);
+    if (revision === generation) {
+      detail = full;
+      loading = false;
+    }
+  }
 
   $effect(() => {
     const current = item;
-
-    // Text and files need a full fetch (the list preview truncates content to
-    // 4096 bytes) so the pane can show the complete text / path list. Images
-    // reuse the 256px thumbnail already on the list item — no full-res fetch, so
-    // large image payloads never cross IPC or sit in the cache.
-    if (!current || (current.contentType !== 'text' && current.contentType !== 'files')) {
-      fullItem = null;
-      return;
-    }
-
-    // Cached → show full content immediately (content is immutable per id).
-    const cached = clipboardStore.getCachedFullClip(current.id);
-    if (cached) {
-      fullItem = cached;
-      return;
-    }
-
-    // Not cached: keep showing the truncated list preview, then upgrade once the
-    // selection settles. Guard against a stale fetch resolving after the
-    // selection moved on.
-    fullItem = null;
-    const wantedId = current.id;
+    const revision = ++generation;
+    // Highlight changes immediately; the expensive body follows a settled selection.
     const timer = setTimeout(() => {
-      void clipboardStore.fetchFullClip(wantedId).then((full) => {
-        if (item?.id === wantedId) fullItem = full;
-      });
-    }, SETTLE_MS);
-
-    return () => clearTimeout(timer);
+      settled = current;
+      detail = current ? (clipboardStore.getCachedFullClip(current.id) ?? null) : null;
+      loading = false;
+      if (body) body.scrollTop = 0;
+      if (current && current.contentType !== 'image' && (current.contentBytes ?? 0) <= 256 * 1024) {
+        void load(current, revision);
+      }
+    }, 70);
+    return () => {
+      clearTimeout(timer);
+      generation += 1;
+    };
   });
 
-  // Content comes from the full payload once ready, otherwise the truncated list
-  // item so the pane is never blank. Mutable fields (label/pin/time) are always
-  // read from the live list item.
-  const contentItem = $derived(fullItem && item && fullItem.id === item.id ? fullItem : item);
-  const isImage = $derived(item?.contentType === 'image');
-  const isFiles = $derived(item?.contentType === 'files');
-  const imageUrl = $derived(
-    isImage && typeof contentItem?.content === 'string' ? contentItem.content : ''
+  const full = $derived(detail?.id === settled?.id ? detail : null);
+  const text = $derived(
+    full?.text ??
+      (settled?.contentType === 'text'
+        ? decodeClipText(settled, t.emptyContent, t.decodeFailed)
+        : settled
+          ? decodeFilePaths(settled).join('\n')
+          : '')
   );
-  const fullText = $derived(
-    contentItem && contentItem.contentType === 'text'
-      ? decodeClipText(contentItem, t.emptyContent, t.decodeFailed)
-      : ''
-  );
-  const charCount = $derived(Array.from(fullText).length);
-  const filePaths = $derived(
-    contentItem && contentItem.contentType === 'files' ? decodeFilePaths(contentItem) : []
-  );
-  const trimmedLabel = $derived((item?.label ?? '').trim());
-
-  function formatFullTime(timestamp: number): string {
-    return new Date(timestamp * 1000).toLocaleString(i18n.locale === 'zh-CN' ? 'zh-CN' : 'en-US');
-  }
+  const imageUrl = $derived(full?.imageUrl || settled?.content || '');
 </script>
 
-<div class="flex h-full min-h-0 flex-col bg-muted/10">
-  {#if !item}
-    <div
-      class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground"
+<div class="flex h-full flex-col text-foreground">
+  <header class="flex flex-none flex-col gap-1 px-5 pb-4 pt-5">
+    <span class="truncate text-sm font-medium">
+      {settled?.label ||
+        (settled?.contentType === 'image'
+          ? t.image
+          : settled?.contentType === 'files'
+            ? t.files
+            : t.text)}</span
     >
-      <FileText class="h-7 w-7 opacity-20" />
-      <p class="text-xs opacity-70">{t.selectToPreview}</p>
-    </div>
-  {:else}
-    <!-- Header: type / label / pinned -->
-    <div class="flex flex-none items-center gap-2 border-b border-border/60 px-3 py-2">
-      {#if isImage}
-        <ImageIcon class="h-3.5 w-3.5 flex-none text-muted-foreground" />
-      {:else if isFiles}
-        <Files class="h-3.5 w-3.5 flex-none text-muted-foreground" />
-      {:else}
-        <FileText class="h-3.5 w-3.5 flex-none text-muted-foreground" />
-      {/if}
-      {#if trimmedLabel}
-        <span class="min-w-0 flex-1 truncate text-xs font-semibold text-foreground"
-          >{trimmedLabel}</span
-        >
-      {:else}
-        <span class="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground"
-          >{isImage ? t.image : isFiles ? t.files : t.text}</span
-        >
-      {/if}
-      {#if item.isPinned}
-        <Pin class="h-3.5 w-3.5 flex-none fill-current text-primary" />
-      {/if}
-    </div>
-
-    <!-- Body: full content -->
-    <div class="min-h-0 flex-1 overflow-auto p-3">
-      {#if isImage}
-        {#if imageUrl}
-          <img
-            src={imageUrl}
-            alt={trimmedLabel || t.image}
-            class="mx-auto max-w-full rounded-md border border-border bg-muted/40 object-contain"
-          />
-        {/if}
-      {:else if isFiles}
-        <ul class="m-0 flex flex-col gap-1 font-mono text-[12px] leading-relaxed text-foreground">
-          {#each filePaths as path (path)}
-            <li class="break-all selection:bg-primary/20">{path}</li>
-          {/each}
-        </ul>
-      {:else}
-        <pre
-          class="m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-foreground selection:bg-primary/20">{fullText}</pre>
-      {/if}
-    </div>
-
-    <!-- Footer: metadata -->
-    <div
-      class="flex flex-none items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 text-[10px] text-muted-foreground"
+    {#if settled}<span class="truncate text-[11px] text-muted-foreground">
+        {settled.sourceApp ? `${settled.sourceApp} · ` : ''}{new Date(
+          settled.timestamp * 1000
+        ).toLocaleString(i18n.locale)}
+      </span>{/if}
+  </header>
+  <div
+    bind:this={body}
+    class="min-h-0 flex-1 overflow-auto px-5 pb-5"
+    aria-busy={loading || item?.id !== settled?.id}
+  >
+    {#if settled?.contentType === 'image'}
+      <img
+        src={imageUrl}
+        alt={settled.label || t.image}
+        class="mx-auto max-w-full rounded object-contain"
+      />
+    {:else}
+      <pre
+        class="m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-6 selection:bg-primary/20">{text}</pre>
+    {/if}
+  </div>
+  {#if settled && (!full || full?.truncated)}<footer
+      class="flex flex-none flex-col gap-2 px-5 pb-4 pt-2 text-[11px] text-muted-foreground"
     >
-      <span class="flex min-w-0 items-center gap-1">
-        <Clock class="h-3 w-3 flex-none" />
-        <span class="truncate">{formatFullTime(item.timestamp)}</span>
-        {#if item.sourceApp}
-          <span class="truncate opacity-70">· {t.source} {item.sourceApp}</span>
-        {/if}
-      </span>
-      {#if isFiles}
-        <span class="flex-none tabular-nums">{i18n.format(t.fileCount, { n: filePaths.length })}</span
+      {#if settled && !full}
+        <Button
+          variant="outline"
+          disabled={loading || item?.id !== settled.id}
+          onclick={() => settled && load(settled, generation)}
+          >{loading ? t.loading : t.fullPreview}</Button
         >
-      {:else if !isImage}
-        <span class="flex-none tabular-nums">{i18n.format(t.charCount, { n: charCount })}</span>
       {/if}
-    </div>
-  {/if}
+      {#if full?.truncated}<span>{t.previewLimited}</span>
+      {:else if settled && !full}<span>{t.previewTruncated}</span>{/if}
+    </footer>{/if}
 </div>

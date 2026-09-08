@@ -1,6 +1,6 @@
 [package]
 name = "clipman"
-version = "2.2.1"
+version = "2.3.0"
 description = "Modern clipboard manager for Windows, macOS, and Linux"
 authors = ["ClipMan Team"]
 license = "MIT"
@@ -33,11 +33,8 @@ serde_json = "1.0"
 serde_bytes = "0.11"
 
 # Async Runtime
-# Only `tokio::time::sleep` is used directly (paste.rs); the async runtime
-# itself comes from Tauri (`tauri::async_runtime`), which enables the wider
-# tokio feature set. Cargo unions features across the graph, so `time` here is
-# sufficient for this crate's own usage.
-tokio = { version = "1.40", features = ["time"] }
+# Tauri owns the runtime; we use time for marker expiry and sync for the shared use guard.
+tokio = { version = "1.40", features = ["time", "sync"] }
 
 data-encoding = "2.6"
 sha2 = "0.10"

@@ -8,7 +8,7 @@ const DATA_FILES: [&str; 4] = [
     "clipman.db-wal",
     "clipman.db-journal",
 ];
-pub const CURRENT_DB_USER_VERSION: i64 = 2;
+pub const CURRENT_DB_USER_VERSION: i64 = 3;
 const THUMBNAIL_SIZE: u32 = 256;
 const BACKFILL_BATCH_SIZE: i64 = 100;
 
@@ -40,6 +40,48 @@ pub fn upgrade_clip_database_to_current(
 
     if user_version < 2 {
         backfill_v2_search_columns(conn)?;
+        upgrade.needs_fts_rebuild = true;
+    }
+
+    if user_version < 3 {
+        let mut cursor = 0;
+        loop {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let ids = {
+                let mut stmt = tx.prepare("SELECT rowid,id FROM clips WHERE content_type='files' AND rowid>?1 ORDER BY rowid LIMIT ?2").map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(rusqlite::params![cursor, BACKFILL_BATCH_SIZE], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .map_err(|e| e.to_string())?;
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?
+            };
+            if ids.is_empty() {
+                break;
+            }
+            for (rowid, id) in ids {
+                let content: Vec<u8> = tx
+                    .query_row("SELECT content FROM clips WHERE id=?1", [&id], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|e| e.to_string())?;
+                let encoded = crate::storage::encode_file_paths(&crate::storage::split_file_paths(
+                    &String::from_utf8_lossy(&content),
+                ));
+                tx.execute(
+                    "UPDATE clips SET content=?1, content_hash=?2 WHERE id=?3",
+                    rusqlite::params![
+                        encoded.as_bytes(),
+                        crate::storage::hash_bytes(encoded.as_bytes()),
+                        id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                cursor = rowid;
+            }
+            tx.commit().map_err(|e| e.to_string())?;
+        }
         upgrade.needs_fts_rebuild = true;
     }
 
@@ -111,7 +153,7 @@ fn backfill_content_hashes(conn: &rusqlite::Connection) -> Result<(), String> {
                 .map_err(|e| format!("Failed to read content for hash backfill: {}", e))?;
             tx.execute(
                 "UPDATE clips SET content_hash = ?1 WHERE id = ?2",
-                rusqlite::params![hash_bytes(&content), &id],
+                rusqlite::params![crate::storage::hash_bytes(&content), &id],
             )
             .map_err(|e| format!("Failed to backfill content hash: {}", e))?;
         }
@@ -189,14 +231,6 @@ fn thumbnail_png(image_bytes: &[u8]) -> Option<Vec<u8>> {
         .write_to(&mut cursor, image::ImageFormat::Png)
         .ok()?;
     Some(cursor.into_inner())
-}
-
-fn hash_bytes(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
 }
 
 fn reset_clips_table(conn: &rusqlite::Connection) -> Result<(), String> {

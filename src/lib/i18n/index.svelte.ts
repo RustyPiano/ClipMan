@@ -4,6 +4,18 @@ export type Locale = 'zh-CN' | 'en';
 
 export interface Translations {
   // App
+  copiedOnly: string;
+  searchLimit: string;
+  previewToggle: string;
+  actions: string;
+  mergeImagesSkipped: string;
+  capturePausedNotice: string;
+  ignoredAppsPlatform: string;
+  fullPreview: string;
+  previewTruncated: string;
+  previewLimited: string;
+  toggleSelection: string;
+  searchPendingHint: string;
   appName: string;
   appTagline: string;
 
@@ -208,6 +220,18 @@ export interface Translations {
 
 const zh: Translations = {
   // App
+  copiedOnly: '已复制，自动粘贴未完成，请在目标应用手动粘贴。',
+  searchLimit: '仅显示前 1000 条结果，请缩小搜索范围。',
+  previewToggle: '切换预览',
+  actions: '条目操作',
+  mergeImagesSkipped: '合并时跳过 {n} 张图片',
+  capturePausedNotice: '剪贴板采集已暂停，可从托盘恢复。',
+  ignoredAppsPlatform: '应用排除目前仅支持 macOS。',
+  fullPreview: '展开预览',
+  previewTruncated: '正在显示内容摘要',
+  previewLimited: '仅预览前 1 MiB，复制和粘贴仍使用完整内容',
+  toggleSelection: '选择 / 取消选择',
+  searchPendingHint: '搜索尚未完成，请稍后再按回车。',
   appName: 'ClipMan',
   appTagline: '高效的剪贴板管理工具',
 
@@ -412,6 +436,18 @@ const zh: Translations = {
 
 const en: Translations = {
   // App
+  copiedOnly: 'Copied. Automatic paste was unavailable; paste manually in the target app.',
+  searchLimit: 'Showing the first 1000 results. Refine your search.',
+  previewToggle: 'Toggle preview',
+  actions: 'Item actions',
+  mergeImagesSkipped: 'Merge skips {n} image(s)',
+  capturePausedNotice: 'Clipboard capture is paused. Resume it from the tray.',
+  ignoredAppsPlatform: 'App exclusions are currently supported only on macOS.',
+  fullPreview: 'Expand preview',
+  previewTruncated: 'Showing a content excerpt',
+  previewLimited: 'Preview limited to 1 MiB. Copy and paste use the full content.',
+  toggleSelection: 'Select / deselect',
+  searchPendingHint: 'Search is still running. Press Enter again when it finishes.',
   appName: 'ClipMan',
   appTagline: 'Efficient clipboard manager',
 
