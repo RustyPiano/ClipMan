@@ -8,13 +8,13 @@
 
 ## 当前状态一句话
 
-**v2.3.0 发布已准备完成，等待 main CI 后推送标签**：QuickBar 与全仓可靠性重构、版本文件和双语发布说明均已就绪。
+**v2.3.0 已正式发布**：QuickBar 与全仓可靠性重构已上线，17 个跨平台附件和 updater `latest.json` 均已公开。
 
 ## 工作区
 
-- v2.2.1 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），`www.clipman.top` 已部署 2.2.1 下载链接；签名私钥目录 `ClipMan-signing/` 保持忽略。
+- v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
 
-- v2.3.0 待发布内容：QuickBar 重构与统一视觉、虚拟列表/搜索/详情缓存、统一取用流程，以及全仓审计修复（设置并发和失败保护、真实数据路径、捕获顺序、历史上限、无损文件列表、粘贴校验、合并内存上限、v3 升级备份、QA/发布门禁与依赖更新）。
+- v2.3.0 发布内容：QuickBar 重构与统一视觉、虚拟列表/搜索/详情缓存、统一取用流程，以及全仓审计修复（设置并发和失败保护、真实数据路径、捕获顺序、历史上限、无损文件列表、粘贴校验、合并内存上限、v3 升级备份、QA/发布门禁与依赖更新）。
 
 ## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 
@@ -31,7 +31,7 @@ bun run test:ui                          # Chromium + WebKit，36 项
 
 ## 待办（按优先级）
 
-1. 用 v2.2.1 正式包实机验证 Linux，并回归 v2.1→v2.2.1 updater 路径。
+1. 用 v2.3.0 正式包实机验证 Linux，并回归 v2.2.1→v2.3.0 updater 路径。
 2. 发布前用正式签名包复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 3. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
