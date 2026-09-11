@@ -40,15 +40,15 @@ export interface ClipDetail {
 }
 
 /**
- * Application settings
- */
-/**
  * How text clips are pasted. Backend values (settings.rs PASTE_FORMATS):
  * original (as copied), takePlain (ClipMan-mediated takes are plain),
  * globalPlain (captured rich text is flattened system-wide).
  */
 export type PasteFormat = 'original' | 'takePlain' | 'globalPlain';
 
+/**
+ * Application settings
+ */
 export interface Settings {
   globalShortcut: string;
   autoPaste: boolean;

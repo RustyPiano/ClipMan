@@ -132,7 +132,7 @@
   }
 
   // `plain` is the explicit override (⌥Enter); undefined follows the
-  // paste-plain-by-default setting inside the store's useClip.
+  // paste-format mode inside the store's useClip.
   async function useSelection(mode: PasteMode = 'default', plain?: boolean, slot?: number) {
     if (clipboardStore.isUsing) return;
     const revision = selectionStore.beginUse();

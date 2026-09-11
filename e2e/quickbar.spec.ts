@@ -206,9 +206,7 @@ test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page
     .poll(() =>
       page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
     )
-    .toEqual([
-      { cmd: 'paste_clip', args: { id: 'plain-default', mode: 'default', plain: true } },
-    ]);
+    .toEqual([{ cmd: 'paste_clip', args: { id: 'plain-default', mode: 'default', plain: true } }]);
   await page.getByRole('combobox').fill('plain-inverted');
   await page.keyboard.press('Alt+Enter');
   await expect

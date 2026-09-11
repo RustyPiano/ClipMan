@@ -102,6 +102,16 @@ fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
     }
 }
 
+/// Whether the live clipboard is a rich-text write whose plain-text alt is
+/// exactly `text` — used to re-flatten ⌥Enter's one-off rich-paste residue
+/// without ever touching a newer copy.
+pub(crate) fn clipboard_holds_rich_text(clipboard: &mut Clipboard, text: &str) -> bool {
+    matches!(
+        read_clipboard_snapshot(clipboard),
+        Some(ClipboardSnapshot::Text { text: current, html }) if current == text && html.is_some()
+    )
+}
+
 /// Decides whether a freshly observed clipboard marker should be dispatched to
 /// storage, advancing `last_marker` as a side effect.
 ///
@@ -344,6 +354,17 @@ impl ClipboardMonitor {
             Self::is_self_copied(last_copied_by_us, &marker)
         });
         if !dispatch {
+            // globalPlain: re-copying already-recorded content re-introduces the
+            // rich flavor with an unchanged marker; flatten it again so the
+            // direct-paste promise holds. Our own writes (⌥Enter's rich paste,
+            // the strip itself) are excluded by the self-copy marker.
+            if let ClipboardSnapshot::Text { text, html } = &snapshot {
+                if Self::should_strip_rich_text(app_handle, html)
+                    && !Self::is_self_copied(last_copied_by_us, &marker)
+                {
+                    Self::strip_live_rich_text(app_handle, text);
+                }
+            }
             return;
         }
 
@@ -404,6 +425,11 @@ impl ClipboardMonitor {
 
         let settings = app_handle.state::<AppState>().settings.get();
         let max_text_bytes = settings.max_text_bytes;
+        // Decide from the *pre-clamp* html: an oversized companion is dropped
+        // from the record below, but the live pasteboard is still rich and the
+        // mode promises plain direct pastes. read_clipboard_snapshot already
+        // filters empty html, so presence means rich.
+        let strip_rich = settings.strips_rich_text_at_capture() && html.is_some();
 
         // Oversized Text/Files content is skipped entirely rather than
         // truncated (§5): a partial path list or partial text is worse than
@@ -423,10 +449,6 @@ impl ClipboardMonitor {
         }
 
         let html = clamp_html_to_size_limit(html, max_text_bytes);
-        // globalPlain strips the rich flavor from the live clipboard after the
-        // record is stored; an empty/absent html companion needs no rewrite.
-        let strip_rich = settings.strips_rich_text_at_capture()
-            && html.as_deref().is_some_and(|value| !value.is_empty());
 
         log::info!("📋 Text clipboard changed: {} chars", text.len());
         let item = ClipItem {
@@ -442,18 +464,45 @@ impl ClipboardMonitor {
             source_app,
             html,
         };
-        Self::save_to_storage(app_handle, item);
+        let persisted = Self::save_to_storage(app_handle, item);
 
-        // globalPlain mode: flatten the live clipboard now that the rich copy
-        // is durably recorded, so a direct paste (without QuickBar) anywhere is
-        // plain text. The strip write uses the plain-text marker (D5) — the
-        // same value recorded above — so the monitor treats it as our own
-        // write and never re-captures it.
-        if strip_rich {
-            let marker_state = app_handle.state::<AppState>().last_copied_by_us.clone();
-            if let Err(e) = crate::paste::strip_rich_text_from_clipboard(text, marker_state) {
-                log::warn!("Failed to strip rich text from clipboard: {}", e);
-            }
+        // globalPlain mode: flatten the live clipboard once the copy is durably
+        // recorded (or already known — dedup). If the insert failed, the live
+        // clipboard holds the only copy of the rich flavor, so keep it. The
+        // strip write uses the plain-text marker (D5) — the same value recorded
+        // above — so the monitor treats it as our own write and never
+        // re-captures it.
+        if strip_rich && persisted {
+            Self::strip_live_rich_text(app_handle, text);
+        }
+    }
+
+    /// Whether globalPlain mode is on and the snapshot carries a rich-text
+    /// (html) companion.
+    fn should_strip_rich_text(app_handle: &AppHandle, html: &Option<String>) -> bool {
+        app_handle
+            .state::<crate::AppState>()
+            .settings
+            .get()
+            .strips_rich_text_at_capture()
+            && html.is_some()
+    }
+
+    /// Rewrite the live system clipboard to plain text (globalPlain). Guarded
+    /// by the shared clipboard lock: a QuickBar take may be writing at this
+    /// moment, and one missed flatten beats clobbering the content the user
+    /// just asked to paste.
+    fn strip_live_rich_text(app_handle: &AppHandle, text: &str) {
+        use crate::AppState;
+
+        let state = app_handle.state::<AppState>();
+        if state.clipboard_use_lock.try_lock().is_err() {
+            log::debug!("Skipping globalPlain strip: a clipboard use is in flight");
+            return;
+        }
+        let marker_state = state.last_copied_by_us.clone();
+        if let Err(e) = crate::paste::strip_rich_text_from_clipboard(text, marker_state) {
+            log::warn!("Failed to strip rich text from clipboard: {}", e);
         }
     }
 
@@ -588,7 +637,11 @@ impl ClipboardMonitor {
         crate::safe_lock(last_copied_by_us).as_ref() == Some(expected_marker)
     }
 
-    fn save_to_storage(app_handle: &AppHandle, item: ClipItem) {
+    /// Persist a captured item. Returns false only when the insert failed —
+    /// `Ok(None)` (item fell outside the history limit) still counts as
+    /// persisted, since the live-clipboard strip decision must not depend on
+    /// history-limit pruning.
+    fn save_to_storage(app_handle: &AppHandle, item: ClipItem) -> bool {
         use crate::storage::FrontendClipItem;
         use crate::tray::update_tray_menu;
         use crate::AppState;
@@ -615,10 +668,15 @@ impl ClipboardMonitor {
                 log::debug!("Updating tray menu...");
                 update_tray_menu(app_handle);
                 log::debug!("Clipboard item saved/updated and tray updated");
+                true
             }
-            Ok(None) => log::debug!("Captured item was already outside the history limit"),
+            Ok(None) => {
+                log::debug!("Captured item was already outside the history limit");
+                true
+            }
             Err(e) => {
                 log::error!("Failed to save clipboard item: {}", e);
+                false
             }
         }
     }

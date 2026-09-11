@@ -12,8 +12,8 @@
 
 ## 工作区
 
-- 「粘贴格式」三模式（2026-09-11，随本条提交，未发布故直接替换了上一版的布尔开关）：`paste_format = original | takePlain | globalPlain`（默认 original，未知值加载时回落 original）。takePlain：经 ClipMan 取用/仅复制均纯文本，⌥回车临时反转富文本；globalPlain 在此之上于**捕获入库后立即把系统剪贴板的富文本重写为纯文本**（`paste::strip_rich_text_from_clipboard`，复用 `write_with_marker`，marker 只哈希纯文本所以监控不会重采集——该性质由既有 D5 测试锁定），直接 Cmd+V 即纯文本。设置页为三选一原生 radio；"…"菜单 ⌥↵ 提示随模式切换；store 经 `settings-changed` 实时刷新。
-- QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`），布尔版纯文本开关（`7b8a8e4`）被本条三模式取代。
+- 「粘贴格式」三模式（2026-09-11，含三路 subagent 审核修复）：`paste_format = original | takePlain | globalPlain`（默认 original，未知值两条路径都归一回 original）。takePlain：经 ClipMan 取用/仅复制均纯文本，⌥回车临时反转富文本；globalPlain 在此之上于捕获入库**成功后**把系统剪贴板富文本重写为纯文本（`paste::strip_rich_text_from_clipboard`，复用 marker 通道不会重采集）。审核修复：重复复制同段富文本（marker 去重早退）也会剥离、剥离决策用截断前 html（超大富文本不再逃逸）、存储失败不剥离（`save_to_storage` 返回 bool）、剥离持 `clipboard_use_lock`（争用即跳过）、⌥回车富文本残留约 2.3 秒后守卫式重剥离。设置页三选一原生 radio；store 经 `settings-changed` 实时刷新。跳过捕获的内容（忽略应用/密钥/超大/暂停）按语义保留富文本，UI 文案已避免绝对承诺。
+- QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`），布尔版纯文本开关（`7b8a8e4`）被三模式取代（`e67c27a`）。
 - 磁盘瘦身：`[profile.dev.package."*"] debug = false` 后 `src-tauri/target` 12 GB→1.9 GB；Playwright 浏览器缓存**保留**（用户决定不再反复装卸，避免重复写盘）。
 - v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
 

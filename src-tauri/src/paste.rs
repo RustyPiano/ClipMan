@@ -279,10 +279,10 @@ fn write_merged_text_to_system_clipboard(
 }
 
 /// Global-plain mode (`globalPlain`): replace the live clipboard's rich text
-/// with its plain-text form right after capture, so a direct paste anywhere
-/// (without QuickBar) is unformatted. The marker hashes the plain text only
-/// (D5) — the same value the monitor just recorded — so the rewrite is
-/// treated as our own write and never re-captured.
+/// with its plain-text form so a direct paste anywhere (without QuickBar) is
+/// unformatted. The marker hashes the plain text only (D5) — the same value
+/// the monitor just recorded — so the rewrite is treated as our own write and
+/// never re-captured.
 pub fn strip_rich_text_from_clipboard(
     text: &str,
     marker_state: Arc<Mutex<Option<CopyMarker>>>,
@@ -290,9 +290,7 @@ pub fn strip_rich_text_from_clipboard(
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
     write_with_marker(marker_state, marker, || {
-        clipboard
-            .set_text(text)
-            .map_err(|e| format!("Failed to strip rich text from clipboard: {e}"))
+        clipboard.set_text(text).map_err(|e| e.to_string())
     })?;
 
     log::info!(
@@ -300,6 +298,40 @@ pub fn strip_rich_text_from_clipboard(
         text.len()
     );
     Ok(())
+}
+
+/// globalPlain: ⌥Enter's rich paste is a one-off. Once the self-copy marker
+/// has expired, flatten the rich residue so later direct pastes are plain
+/// again — but only if the clipboard still holds that exact rich write; a
+/// newer copy made in the meantime must never be clobbered.
+fn schedule_global_plain_restrip(
+    app: AppHandle,
+    text: String,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(COPY_MARKER_TTL + Duration::from_millis(300)).await;
+        if !app
+            .state::<AppState>()
+            .settings
+            .get()
+            .strips_rich_text_at_capture()
+        {
+            return; // Mode switched off while we waited.
+        }
+        let state = app.state::<AppState>();
+        if state.clipboard_use_lock.try_lock().is_err() {
+            return; // A take is writing; leave the residue for the next event.
+        }
+        let Ok(mut clipboard) = Clipboard::new() else {
+            return;
+        };
+        if crate::clipboard::clipboard_holds_rich_text(&mut clipboard, &text) {
+            if let Err(e) = strip_rich_text_from_clipboard(&text, marker_state) {
+                log::warn!("Failed to strip rich-text residue: {}", e);
+            }
+        }
+    });
 }
 
 fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
@@ -318,10 +350,26 @@ pub fn write_clip_to_system_clipboard(
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     match &item.content_type {
-        ContentType::Text => write_text(&mut clipboard, item, marker_state, plain_text_only)?,
-        ContentType::Image => write_image(&mut clipboard, item, marker_state)?,
-        ContentType::Files => write_files(&mut clipboard, item, marker_state, app)?,
+        ContentType::Text => {
+            write_text(&mut clipboard, item, marker_state.clone(), plain_text_only)?
+        }
+        ContentType::Image => write_image(&mut clipboard, item, marker_state.clone())?,
+        ContentType::Files => write_files(&mut clipboard, item, marker_state.clone(), app)?,
     };
+
+    // A rich text write in globalPlain mode is ⌥Enter's one-off inversion;
+    // schedule flattening the residue once the self-copy marker has expired.
+    if !plain_text_only
+        && item.html.as_deref().is_some_and(|html| !html.is_empty())
+        && app
+            .state::<AppState>()
+            .settings
+            .get()
+            .strips_rich_text_at_capture()
+    {
+        let text = String::from_utf8_lossy(&item.content).into_owned();
+        schedule_global_plain_restrip(app.clone(), text, marker_state);
+    }
 
     Ok(())
 }

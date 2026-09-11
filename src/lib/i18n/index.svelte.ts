@@ -326,7 +326,8 @@ const zh: Translations = {
   pasteFormatTakePlain: '取用时纯文本',
   pasteFormatTakePlainDesc: '经 ClipMan 取用或复制时去除格式；直接 Cmd+V 仍粘贴原格式。',
   pasteFormatGlobalPlain: '始终纯文本',
-  pasteFormatGlobalPlainDesc: '复制被捕获时立即去除富文本，任何地方直接粘贴都是纯文本。',
+  pasteFormatGlobalPlainDesc:
+    '复制被捕获后即去除富文本，之后的直接粘贴即为纯文本（少数跳过捕获的内容除外）。',
   ignoreConcealed: '忽略密码类剪贴板',
   ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
 
@@ -553,7 +554,7 @@ const en: Translations = {
     'Taking or copying through ClipMan strips formatting; a direct Cmd+V keeps the copied format.',
   pasteFormatGlobalPlain: 'Always plain text',
   pasteFormatGlobalPlainDesc:
-    'Rich text is stripped the moment a copy is captured, so every direct paste is plain text.',
+    'Rich text is stripped once a copy is captured, so later direct pastes are plain text.',
   ignoreConcealed: 'Ignore concealed clipboard content',
   ignoreConcealedDesc:
     'Skip clipboard payloads marked as passwords, transient, or excluded from history.',

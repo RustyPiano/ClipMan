@@ -258,11 +258,8 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
         candidate.auto_paste = v;
     }
 
-    if let Some(v) = get("paste_format") {
-        candidate.paste_format = v
-            .as_str()
-            .map(String::from)
-            .unwrap_or(candidate.paste_format);
+    if let Some(v) = get("paste_format").and_then(|v| v.as_str().map(String::from)) {
+        candidate.paste_format = v;
     }
 
     if let Some(v) = get("ignore_concealed").and_then(|v| v.as_bool()) {
@@ -478,6 +475,23 @@ mod tests {
         }
         .normalize_for_load();
         assert_eq!("original", coerced.paste_format);
+
+        // The update path funnels through the same normalization.
+        let updated = Settings {
+            paste_format: " takePlain ".to_string(),
+            ..Settings::default()
+        }
+        .validate_and_normalize()
+        .unwrap();
+        assert_eq!("takePlain", updated.paste_format);
+
+        // A persisted payload missing the key deserializes to "" (serde field
+        // default) and normalizes to original.
+        let missing_key = serde_json::from_value::<Settings>(serde_json::json!({
+            "globalShortcut": "CommandOrControl+Shift+V"
+        }))
+        .unwrap();
+        assert_eq!("original", missing_key.normalize_for_load().paste_format);
     }
 
     #[test]

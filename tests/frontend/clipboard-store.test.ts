@@ -99,6 +99,7 @@ function resetStore() {
   clipboardStore.isLoadingMore = false;
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
+  clipboardStore.pasteFormat = 'original';
   selectionStore.selectedIds.clear();
   toastStore.toasts = [];
 }
@@ -293,6 +294,23 @@ describe('clipboard store races', () => {
     expect(pastes).toHaveLength(2);
     expect(pastes[0].args).toEqual({ id: 'c1', mode: 'default', plain: true });
     expect(pastes[1].args).toEqual({ id: 'c1', mode: 'default', plain: false });
+  });
+
+  test('useClip defaults to plain in takePlain/globalPlain paste-format modes', async () => {
+    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    installTauriInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+
+    const item = clip({ id: 'c1' });
+    clipboardStore.pasteFormat = 'takePlain';
+    await clipboardStore.useClip(item, 'default');
+    clipboardStore.pasteFormat = 'globalPlain';
+    await clipboardStore.useClip(item, 'default');
+
+    const pastes = calls.filter((entry) => entry.cmd === 'paste_clip');
+    expect(pastes.map((entry) => entry.args?.plain)).toEqual([true, true]);
   });
 
   test('useClip toasts paste vs copy on failure based on the resolved action', async () => {
