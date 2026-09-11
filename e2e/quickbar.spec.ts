@@ -80,6 +80,10 @@ test.beforeEach(async ({ page }) => {
       content: btoa('C:\\Users\\me\\report.docx'),
       fileCount: 1,
     };
+    let pastePlainDefault = false;
+    w.__setPastePlain = (value: boolean) => {
+      pastePlainDefault = value;
+    };
     w.calls = [];
     w.emitTestEvent = (event: string, payload: unknown = {}) => {
       for (const handler of listeners.get(event) ?? [])
@@ -99,7 +103,12 @@ test.beforeEach(async ({ page }) => {
           return args.handler;
         }
         if (cmd === 'get_settings')
-          return { autoPaste: true, maxHistoryItems: 10000, capturePaused: false };
+          return {
+            autoPaste: true,
+            maxHistoryItems: 10000,
+            capturePaused: false,
+            pastePlainByDefault: pastePlainDefault,
+          };
         if (cmd === 'check_clipboard_permission') return 'granted';
         if (cmd === 'check_accessibility_permission') return true;
         if (cmd === 'get_pinned_clips')
@@ -185,6 +194,32 @@ test('Enter submits the current query once without waiting for debounce', async 
       page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
     )
     .toEqual([{ cmd: 'paste_clip', args: { id: 'needle', mode: 'default', plain: false } }]);
+});
+
+test('paste_plain_by_default makes Enter plain and ⌥Enter rich', async ({ page }) => {
+  await page.evaluate(() => (window as any).__setPastePlain(true));
+  await page.evaluate(() => (window as any).emitTestEvent('settings-changed'));
+  await page.waitForTimeout(100);
+  await page.getByRole('combobox').fill('plain-default');
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
+    )
+    .toEqual([
+      { cmd: 'paste_clip', args: { id: 'plain-default', mode: 'default', plain: true } },
+    ]);
+  await page.getByRole('combobox').fill('plain-inverted');
+  await page.keyboard.press('Alt+Enter');
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).calls
+          .filter((c: any) => c.cmd === 'paste_clip')
+          .map((c: any) => c.args.plain)
+      )
+    )
+    .toEqual([true, false]);
 });
 
 test('closing the session cancels Enter while a search is running', async ({ page }) => {

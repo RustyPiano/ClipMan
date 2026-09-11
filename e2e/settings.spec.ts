@@ -23,6 +23,7 @@ test.beforeEach(async ({ page }) => {
       globalShortcut: 'CommandOrControl+Shift+V',
       pinnedShortcut: null,
       autoPaste: true,
+      pastePlainByDefault: false,
       ignoreConcealed: true,
       maxHistoryItems: 321,
       trayTextLength: 70,

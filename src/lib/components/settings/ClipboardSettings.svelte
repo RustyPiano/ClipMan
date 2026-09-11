@@ -145,6 +145,18 @@
 
     <div class="flex items-center justify-between">
       <div class="space-y-0.5">
+        <label for="paste-plain-default" class="text-sm font-medium cursor-pointer">
+          {t.pastePlainDefault}
+        </label>
+        <p class="text-xs text-muted-foreground">
+          {t.pastePlainDefaultDesc}
+        </p>
+      </div>
+      <Switch id="paste-plain-default" bind:checked={settings.pastePlainByDefault} />
+    </div>
+
+    <div class="flex items-center justify-between">
+      <div class="space-y-0.5">
         <label for="ignore-concealed" class="text-sm font-medium cursor-pointer">
           {t.ignoreConcealed}
         </label>

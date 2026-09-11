@@ -45,6 +45,8 @@ export interface ClipDetail {
 export interface Settings {
   globalShortcut: string;
   autoPaste: boolean;
+  /** When true, Enter takes text clips as plain text (⌥Enter inverts once). */
+  pastePlainByDefault: boolean;
   ignoreConcealed: boolean;
   pinnedShortcut: string | null;
   maxHistoryItems: number;

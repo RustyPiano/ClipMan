@@ -47,9 +47,10 @@ fn system_locale() -> String {
     locale_for_language(&language)
 }
 
-const LEGACY_SETTINGS_KEYS: [&str; 16] = [
+const LEGACY_SETTINGS_KEYS: [&str; 17] = [
     "global_shortcut",
     "auto_paste",
+    "paste_plain_by_default",
     "ignore_concealed",
     "pinned_shortcut",
     "max_history_items",
@@ -71,6 +72,11 @@ const LEGACY_SETTINGS_KEYS: [&str; 16] = [
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
+    /// When true, taking a text clip writes only its plain-text form (no HTML
+    /// companion), so the default Enter paste lands without formatting;
+    /// ⌥Enter inverts this for one paste. Copy-only writes follow the same
+    /// default so a manual paste into the target app is plain too.
+    pub paste_plain_by_default: bool,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
     pub max_history_items: usize,
@@ -106,6 +112,7 @@ impl Default for Settings {
         Self {
             global_shortcut: "CommandOrControl+Shift+V".to_string(),
             auto_paste: true,
+            paste_plain_by_default: false,
             ignore_concealed: true,
             pinned_shortcut: None,
             max_history_items: 100,
@@ -220,6 +227,10 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
 
     if let Some(v) = get("auto_paste").and_then(|v| v.as_bool()) {
         candidate.auto_paste = v;
+    }
+
+    if let Some(v) = get("paste_plain_by_default").and_then(|v| v.as_bool()) {
+        candidate.paste_plain_by_default = v;
     }
 
     if let Some(v) = get("ignore_concealed").and_then(|v| v.as_bool()) {
@@ -649,6 +660,7 @@ mod tests {
         let new_json = serde_json::json!({
             "globalShortcut": " CommandOrControl+Alt+V ",
             "autoPaste": false,
+            "pastePlainByDefault": true,
             "ignoreConcealed": false,
             "pinnedShortcut": " CommandOrControl+Shift+P ",
             "maxHistoryItems": 200,
@@ -667,6 +679,7 @@ mod tests {
         let legacy_json = serde_json::json!({
             "global_shortcut": " CommandOrControl+Alt+V ",
             "auto_paste": false,
+            "paste_plain_by_default": true,
             "ignore_concealed": false,
             "pinned_shortcut": " CommandOrControl+Shift+P ",
             "max_history_items": 200,
@@ -692,6 +705,7 @@ mod tests {
         for loaded in [new_loaded, legacy_loaded] {
             assert_eq!("CommandOrControl+Alt+V", loaded.global_shortcut);
             assert!(!loaded.auto_paste);
+            assert!(loaded.paste_plain_by_default);
             assert!(!loaded.ignore_concealed);
             assert_eq!(
                 Some("CommandOrControl+Shift+P".to_string()),

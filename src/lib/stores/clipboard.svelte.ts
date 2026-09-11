@@ -40,6 +40,7 @@ class ClipboardStore {
   isLoadingMore = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
+  pastePlainByDefault = $state(false);
   isUsing = $state(false);
   useNotice = $state('');
   capturePaused = $state(false);
@@ -280,10 +281,12 @@ class ClipboardStore {
         autoPaste: boolean;
         maxHistoryItems: number;
         capturePaused: boolean;
+        pastePlainByDefault: boolean;
       }>('get_settings');
       this.autoPaste = settings.autoPaste;
       this.capturePaused = settings.capturePaused;
       this.maxHistoryItems = settings.maxHistoryItems;
+      this.pastePlainByDefault = settings.pastePlainByDefault ?? false;
     } catch (error) {
       console.error('Failed to refresh settings:', error);
     }
@@ -460,7 +463,11 @@ class ClipboardStore {
   }
 
   async useClip(item: ClipItem, mode: PasteMode = 'default', options: { plain?: boolean } = {}) {
-    await this.performUse('paste_clip', { id: item.id, mode, plain: options.plain ?? false }, mode);
+    await this.performUse(
+      'paste_clip',
+      { id: item.id, mode, plain: options.plain ?? this.pastePlainByDefault },
+      mode
+    );
   }
 
   private async performUse(command: string, args: Record<string, unknown>, mode: PasteMode) {

@@ -97,6 +97,8 @@ export interface Translations {
   maxHistoryItemsDesc: string;
   autoPaste: string;
   autoPasteDesc: string;
+  pastePlainDefault: string;
+  pastePlainDefaultDesc: string;
   ignoreConcealed: string;
   ignoreConcealedDesc: string;
 
@@ -188,6 +190,7 @@ export interface Translations {
   close: string;
   reorder: string;
   pastePlain: string;
+  pasteRich: string;
 
   // Files / rich text
   files: string;
@@ -312,6 +315,8 @@ const zh: Translations = {
   maxHistoryItemsDesc: '保留的最大历史记录数量',
   autoPaste: '自动粘贴',
   autoPasteDesc: '从 QuickBar 取用时自动粘回当前应用；关闭后只复制。',
+  pastePlainDefault: '默认纯文本粘贴',
+  pastePlainDefaultDesc: '取用文本时去除格式（仅复制也同样）；⌥回车可临时粘贴富文本。',
   ignoreConcealed: '忽略密码类剪贴板',
   ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
 
@@ -404,6 +409,7 @@ const zh: Translations = {
   close: '关闭',
   reorder: '排序',
   pastePlain: '纯文本粘贴',
+  pasteRich: '富文本粘贴',
 
   // Files / rich text
   files: '文件',
@@ -529,6 +535,9 @@ const en: Translations = {
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
   autoPaste: 'Auto-paste',
   autoPasteDesc: 'Paste selected QuickBar items back into the current app; off means copy only.',
+  pastePlainDefault: 'Paste plain text by default',
+  pastePlainDefaultDesc:
+    'Strip formatting when taking text clips (copy-only too); ⌥Enter temporarily pastes rich text.',
   ignoreConcealed: 'Ignore concealed clipboard content',
   ignoreConcealedDesc:
     'Skip clipboard payloads marked as passwords, transient, or excluded from history.',
@@ -625,6 +634,7 @@ const en: Translations = {
   close: 'Close',
   reorder: 'Reorder',
   pastePlain: 'Paste as plain text',
+  pasteRich: 'Paste rich text',
 
   // Files / rich text
   files: 'Files',

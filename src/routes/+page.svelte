@@ -131,7 +131,9 @@
     }
   }
 
-  async function useSelection(mode: PasteMode = 'default', plain = false, slot?: number) {
+  // `plain` is the explicit override (⌥Enter); undefined follows the
+  // paste-plain-by-default setting inside the store's useClip.
+  async function useSelection(mode: PasteMode = 'default', plain?: boolean, slot?: number) {
     if (clipboardStore.isUsing) return;
     const revision = selectionStore.beginUse();
     const query = clipboardStore.searchQuery;
@@ -228,10 +230,14 @@
       }
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      if (!event.repeat) void useSelection(mod ? 'opposite' : 'default', event.altKey);
+      if (!event.repeat)
+        void useSelection(
+          mod ? 'opposite' : 'default',
+          event.altKey ? !clipboardStore.pastePlainByDefault : undefined
+        );
     } else if (mod && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
-      if (!event.repeat) void useSelection('default', false, Number(event.key) - 1);
+      if (!event.repeat) void useSelection('default', undefined, Number(event.key) - 1);
     } else if (
       mod &&
       event.key.toLowerCase() === 'p' &&
@@ -482,8 +488,9 @@
           >
             <Button variant="ghost" onclick={clearHistory}>{t.clearNonPinned}</Button>
             <p class="border-t border-border px-2 pt-2 text-[11px] leading-relaxed">
-              {modifier}1–9 {t.slot}<br />⌥↵ {t.pastePlain}<br />Alt ←/→ {t.switchPanel}<br
-              />{modifier}⇧↑↓ {t.reorder}
+              {modifier}1–9 {t.slot}<br />⌥↵ {clipboardStore.pastePlainByDefault
+                ? t.pasteRich
+                : t.pastePlain}<br />Alt ←/→ {t.switchPanel}<br />{modifier}⇧↑↓ {t.reorder}
             </p>
           </fieldset>
         </details>
