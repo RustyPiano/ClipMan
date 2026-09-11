@@ -4,7 +4,10 @@ import {
   comparePinOrder,
   decodeClipText,
   decodeFilePaths,
+  fileBasename,
+  fileDirname,
   getRecentDisplayItems,
+  looksLikeDirectory,
 } from '../../src/lib/utils/clip-items';
 import type { ClipItem } from '../../src/lib/types';
 
@@ -180,4 +183,30 @@ test('file previews decode JSON without splitting newlines inside one filename',
     content: Buffer.from(JSON.stringify(paths), 'utf8').toString('base64'),
   } as ClipItem;
   expect(decodeFilePaths(item)).toEqual(paths);
+});
+
+describe('file path display helpers', () => {
+  test('fileBasename splits on both POSIX and Windows separators', () => {
+    expect(fileBasename('/tmp/report.pdf')).toBe('report.pdf');
+    expect(fileBasename('C:\\Users\\me\\report.docx')).toBe('report.docx');
+    expect(fileBasename('report.pdf')).toBe('report.pdf');
+    expect(fileBasename('/tmp/dir/')).toBe('dir');
+    expect(fileBasename('C:\\dir\\')).toBe('dir');
+  });
+
+  test('fileDirname returns the directory part or empty for bare names', () => {
+    expect(fileDirname('/tmp/report.pdf')).toBe('/tmp');
+    expect(fileDirname('C:\\Users\\me\\report.docx')).toBe('C:\\Users\\me');
+    expect(fileDirname('report.pdf')).toBe('');
+    expect(fileDirname('/report.pdf')).toBe('');
+  });
+
+  test('looksLikeDirectory flags trailing separators and extensionless basenames', () => {
+    expect(looksLikeDirectory('/tmp/dir/')).toBe(true);
+    expect(looksLikeDirectory('C:\\Users\\me\\')).toBe(true);
+    expect(looksLikeDirectory('/tmp/dir')).toBe(true);
+    expect(looksLikeDirectory('C:\\Users\\me\\Projects')).toBe(true);
+    expect(looksLikeDirectory('/tmp/report.pdf')).toBe(false);
+    expect(looksLikeDirectory('C:\\Users\\me\\report.docx')).toBe(false);
+  });
 });

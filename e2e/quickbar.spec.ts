@@ -23,7 +23,7 @@ test.beforeEach(async ({ page }) => {
       timestamp: Math.floor(Date.now() / 1000) - index * 60,
       isPinned: false,
       pinOrder: null,
-      label: null,
+      label: null as string | null,
       sourceApp: 'Editor',
       groupName: null,
       hasHtml: false,
@@ -51,6 +51,10 @@ test.beforeEach(async ({ page }) => {
     context.fillRect(0, 0, 80, 40);
     context.fillStyle = '#d9e5ff';
     context.fillRect(12, 12, 56, 16);
+    clips[1] = {
+      ...clips[1],
+      sourceApp: 'A Very Long Source Application Name That Forces Metadata Truncation',
+    };
     clips[2] = {
       ...clips[2],
       contentType: 'image',
@@ -62,6 +66,19 @@ test.beforeEach(async ({ page }) => {
       contentType: 'files',
       content: btoa('/tmp/report.pdf\n/tmp/budget.xlsx'),
       fileCount: 2,
+    };
+    clips[6] = { ...clips[6], label: 'Build gate' };
+    clips[7] = {
+      ...clips[7],
+      contentType: 'files',
+      content: btoa('/tmp/report.pdf\n/tmp/budget.xlsx\n/tmp/notes.md'),
+      fileCount: 3,
+    };
+    clips[8] = {
+      ...clips[8],
+      contentType: 'files',
+      content: btoa('C:\\Users\\me\\report.docx'),
+      fileCount: 1,
     };
     w.calls = [];
     w.emitTestEvent = (event: string, payload: unknown = {}) => {
@@ -327,12 +344,13 @@ test('row mouse actions target their own item without pasting, and editing keeps
   const row = page.locator('#clip-item-clip-1');
   await row.hover();
   await row.getByRole('button', { name: 'Copy', exact: true }).click();
+  await expect(row.locator('button[aria-label="Copy"]')).toHaveClass(/text-emerald-500/);
   await row.getByRole('button', { name: 'Pin', exact: true }).click();
   await expect(row.getByRole('button', { name: 'Unpin', exact: true })).toBeVisible();
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(64);
+  expect((await row.boundingBox())?.height).toBe(88); // 5.5rem at the default 16px root font
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
@@ -384,6 +402,10 @@ test('row actions never reserve text width or cover the content line', async ({ 
   expect(actions.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
   const slot = (await content.locator('.tabular-nums').boundingBox())!;
   expect(actions.y).toBeGreaterThanOrEqual(slot.y + slot.height);
+  // The metadata line reserves right padding for the action cluster, so the
+  // hovered buttons never overlap the (truncated) metadata text itself.
+  const metaText = (await row.locator('.row-meta > span.truncate').boundingBox())!;
+  expect(actions.x).toBeGreaterThanOrEqual(metaText.x + metaText.width - 1);
   await row.getByRole('button', { name: 'Copy', exact: true }).click();
   expect(
     await page.evaluate(() =>
@@ -392,4 +414,24 @@ test('row actions never reserve text width or cover the content line', async ({ 
       )
     )
   ).toBe(true);
+});
+
+test('file rows show basenames with +N badge and Windows paths split correctly', async ({
+  page,
+}) => {
+  const multi = page.locator('#clip-item-clip-7');
+  await expect(multi).toContainText('report.pdf');
+  await expect(multi).toContainText('budget.xlsx');
+  await expect(multi.getByText('+1')).toBeVisible();
+  await expect(multi).not.toContainText('/tmp/');
+
+  const windows = page.locator('#clip-item-clip-8');
+  await expect(windows).toContainText('report.docx');
+  await expect(windows).toContainText('C:\\Users\\me');
+});
+
+test('labeled rows keep a one-line preview next to the label', async ({ page }) => {
+  const labeled = page.locator('#clip-item-clip-6');
+  await expect(labeled).toContainText('Build gate');
+  await expect(labeled).toContainText('bun run check');
 });

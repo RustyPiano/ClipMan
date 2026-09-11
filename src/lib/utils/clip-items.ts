@@ -60,6 +60,30 @@ export function decodeClipText(item: ClipItem, emptyContent: string, decodeFaile
   return text;
 }
 
+/** Last separator position, accepting both POSIX and Windows separators. */
+function lastSeparator(path: string): number {
+  return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+}
+
+/** Pure string helpers (no disk access) for rendering Files clips. */
+export function fileBasename(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  const slash = lastSeparator(trimmed);
+  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+}
+
+export function fileDirname(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  const slash = lastSeparator(trimmed);
+  return slash > 0 ? trimmed.slice(0, slash) : '';
+}
+
+// A trailing separator or an extensionless basename reads as a directory.
+export function looksLikeDirectory(path: string): boolean {
+  if (path.endsWith('/') || path.endsWith('\\')) return true;
+  return !fileBasename(path).includes('.');
+}
+
 /**
  * Decode the backend's JSON path list, with newline-separated legacy support.
  * Returns [] for non-files clips or when decoding fails.

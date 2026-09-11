@@ -11,7 +11,7 @@
   import { i18n } from '$lib/i18n';
   import { hasTauriRuntime } from '$lib/utils/tauri';
   import { isMac } from '$lib/utils/platform';
-  import { SEARCH_INPUT_ID } from '$lib/constants';
+  import { SEARCH_INPUT_ID, ROW_HEIGHT_REM } from '$lib/constants';
   import type { ClipItem, PasteMode } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
@@ -52,7 +52,7 @@
   let previewEnabled = $state(localStorage.getItem('preview-enabled') !== 'false');
   const showPreview = $derived(previewEnabled && viewportWidth >= 620 && !!selectedItem);
   // One shared rem-based height keeps CSS, keyboard reveal and virtualization in sync.
-  let rowHeight = $state(64);
+  let rowHeight = $state(ROW_HEIGHT_REM * 16);
   const OVERSCAN = 4;
   const startIndex = $derived(
     Math.max(0, Math.min(displayItems.length - 1, Math.floor(scrollTop / rowHeight) - OVERSCAN))
@@ -112,7 +112,8 @@
   function observeScroller(element: HTMLDivElement) {
     const observer = new globalThis.ResizeObserver(() => {
       viewportHeight = element.clientHeight;
-      rowHeight = parseFloat(globalThis.getComputedStyle(document.documentElement).fontSize) * 4;
+      rowHeight =
+        parseFloat(globalThis.getComputedStyle(document.documentElement).fontSize) * ROW_HEIGHT_REM;
     });
     observer.observe(element);
     observer.observe(document.documentElement);

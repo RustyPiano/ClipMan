@@ -512,16 +512,16 @@ class ClipboardStore {
     }
   }
 
-  async copyToClipboard(item: ClipItem) {
-    if (
-      await this.performUse(
-        'copy_to_system_clipboard',
-        { clipId: item.id },
-        this.autoPaste ? 'opposite' : 'default'
-      )
-    ) {
+  async copyToClipboard(item: ClipItem): Promise<boolean> {
+    const succeeded = await this.performUse(
+      'copy_to_system_clipboard',
+      { clipId: item.id },
+      this.autoPaste ? 'opposite' : 'default'
+    );
+    if (succeeded) {
       toastStore.add(i18n.t.copied, 'success');
     }
+    return succeeded;
   }
 
   /** Synchronously read a cached full clip (no fetch). */

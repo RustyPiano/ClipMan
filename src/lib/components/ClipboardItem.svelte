@@ -1,12 +1,42 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { ClipItem } from '$lib/types';
   import { i18n } from '$lib/i18n';
-  import { decodeClipText, decodeFilePaths } from '$lib/utils/clip-items';
+  import {
+    decodeClipText,
+    decodeFilePaths,
+    fileBasename,
+    fileDirname,
+    looksLikeDirectory,
+  } from '$lib/utils/clip-items';
+  import { ROW_HEIGHT_REM } from '$lib/constants';
   import { getNow } from '$lib/utils/now.svelte';
-  import { FileText, Files, Pin, Check, Copy, Pencil, Trash2, X, Square } from 'lucide-svelte';
+  import {
+    FileText,
+    Files,
+    File as FileIcon,
+    Folder,
+    Image as ImageIcon,
+    Pin,
+    Check,
+    Copy,
+    Pencil,
+    Trash2,
+    X,
+    Square,
+  } from 'lucide-svelte';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import Button from './ui/Button.svelte';
+
+  type RowAction = {
+    id: string;
+    icon: typeof Copy;
+    label: string;
+    run: () => void | Promise<void>;
+    pressed?: boolean;
+    success?: boolean;
+  };
 
   let {
     item,
@@ -36,14 +66,12 @@
   const text = $derived(
     item.contentType === 'text' ? decodeClipText(item, t.emptyContent, t.decodeFailed) : ''
   );
-  const title = $derived(
-    item.label?.trim() ||
-      (item.contentType === 'text'
-        ? text
-        : item.contentType === 'files'
-          ? paths[0]?.split(/[/\\]/).pop() || t.files
-          : t.image)
-  );
+  // Three sections inside the fixed-height row: an optional label title line,
+  // a content preview (two text lines / file paths / an inline image thumbnail;
+  // compressed to one line when a label shares the row) and a metadata line.
+  const trimmedLabel = $derived((item.label ?? '').trim());
+  const visiblePaths = $derived(trimmedLabel ? paths.slice(0, 1) : paths.slice(0, 2));
+  const fileCount = $derived(item.fileCount ?? paths.length);
   const age = $derived(Math.max(0, getNow() - item.timestamp * 1000));
   const time = $derived(
     age < 60000
@@ -56,23 +84,49 @@
   let editing = $state(false);
   let draft = $state('');
   let saving = $state(false);
+  // Per-instance copy feedback: if the row scrolls out of the virtualized
+  // window before the 1.5s timeout fires, the component unmounts and the
+  // checkmark simply disappears early — acceptable for a transient hint.
+  let isCopied = $state(false);
+  let copyTimeout: ReturnType<typeof setTimeout>;
   const busy = $derived(clipboardStore.isUsing || clipboardStore.isSearchPending || saving);
 
-  const rowActions = $derived([
+  onDestroy(() => clearTimeout(copyTimeout));
+
+  async function handleCopy() {
+    if (await clipboardStore.copyToClipboard(item)) {
+      isCopied = true;
+      clearTimeout(copyTimeout);
+      copyTimeout = setTimeout(() => (isCopied = false), 1500);
+    }
+  }
+
+  // Stable ids keep the keyed each (and keyboard focus) intact when the pin
+  // or multi-select labels/icons flip.
+  const rowActions = $derived<RowAction[]>([
     {
+      id: 'select',
       icon: multiSelected ? Check : Square,
       label: t.toggleSelection,
       run: onToggleSelect,
       pressed: multiSelected,
     },
-    { icon: Copy, label: t.copy, run: () => clipboardStore.copyToClipboard(item) },
     {
+      id: 'copy',
+      icon: isCopied ? Check : Copy,
+      label: t.copy,
+      run: () => handleCopy(),
+      success: isCopied,
+    },
+    {
+      id: 'pin',
       icon: Pin,
       label: item.isPinned ? t.unpin : t.pin,
       run: () => clipboardStore.togglePin(item.id),
       pressed: item.isPinned,
     },
     {
+      id: 'label',
       icon: Pencil,
       label: t.editLabel,
       run: () => {
@@ -80,7 +134,7 @@
         editing = true;
       },
     },
-    { icon: Trash2, label: t.delete, run: () => clipboardStore.deleteItem(item.id) },
+    { id: 'delete', icon: Trash2, label: t.delete, run: () => clipboardStore.deleteItem(item.id) },
   ]);
 
   async function saveLabel(event: globalThis.SubmitEvent) {
@@ -113,14 +167,15 @@
   aria-selected={multiSelecting ? multiSelected : selected}
   aria-rowindex={position + 1}
   data-active={selected || multiSelected}
-  class="clip-row group relative flex h-16 w-full items-center rounded-lg pr-2"
+  style:height={`${ROW_HEIGHT_REM}rem`}
+  class="clip-row group relative flex w-full items-stretch rounded-lg pr-2"
   onmouseenter={() => {
     if (!editing) onHover();
   }}
 >
-  <div role="gridcell" class="min-w-0 flex-1">
-    {#if editing}
-      <form data-row-editor class="flex items-center gap-1 pl-3" onsubmit={saveLabel}>
+  {#if editing}
+    <div role="gridcell" class="min-w-0 flex-1 self-stretch">
+      <form data-row-editor class="flex h-full items-center gap-1 pl-3" onsubmit={saveLabel}>
         <input
           aria-label={t.editLabel}
           class="h-8 min-w-0 flex-1 rounded border border-input bg-background px-2 text-sm"
@@ -156,75 +211,155 @@
           onclick={() => (editing = false)}><X class="h-4 w-4" /></Button
         >
       </form>
-    {:else}
+    </div>
+  {:else}
+    {#if selected || multiSelected}
+      <!-- Left accent indicator; decoration only, never eats row clicks -->
+      <div
+        class="pointer-events-none absolute bottom-[25%] left-0 top-[25%] w-[3px] rounded-r-full bg-primary"
+        aria-hidden="true"
+      ></div>
+    {/if}
+    {#if multiSelected}
+      <!-- Multi-select check badge -->
+      <div
+        class="pointer-events-none absolute right-2 top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+        aria-hidden="true"
+      >
+        <Check class="h-3 w-3" />
+      </div>
+    {/if}
+    <div role="gridcell" class="min-w-0 flex-1">
       <button
         type="button"
         tabindex="-1"
-        class="flex h-16 w-full min-w-0 items-center gap-3 px-3 text-left"
+        class="flex h-full w-full min-w-0 items-stretch gap-2.5 pl-3.5 text-left"
         disabled={busy}
         onmousedown={(event) => event.preventDefault()}
         onclick={use}
       >
+        <!-- Left column: number slot + content type icon -->
         <span
-          class="flex h-8 w-8 flex-none items-center justify-center overflow-hidden row-icon rounded-lg text-muted-foreground"
+          class="flex w-6 flex-none flex-col items-center gap-1 self-center text-muted-foreground"
         >
-          {#if item.contentType === 'image'}<img
-              src={item.content}
-              alt={t.image}
-              width="32"
-              height="32"
-              class="h-8 w-8 object-contain"
-              loading="lazy"
-            />
-          {:else if item.contentType === 'files'}<Files class="h-4 w-4" />
-          {:else}<FileText class="h-4 w-4" />{/if}
-        </span>
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium text-foreground">{title}</span>
-          <span class="mt-1 block truncate text-[11px] text-muted-foreground">
-            {item.sourceApp ? `${item.sourceApp} · ` : ''}{time}
-            {#if item.contentType === 'files'}
-              · {i18n.format(t.fileCount, { n: item.fileCount ?? paths.length })}{/if}
-            {#if item.hasHtml}
-              · Aa{/if}
+          {#if slotNumber}
+            <kbd class="kbd-keycap tabular-nums h-4 min-w-4 justify-center scale-95 text-[9px]"
+              >{slotNumber}</kbd
+            >
+          {/if}
+          <span class="flex h-4 w-4 items-center justify-center">
+            {#if item.contentType === 'image'}
+              <ImageIcon class="h-3.5 w-3.5" />
+            {:else if item.contentType === 'files'}
+              {#if paths.length > 1}
+                <Files class="h-3.5 w-3.5" />
+              {:else if looksLikeDirectory(paths[0] ?? '')}
+                <Folder class="h-3.5 w-3.5" />
+              {:else}
+                <FileIcon class="h-3.5 w-3.5" />
+              {/if}
+            {:else}
+              <FileText class="h-3.5 w-3.5" />
+            {/if}
           </span>
         </span>
-        {#if item.isPinned}<Pin
-            class="mt-3 h-3.5 w-3.5 flex-none self-start text-muted-foreground"
-          />{/if}
-        {#if slotNumber}<span
-            class="mt-3 w-3 flex-none self-start text-right text-[10px] tabular-nums text-muted-foreground"
-            aria-hidden="true">{slotNumber}</span
-          >{/if}
+        <!-- Content column: title, preview, metadata -->
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
+          {#if trimmedLabel}
+            <span class="truncate text-sm font-semibold text-foreground">{trimmedLabel}</span>
+          {/if}
+          {#if item.contentType === 'text'}
+            <span
+              class={trimmedLabel
+                ? 'block truncate font-mono text-[13px] leading-5 text-foreground'
+                : 'block break-all font-mono text-[13px] leading-5 text-foreground line-clamp-2'}
+              >{text}</span
+            >
+          {:else if item.contentType === 'files'}
+            {#each visiblePaths as path, index (path)}
+              {#if index === visiblePaths.length - 1 && paths.length > visiblePaths.length}
+                <span class="flex min-w-0 items-center gap-1">
+                  <span class="truncate font-mono text-[13px] leading-5 text-foreground"
+                    >{fileBasename(path) || path}</span
+                  >
+                  <span
+                    class="w-fit flex-none rounded border border-border/50 bg-muted/50 px-1.5 text-[10px] font-semibold leading-4 text-muted-foreground/70"
+                    title={i18n.format(t.fileCount, { n: fileCount })}
+                  >
+                    +{paths.length - visiblePaths.length}
+                  </span>
+                </span>
+              {:else}
+                <span class="block truncate font-mono text-[13px] leading-5 text-foreground"
+                  >{fileBasename(path) || path}</span
+                >
+              {/if}
+            {/each}
+            {#if paths.length === 1 && fileDirname(paths[0])}
+              <span class="block truncate font-mono text-[11px] leading-4 text-muted-foreground/70"
+                >{fileDirname(paths[0])}</span
+              >
+            {/if}
+          {:else if item.content}
+            <!-- Inline image thumbnail; shrinks when a label title shares the row. -->
+            <img
+              src={item.content}
+              alt={trimmedLabel || t.image}
+              class={trimmedLabel
+                ? 'max-h-8 w-fit rounded-md border border-border object-contain'
+                : 'max-h-[52px] w-fit rounded-md border border-border object-contain'}
+              loading="lazy"
+            />
+          {/if}
+          <span class="row-meta mt-auto flex min-w-0 items-center gap-1.5 pt-0.5 pr-[8.75rem]">
+            <span class="truncate text-[11px] font-medium text-muted-foreground/70">
+              {time}{#if item.sourceApp}&nbsp;·&nbsp;{item.sourceApp}{/if}
+              {#if item.contentType === 'files'}&nbsp;·&nbsp;{i18n.format(t.fileCount, {
+                  n: fileCount,
+                })}{/if}
+            </span>
+            {#if item.hasHtml}
+              <span
+                class="flex-none rounded border border-border/50 bg-muted/50 px-1 text-[9px] font-semibold leading-tight text-muted-foreground/70"
+                title={t.richTextBadge}
+              >
+                Aa
+              </span>
+            {/if}
+          </span>
+        </span>
       </button>
-    {/if}
-  </div>
-  <div
-    role="gridcell"
-    class="row-actions absolute bottom-0.5 right-2 {editing
-      ? 'hidden'
-      : 'flex'} items-center gap-0.5 rounded-md px-0.5 {selected || editing || multiSelected
-      ? 'active'
-      : ''}"
-  >
-    {#each rowActions as action (action.icon)}
-      <Button
-        variant="ghost"
-        size="icon"
-        class={action.pressed ? 'text-primary' : 'text-muted-foreground'}
-        style="width: 1.75rem; height: 1.75rem"
-        title={action.label}
-        aria-label={action.label}
-        aria-pressed={action.pressed}
-        tabindex={selected ? 0 : -1}
-        disabled={busy || editing}
-        onclick={() => {
-          onSelect();
-          void action.run();
-        }}><action.icon class="h-3.5 w-3.5" /></Button
-      >
-    {/each}
-  </div>
+    </div>
+    <div
+      role="gridcell"
+      class="row-actions absolute bottom-0.5 right-2 flex items-center gap-0.5 rounded-md px-0.5 {selected ||
+      multiSelected
+        ? 'active'
+        : ''}"
+    >
+      {#each rowActions as action (action.id)}
+        <Button
+          variant="ghost"
+          size="icon"
+          class="rounded-md {action.success
+            ? 'text-emerald-500'
+            : action.pressed
+              ? 'text-primary'
+              : 'text-muted-foreground'}"
+          style="width: 1.5rem; height: 1.5rem"
+          title={action.label}
+          aria-label={action.label}
+          aria-pressed={action.pressed}
+          tabindex={selected ? 0 : -1}
+          disabled={busy}
+          onclick={() => {
+            onSelect();
+            void action.run();
+          }}><action.icon class="h-3.5 w-3.5" /></Button
+        >
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -238,13 +373,14 @@
   .clip-row[data-active='true'] {
     --row-surface: var(--qb-selection);
   }
-  .row-icon {
-    background: color-mix(in srgb, var(--foreground) 4%, var(--row-surface));
-  }
+  /* Actions overlay the metadata line's reserved right padding (pr-[8.75rem]
+     mirrors the 5 × 1.5rem buttons + gaps + offsets, so the text itself is
+     never covered); they fade in on hover/selection without layout shift. */
   .row-actions {
     background: var(--row-surface);
     opacity: 0;
     pointer-events: none;
+    transition: opacity 120ms ease-out;
   }
   .group:hover .row-actions,
   .group:focus-within .row-actions,
