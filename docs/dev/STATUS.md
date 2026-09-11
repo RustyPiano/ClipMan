@@ -4,17 +4,18 @@
 > 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 PLAN.md / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-09-08**
+**最后更新：2026-09-11**
 
 ## 当前状态一句话
 
-**v2.3.0 已正式发布**：QuickBar 与全仓可靠性重构已上线，17 个跨平台附件和 updater `latest.json` 均已公开。
+**v2.3.0 已发布；工作区有未提交改动**：QuickBar 行信息密度回归 v2.2 风格（方案 B）+ 开发产物瘦身，全部门禁绿。
 
 ## 工作区
 
+- QuickBar 方案 B（未提交）：行高 4rem→5.5rem（`ROW_HEIGHT_REM` 常量）三段式行——标签行 + 内容预览（文本两行 / 文件两个路径+目录 / 图片行内缩略图，有标签时压缩为一行）+ 元数据行；恢复选中高亮条、多选徽章、复制 ✓ 行内反馈；行操作按钮在行按钮之外（嵌套按钮会把操作点击冒泡成粘贴，见 AGENTS.md gotcha），覆盖元数据行右侧预留区（`pr-[8.75rem]`），文字永不被盖。虚拟化/ID 选择/请求合并保留。
+- 三路 subagent 并行审核后修复（2026-09-11）：①操作按钮改内联 24px 尺寸（Button 的 `h-9` 会盖过 class 里的 `h-6`，36px 按钮会超出预留区盖字）；②`fileBasename/fileDirname/looksLikeDirectory` 支持 `\` 分隔符并抽到 `clip-items.ts`（原实现丢了 Windows 路径拆分）；③action 列表改稳定 `id` 键（Pin/Unpin 文案翻转不再销毁聚焦按钮）；另修 pointer-events、+N 计数、kbd 空格、`File as FileIcon`、注释统一英文。e2e 新增：+N 徽章/Windows 路径/标签行/元数据不遮挡/复制 ✓ 断言，40 项全绿。
+- 磁盘瘦身（未提交）：`[profile.dev.package."*"] debug = false` 后全量重编译，`src-tauri/target` 12 GB→1.9 GB（release 产物一并清除）；Playwright 浏览器缓存**保留**（用户决定不再反复装卸，避免重复写盘）。
 - v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
-
-- v2.3.0 发布内容：QuickBar 重构与统一视觉、虚拟列表/搜索/详情缓存、统一取用流程，以及全仓审计修复（设置并发和失败保护、真实数据路径、捕获顺序、历史上限、无损文件列表、粘贴校验、合并内存上限、v3 升级备份、QA/发布门禁与依赖更新）。
 
 ## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 

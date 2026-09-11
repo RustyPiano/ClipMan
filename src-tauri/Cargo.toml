@@ -77,6 +77,11 @@ objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSSt
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
+# Dependencies do not need debug info; dropping it cuts target/debug by roughly
+# half. The app crate itself keeps full debuginfo for breakpoint debugging.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
