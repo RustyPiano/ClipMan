@@ -423,6 +423,10 @@ impl ClipboardMonitor {
         }
 
         let html = clamp_html_to_size_limit(html, max_text_bytes);
+        // globalPlain strips the rich flavor from the live clipboard after the
+        // record is stored; an empty/absent html companion needs no rewrite.
+        let strip_rich = settings.strips_rich_text_at_capture()
+            && html.as_deref().is_some_and(|value| !value.is_empty());
 
         log::info!("📋 Text clipboard changed: {} chars", text.len());
         let item = ClipItem {
@@ -439,6 +443,18 @@ impl ClipboardMonitor {
             html,
         };
         Self::save_to_storage(app_handle, item);
+
+        // globalPlain mode: flatten the live clipboard now that the rich copy
+        // is durably recorded, so a direct paste (without QuickBar) anywhere is
+        // plain text. The strip write uses the plain-text marker (D5) — the
+        // same value recorded above — so the monitor treats it as our own
+        // write and never re-captures it.
+        if strip_rich {
+            let marker_state = app_handle.state::<AppState>().last_copied_by_us.clone();
+            if let Err(e) = crate::paste::strip_rich_text_from_clipboard(text, marker_state) {
+                log::warn!("Failed to strip rich text from clipboard: {}", e);
+            }
+        }
     }
 
     fn process_files_change(

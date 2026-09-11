@@ -80,9 +80,9 @@ test.beforeEach(async ({ page }) => {
       content: btoa('C:\\Users\\me\\report.docx'),
       fileCount: 1,
     };
-    let pastePlainDefault = false;
-    w.__setPastePlain = (value: boolean) => {
-      pastePlainDefault = value;
+    let pasteFormat = 'original';
+    w.__setPasteFormat = (value: string) => {
+      pasteFormat = value;
     };
     w.calls = [];
     w.emitTestEvent = (event: string, payload: unknown = {}) => {
@@ -107,7 +107,7 @@ test.beforeEach(async ({ page }) => {
             autoPaste: true,
             maxHistoryItems: 10000,
             capturePaused: false,
-            pastePlainByDefault: pastePlainDefault,
+            pasteFormat,
           };
         if (cmd === 'check_clipboard_permission') return 'granted';
         if (cmd === 'check_accessibility_permission') return true;
@@ -196,8 +196,8 @@ test('Enter submits the current query once without waiting for debounce', async 
     .toEqual([{ cmd: 'paste_clip', args: { id: 'needle', mode: 'default', plain: false } }]);
 });
 
-test('paste_plain_by_default makes Enter plain and ⌥Enter rich', async ({ page }) => {
-  await page.evaluate(() => (window as any).__setPastePlain(true));
+test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page }) => {
+  await page.evaluate(() => (window as any).__setPasteFormat('takePlain'));
   await page.evaluate(() => (window as any).emitTestEvent('settings-changed'));
   await page.waitForTimeout(100);
   await page.getByRole('combobox').fill('plain-default');

@@ -23,7 +23,7 @@ test.beforeEach(async ({ page }) => {
       globalShortcut: 'CommandOrControl+Shift+V',
       pinnedShortcut: null,
       autoPaste: true,
-      pastePlainByDefault: false,
+      pasteFormat: 'original',
       ignoreConcealed: true,
       maxHistoryItems: 321,
       trayTextLength: 70,
@@ -180,4 +180,27 @@ test('native radios support arrow navigation and saved locale updates document l
   await expect(page.getByRole('radio', { name: '简体中文', exact: true })).toBeChecked();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+});
+
+test('paste format radios switch modes and persist the choice on save', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Clipboard', exact: true }).click();
+  const original = page.getByRole('radio', { name: 'Keep original formatting', exact: true });
+  const globalPlain = page.getByRole('radio', { name: 'Always plain text', exact: true });
+  await expect(original).toBeChecked();
+  await original.focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(globalPlain).toBeChecked();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const saves = (window as any).calls.filter(
+          (c: any) => c.cmd === 'update_settings' && c.args.settings
+        );
+        return saves[saves.length - 1]?.args?.settings?.pasteFormat;
+      })
+    )
+    .toBe('globalPlain');
 });

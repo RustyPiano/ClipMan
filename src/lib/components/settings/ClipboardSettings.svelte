@@ -9,13 +9,27 @@
   import { i18n } from '$lib/i18n';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
-  import type { Settings } from '$lib/types';
+  import type { PasteFormat, Settings } from '$lib/types';
 
   let { settings = $bindable() } = $props<{
     settings: Settings;
   }>();
 
   const t = $derived(i18n.t);
+
+  const pasteFormats: {
+    value: PasteFormat;
+    labelKey: 'pasteFormatOriginal' | 'pasteFormatTakePlain' | 'pasteFormatGlobalPlain';
+    descKey: 'pasteFormatOriginalDesc' | 'pasteFormatTakePlainDesc' | 'pasteFormatGlobalPlainDesc';
+  }[] = [
+    { value: 'original', labelKey: 'pasteFormatOriginal', descKey: 'pasteFormatOriginalDesc' },
+    { value: 'takePlain', labelKey: 'pasteFormatTakePlain', descKey: 'pasteFormatTakePlainDesc' },
+    {
+      value: 'globalPlain',
+      labelKey: 'pasteFormatGlobalPlain',
+      descKey: 'pasteFormatGlobalPlainDesc',
+    },
+  ];
 
   let clearing = $state(false);
 
@@ -143,16 +157,31 @@
       <Switch id="auto-paste" bind:checked={settings.autoPaste} />
     </div>
 
-    <div class="flex items-center justify-between">
-      <div class="space-y-0.5">
-        <label for="paste-plain-default" class="text-sm font-medium cursor-pointer">
-          {t.pastePlainDefault}
-        </label>
-        <p class="text-xs text-muted-foreground">
-          {t.pastePlainDefaultDesc}
-        </p>
+    <div class="space-y-2">
+      <span class="text-sm font-medium" id="paste-format-label">{t.pasteFormat}</span>
+      <div class="space-y-2" role="radiogroup" aria-labelledby="paste-format-label">
+        {#each pasteFormats as format (format.value)}
+          <label
+            class="flex items-start gap-3 p-3 rounded-lg border-2 transition-all hover:bg-muted/50 cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2
+                        {settings.pasteFormat === format.value
+              ? 'border-primary bg-primary/5'
+              : 'border-transparent bg-muted/20'}"
+          >
+            <input
+              type="radio"
+              name="paste-format"
+              class="sr-only"
+              value={format.value}
+              aria-label={t[format.labelKey]}
+              bind:group={settings.pasteFormat}
+            />
+            <div class="min-w-0 flex-1">
+              <span class="block text-sm font-medium">{t[format.labelKey]}</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">{t[format.descKey]}</span>
+            </div>
+          </label>
+        {/each}
       </div>
-      <Switch id="paste-plain-default" bind:checked={settings.pastePlainByDefault} />
     </div>
 
     <div class="flex items-center justify-between">

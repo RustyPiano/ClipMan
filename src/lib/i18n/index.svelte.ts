@@ -97,8 +97,13 @@ export interface Translations {
   maxHistoryItemsDesc: string;
   autoPaste: string;
   autoPasteDesc: string;
-  pastePlainDefault: string;
-  pastePlainDefaultDesc: string;
+  pasteFormat: string;
+  pasteFormatOriginal: string;
+  pasteFormatOriginalDesc: string;
+  pasteFormatTakePlain: string;
+  pasteFormatTakePlainDesc: string;
+  pasteFormatGlobalPlain: string;
+  pasteFormatGlobalPlainDesc: string;
   ignoreConcealed: string;
   ignoreConcealedDesc: string;
 
@@ -315,8 +320,13 @@ const zh: Translations = {
   maxHistoryItemsDesc: '保留的最大历史记录数量',
   autoPaste: '自动粘贴',
   autoPasteDesc: '从 QuickBar 取用时自动粘回当前应用；关闭后只复制。',
-  pastePlainDefault: '默认纯文本粘贴',
-  pastePlainDefaultDesc: '取用文本时去除格式（仅复制也同样）；⌥回车可临时粘贴富文本。',
+  pasteFormat: '粘贴格式',
+  pasteFormatOriginal: '保留原始格式',
+  pasteFormatOriginalDesc: '按复制时的原样粘贴，包含富文本格式。',
+  pasteFormatTakePlain: '取用时纯文本',
+  pasteFormatTakePlainDesc: '经 ClipMan 取用或复制时去除格式；直接 Cmd+V 仍粘贴原格式。',
+  pasteFormatGlobalPlain: '始终纯文本',
+  pasteFormatGlobalPlainDesc: '复制被捕获时立即去除富文本，任何地方直接粘贴都是纯文本。',
   ignoreConcealed: '忽略密码类剪贴板',
   ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
 
@@ -535,9 +545,15 @@ const en: Translations = {
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
   autoPaste: 'Auto-paste',
   autoPasteDesc: 'Paste selected QuickBar items back into the current app; off means copy only.',
-  pastePlainDefault: 'Paste plain text by default',
-  pastePlainDefaultDesc:
-    'Strip formatting when taking text clips (copy-only too); ⌥Enter temporarily pastes rich text.',
+  pasteFormat: 'Paste format',
+  pasteFormatOriginal: 'Keep original formatting',
+  pasteFormatOriginalDesc: 'Paste exactly as copied, rich formatting included.',
+  pasteFormatTakePlain: 'Plain text via ClipMan',
+  pasteFormatTakePlainDesc:
+    'Taking or copying through ClipMan strips formatting; a direct Cmd+V keeps the copied format.',
+  pasteFormatGlobalPlain: 'Always plain text',
+  pasteFormatGlobalPlainDesc:
+    'Rich text is stripped the moment a copy is captured, so every direct paste is plain text.',
   ignoreConcealed: 'Ignore concealed clipboard content',
   ignoreConcealedDesc:
     'Skip clipboard payloads marked as passwords, transient, or excluded from history.',

@@ -278,6 +278,30 @@ fn write_merged_text_to_system_clipboard(
     Ok(())
 }
 
+/// Global-plain mode (`globalPlain`): replace the live clipboard's rich text
+/// with its plain-text form right after capture, so a direct paste anywhere
+/// (without QuickBar) is unformatted. The marker hashes the plain text only
+/// (D5) — the same value the monitor just recorded — so the rewrite is
+/// treated as our own write and never re-captured.
+pub fn strip_rich_text_from_clipboard(
+    text: &str,
+    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+) -> Result<(), String> {
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
+    write_with_marker(marker_state, marker, || {
+        clipboard
+            .set_text(text)
+            .map_err(|e| format!("Failed to strip rich text from clipboard: {e}"))
+    })?;
+
+    log::info!(
+        "Stripped rich text from clipboard (globalPlain): {} chars",
+        text.len()
+    );
+    Ok(())
+}
+
 fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
     match mode {
         PasteMode::Default | PasteMode::Paste => auto_paste,

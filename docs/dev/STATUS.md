@@ -12,8 +12,8 @@
 
 ## 工作区
 
-- 新增「默认纯文本粘贴」设置（2026-09-11，随本条一并提交）：`paste_plain_by_default`（默认关）——Rust 设置单一来源（struct/默认值/legacy 键/read 合并 + round-trip 断言）；开启后 Enter/数字槽/行点击取用文本一律纯文本写入，⌥回车临时反转为富文本（"…"菜单提示随设置切换文案）；仅复制（⌘回车/行复制按钮/托盘复制）同样剥离 HTML，手动 Cmd+V 也是纯文本；`paste_clip` 缺省 plain 时读设置。合并粘贴本就纯文本。前端 store 经 `settings-changed` 事件实时刷新。
-- QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`）。
+- 「粘贴格式」三模式（2026-09-11，随本条提交，未发布故直接替换了上一版的布尔开关）：`paste_format = original | takePlain | globalPlain`（默认 original，未知值加载时回落 original）。takePlain：经 ClipMan 取用/仅复制均纯文本，⌥回车临时反转富文本；globalPlain 在此之上于**捕获入库后立即把系统剪贴板的富文本重写为纯文本**（`paste::strip_rich_text_from_clipboard`，复用 `write_with_marker`，marker 只哈希纯文本所以监控不会重采集——该性质由既有 D5 测试锁定），直接 Cmd+V 即纯文本。设置页为三选一原生 radio；"…"菜单 ⌥↵ 提示随模式切换；store 经 `settings-changed` 实时刷新。
+- QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`），布尔版纯文本开关（`7b8a8e4`）被本条三模式取代。
 - 磁盘瘦身：`[profile.dev.package."*"] debug = false` 后 `src-tauri/target` 12 GB→1.9 GB；Playwright 浏览器缓存**保留**（用户决定不再反复装卸，避免重复写盘）。
 - v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
 

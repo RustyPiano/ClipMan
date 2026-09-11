@@ -258,9 +258,9 @@ pub async fn copy_clip_to_clipboard_internal(
     show_notification: bool,
 ) -> Result<crate::paste::UseOutcome, String> {
     let state = app.state::<AppState>();
-    // Copy-only writes follow the plain-text default so a manual paste into
-    // the target app also lands without formatting.
-    let plain = state.settings.get().paste_plain_by_default;
+    // Copy-only writes follow the paste-format mode so a manual paste into
+    // the target app also lands without formatting (takePlain/globalPlain).
+    let plain = state.settings.get().takes_plain_text();
     let outcome = crate::paste::use_clips(
         app,
         state.inner(),
@@ -320,16 +320,16 @@ pub async fn paste_clip(
     mode: String,
     plain: Option<bool>,
 ) -> Result<crate::paste::UseOutcome, String> {
-    // `plain` is optional: absent => the paste_plain_by_default setting
-    // decides; the frontend sends an explicit flag (Enter follows the setting,
-    // ⌥Enter inverts it for one paste).
+    // `plain` is optional: absent => the paste-format mode decides (takePlain
+    // and globalPlain take text as plain); the frontend sends an explicit flag
+    // (Enter follows the mode, ⌥Enter inverts it for one paste).
     crate::paste::use_clips(
         &app,
         state.inner(),
         crate::paste::UseRequest {
             ids: vec![id],
             mode,
-            plain: plain.unwrap_or_else(|| state.settings.get().paste_plain_by_default),
+            plain: plain.unwrap_or_else(|| state.settings.get().takes_plain_text()),
             separator: None,
             hide: true,
         },

@@ -50,7 +50,7 @@ fn system_locale() -> String {
 const LEGACY_SETTINGS_KEYS: [&str; 17] = [
     "global_shortcut",
     "auto_paste",
-    "paste_plain_by_default",
+    "paste_format",
     "ignore_concealed",
     "pinned_shortcut",
     "max_history_items",
@@ -72,11 +72,14 @@ const LEGACY_SETTINGS_KEYS: [&str; 17] = [
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
-    /// When true, taking a text clip writes only its plain-text form (no HTML
-    /// companion), so the default Enter paste lands without formatting;
-    /// ⌥Enter inverts this for one paste. Copy-only writes follow the same
-    /// default so a manual paste into the target app is plain too.
-    pub paste_plain_by_default: bool,
+    /// Paste-format mode; one of [`PASTE_FORMATS`]:
+    /// - `original`: paste exactly as copied (rich text included).
+    /// - `takePlain`: takes/copies via ClipMan write plain text only; a direct
+    ///   system paste keeps the copied formatting.
+    /// - `globalPlain`: like `takePlain`, plus every captured rich-text copy is
+    ///   immediately flattened on the system clipboard so a direct paste
+    ///   anywhere is plain text too.
+    pub paste_format: String,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
     pub max_history_items: usize,
@@ -112,7 +115,7 @@ impl Default for Settings {
         Self {
             global_shortcut: "CommandOrControl+Shift+V".to_string(),
             auto_paste: true,
-            paste_plain_by_default: false,
+            paste_format: PASTE_FORMATS[0].to_string(),
             ignore_concealed: true,
             pinned_shortcut: None,
             max_history_items: 100,
@@ -179,6 +182,32 @@ impl Settings {
         self.ignored_apps = normalize_ignored_apps(std::mem::take(&mut self.ignored_apps));
 
         self.locale = normalize_locale(&self.locale);
+        self.paste_format = normalize_paste_format(&self.paste_format);
+    }
+
+    /// ClipMan-mediated takes/copies should write plain text only
+    /// (`takePlain` and `globalPlain`).
+    pub fn takes_plain_text(&self) -> bool {
+        matches!(self.paste_format.as_str(), "takePlain" | "globalPlain")
+    }
+
+    /// Captured rich-text copies should be flattened on the system clipboard
+    /// so a direct paste (without QuickBar) is plain text (`globalPlain` only).
+    pub fn strips_rich_text_at_capture(&self) -> bool {
+        self.paste_format == "globalPlain"
+    }
+}
+
+/// IPC values of the paste-format mode; keep in sync with the `Settings`
+/// union type in `src/lib/types.ts`.
+pub const PASTE_FORMATS: [&str; 3] = ["original", "takePlain", "globalPlain"];
+
+fn normalize_paste_format(value: &str) -> String {
+    let trimmed = value.trim();
+    if PASTE_FORMATS.contains(&trimmed) {
+        trimmed.to_string()
+    } else {
+        PASTE_FORMATS[0].to_string()
     }
 }
 
@@ -229,8 +258,11 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
         candidate.auto_paste = v;
     }
 
-    if let Some(v) = get("paste_plain_by_default").and_then(|v| v.as_bool()) {
-        candidate.paste_plain_by_default = v;
+    if let Some(v) = get("paste_format") {
+        candidate.paste_format = v
+            .as_str()
+            .map(String::from)
+            .unwrap_or(candidate.paste_format);
     }
 
     if let Some(v) = get("ignore_concealed").and_then(|v| v.as_bool()) {
@@ -419,6 +451,33 @@ mod tests {
         assert!(settings.auto_paste);
         assert!(settings.ignore_concealed);
         assert_eq!(None, settings.pinned_shortcut);
+    }
+
+    #[test]
+    fn paste_format_modes_and_unknown_value_coercion() {
+        let mut settings = Settings::default();
+        assert_eq!("original", settings.paste_format);
+        assert!(!settings.takes_plain_text());
+        assert!(!settings.strips_rich_text_at_capture());
+
+        settings.paste_format = " takePlain ".to_string();
+        let normalized = settings.clone().normalize_for_load();
+        assert_eq!("takePlain", normalized.paste_format);
+        assert!(normalized.takes_plain_text());
+        assert!(!normalized.strips_rich_text_at_capture());
+
+        settings.paste_format = "globalPlain".to_string();
+        let normalized = settings.normalize_for_load();
+        assert!(normalized.takes_plain_text());
+        assert!(normalized.strips_rich_text_at_capture());
+
+        // Unknown values (older store, hand-edited file) fall back to original.
+        let coerced = Settings {
+            paste_format: "richerezza".to_string(),
+            ..Settings::default()
+        }
+        .normalize_for_load();
+        assert_eq!("original", coerced.paste_format);
     }
 
     #[test]
@@ -660,7 +719,7 @@ mod tests {
         let new_json = serde_json::json!({
             "globalShortcut": " CommandOrControl+Alt+V ",
             "autoPaste": false,
-            "pastePlainByDefault": true,
+            "pasteFormat": "globalPlain",
             "ignoreConcealed": false,
             "pinnedShortcut": " CommandOrControl+Shift+P ",
             "maxHistoryItems": 200,
@@ -679,7 +738,7 @@ mod tests {
         let legacy_json = serde_json::json!({
             "global_shortcut": " CommandOrControl+Alt+V ",
             "auto_paste": false,
-            "paste_plain_by_default": true,
+            "paste_format": "globalPlain",
             "ignore_concealed": false,
             "pinned_shortcut": " CommandOrControl+Shift+P ",
             "max_history_items": 200,
@@ -705,7 +764,8 @@ mod tests {
         for loaded in [new_loaded, legacy_loaded] {
             assert_eq!("CommandOrControl+Alt+V", loaded.global_shortcut);
             assert!(!loaded.auto_paste);
-            assert!(loaded.paste_plain_by_default);
+            assert_eq!("globalPlain", loaded.paste_format);
+            assert!(loaded.strips_rich_text_at_capture());
             assert!(!loaded.ignore_concealed);
             assert_eq!(
                 Some("CommandOrControl+Shift+P".to_string()),

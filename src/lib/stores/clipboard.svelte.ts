@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { selectionStore } from './selection.svelte';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
-import type { ClipItem, ClipDetail, PasteMode, ReorderDirection } from '$lib/types';
+import type { ClipItem, ClipDetail, PasteFormat, PasteMode, ReorderDirection } from '$lib/types';
 import {
   applyClipboardChanged,
   getPinnedDisplayItems,
@@ -40,7 +40,7 @@ class ClipboardStore {
   isLoadingMore = $state(false);
   maxHistoryItems = $state(100);
   autoPaste = $state(true);
-  pastePlainByDefault = $state(false);
+  pasteFormat = $state<PasteFormat>('original');
   isUsing = $state(false);
   useNotice = $state('');
   capturePaused = $state(false);
@@ -281,12 +281,12 @@ class ClipboardStore {
         autoPaste: boolean;
         maxHistoryItems: number;
         capturePaused: boolean;
-        pastePlainByDefault: boolean;
+        pasteFormat: PasteFormat;
       }>('get_settings');
       this.autoPaste = settings.autoPaste;
       this.capturePaused = settings.capturePaused;
       this.maxHistoryItems = settings.maxHistoryItems;
-      this.pastePlainByDefault = settings.pastePlainByDefault ?? false;
+      this.pasteFormat = settings.pasteFormat ?? 'original';
     } catch (error) {
       console.error('Failed to refresh settings:', error);
     }
@@ -462,10 +462,15 @@ class ClipboardStore {
     }
   }
 
+  /** takePlain/globalPlain: ClipMan-mediated takes write plain text only. */
+  get takesPlainText(): boolean {
+    return this.pasteFormat !== 'original';
+  }
+
   async useClip(item: ClipItem, mode: PasteMode = 'default', options: { plain?: boolean } = {}) {
     await this.performUse(
       'paste_clip',
-      { id: item.id, mode, plain: options.plain ?? this.pastePlainByDefault },
+      { id: item.id, mode, plain: options.plain ?? this.takesPlainText },
       mode
     );
   }

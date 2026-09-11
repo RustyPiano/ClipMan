@@ -233,7 +233,7 @@
       if (!event.repeat)
         void useSelection(
           mod ? 'opposite' : 'default',
-          event.altKey ? !clipboardStore.pastePlainByDefault : undefined
+          event.altKey ? !clipboardStore.takesPlainText : undefined
         );
     } else if (mod && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
@@ -488,7 +488,7 @@
           >
             <Button variant="ghost" onclick={clearHistory}>{t.clearNonPinned}</Button>
             <p class="border-t border-border px-2 pt-2 text-[11px] leading-relaxed">
-              {modifier}1–9 {t.slot}<br />⌥↵ {clipboardStore.pastePlainByDefault
+              {modifier}1–9 {t.slot}<br />⌥↵ {clipboardStore.takesPlainText
                 ? t.pasteRich
                 : t.pastePlain}<br />Alt ←/→ {t.switchPanel}<br />{modifier}⇧↑↓ {t.reorder}
             </p>
