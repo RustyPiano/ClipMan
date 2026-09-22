@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 #[cfg(target_os = "macos")]
 use std::{sync::mpsc, thread};
@@ -15,6 +15,7 @@ use image::GenericImageView;
 use serde::Serialize;
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
 
 use crate::{
     safe_lock,
@@ -28,6 +29,39 @@ use crate::{
 const MAX_MERGE_BYTES: usize = 50_000_000;
 
 const COPY_MARKER_TTL: Duration = Duration::from_secs(2);
+
+pub(crate) struct CopyWrite {
+    marker: CopyMarker,
+    id: Uuid,
+    written_at: Option<Instant>,
+}
+
+impl CopyWrite {
+    pub(crate) fn matches(&self, marker: &CopyMarker) -> bool {
+        self.marker == *marker
+            && self
+                .written_at
+                .is_none_or(|written_at| written_at.elapsed() < COPY_MARKER_TTL)
+    }
+}
+
+struct RichTextWrite {
+    id: Uuid,
+    text: String,
+    html: String,
+    sequence: Option<u64>,
+}
+
+impl RichTextWrite {
+    fn matches_clipboard(&self, clipboard: &mut Clipboard) -> bool {
+        !clipboard
+            .get()
+            .file_list()
+            .is_ok_and(|paths| !paths.is_empty())
+            && clipboard.get_text().is_ok_and(|text| text == self.text)
+            && clipboard.get().html().is_ok_and(|html| html == self.html)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteMode {
@@ -261,7 +295,7 @@ fn merge_clip_texts<'a>(
 /// this is the plain-text write path only.
 fn write_merged_text_to_system_clipboard(
     merged: &str,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, merged.as_bytes());
@@ -285,7 +319,7 @@ fn write_merged_text_to_system_clipboard(
 /// never re-captured.
 pub fn strip_rich_text_from_clipboard(
     text: &str,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
@@ -300,36 +334,69 @@ pub fn strip_rich_text_from_clipboard(
     Ok(())
 }
 
-/// globalPlain: ⌥Enter's rich paste is a one-off. Once the self-copy marker
-/// has expired, flatten the rich residue so later direct pastes are plain
-/// again — but only if the clipboard still holds that exact rich write; a
-/// newer copy made in the meantime must never be clobbered.
+#[cfg(target_os = "macos")]
+pub(crate) fn clipboard_sequence() -> Option<u64> {
+    Some(objc2_app_kit::NSPasteboard::generalPasteboard().changeCount() as u64)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn clipboard_sequence() -> Option<u64> {
+    let sequence = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+    (sequence != 0).then_some(u64::from(sequence))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn clipboard_sequence() -> Option<u64> {
+    // arboard 未公开其他平台的写入序号，使用写入 ID 和完整内容检查。
+    None
+}
+
+fn restrip_if_unchanged(
+    operation_lock: &tokio::sync::Mutex<()>,
+    marker_state: &Mutex<Option<CopyWrite>>,
+    expected: &RichTextWrite,
+    mut read_sequence: impl FnMut() -> Option<u64>,
+    holds_rich_text: impl FnOnce() -> bool,
+    strip: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let Ok(_operation) = operation_lock.try_lock() else {
+        return Ok(());
+    };
+    if safe_lock(marker_state).as_ref().map(|write| write.id) == Some(expected.id)
+        && read_sequence() == expected.sequence
+        && holds_rich_text()
+        && read_sequence() == expected.sequence
+    {
+        strip()?;
+    }
+    Ok(())
+}
+
+/// 临时富文本粘贴过期后，仅剥离仍属于该次写入的内容。
 fn schedule_global_plain_restrip(
     app: AppHandle,
-    text: String,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    expected: RichTextWrite,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(COPY_MARKER_TTL + Duration::from_millis(300)).await;
-        if !app
-            .state::<AppState>()
-            .settings
-            .get()
-            .strips_rich_text_at_capture()
-        {
-            return; // Mode switched off while we waited.
-        }
         let state = app.state::<AppState>();
-        if state.clipboard_use_lock.try_lock().is_err() {
-            return; // A take is writing; leave the residue for the next event.
+        let settings = state.settings.get();
+        if settings.capture_paused || !settings.strips_rich_text_at_capture() {
+            return;
         }
         let Ok(mut clipboard) = Clipboard::new() else {
             return;
         };
-        if crate::clipboard::clipboard_holds_rich_text(&mut clipboard, &text) {
-            if let Err(e) = strip_rich_text_from_clipboard(&text, marker_state) {
-                log::warn!("Failed to strip rich-text residue: {}", e);
-            }
+        if let Err(e) = restrip_if_unchanged(
+            &state.clipboard_use_lock,
+            &marker_state,
+            &expected,
+            clipboard_sequence,
+            || expected.matches_clipboard(&mut clipboard),
+            || strip_rich_text_from_clipboard(&expected.text, marker_state.clone()),
+        ) {
+            log::warn!("Failed to strip rich-text residue: {}", e);
         }
     });
 }
@@ -344,31 +411,49 @@ fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
 
 pub fn write_clip_to_system_clipboard(
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
     plain_text_only: bool,
     app: &AppHandle,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-    match &item.content_type {
-        ContentType::Text => {
-            write_text(&mut clipboard, item, marker_state.clone(), plain_text_only)?
+    let rich_write = match &item.content_type {
+        ContentType::Text => Some(write_text(
+            &mut clipboard,
+            item,
+            marker_state.clone(),
+            plain_text_only,
+        )?),
+        ContentType::Image => {
+            write_image(&mut clipboard, item, marker_state.clone())?;
+            None
         }
-        ContentType::Image => write_image(&mut clipboard, item, marker_state.clone())?,
-        ContentType::Files => write_files(&mut clipboard, item, marker_state.clone(), app)?,
+        ContentType::Files => {
+            write_files(&mut clipboard, item, marker_state.clone(), app)?;
+            None
+        }
     };
 
-    // A rich text write in globalPlain mode is ⌥Enter's one-off inversion;
-    // schedule flattening the residue once the self-copy marker has expired.
-    if !plain_text_only
-        && item.html.as_deref().is_some_and(|html| !html.is_empty())
-        && app
-            .state::<AppState>()
-            .settings
-            .get()
-            .strips_rich_text_at_capture()
-    {
-        let text = String::from_utf8_lossy(&item.content).into_owned();
-        schedule_global_plain_restrip(app.clone(), text, marker_state);
+    if let Some((id, sequence)) = rich_write.filter(|_| {
+        !plain_text_only
+            && item.html.as_deref().is_some_and(|html| !html.is_empty())
+            && app
+                .state::<AppState>()
+                .settings
+                .get()
+                .strips_rich_text_at_capture()
+    }) {
+        // arboard 会包装 HTML，后续核对使用剪贴板中实际存储的表示。
+        if let Ok(html) = clipboard.get().html() {
+            if sequence == clipboard_sequence() {
+                let expected = RichTextWrite {
+                    id,
+                    text: String::from_utf8_lossy(&item.content).into_owned(),
+                    html,
+                    sequence,
+                };
+                schedule_global_plain_restrip(app.clone(), expected, marker_state);
+            }
+        }
     }
 
     Ok(())
@@ -377,16 +462,16 @@ pub fn write_clip_to_system_clipboard(
 fn write_text(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
     plain_text_only: bool,
-) -> Result<(), String> {
+) -> Result<(Uuid, Option<u64>), String> {
     let text = String::from_utf8_lossy(&item.content).into_owned();
     // D5: the marker is always the plain-text hash, never the html — the monitor
     // reads back the plain-text alt after a self-paste and must still match.
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
 
     let use_html = !plain_text_only && item.html.as_deref().is_some_and(|html| !html.is_empty());
-    write_with_marker(marker_state, marker, || {
+    let id = write_with_marker(marker_state, marker, || {
         if use_html {
             // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
             let html = item.html.as_deref().unwrap_or_default();
@@ -396,6 +481,7 @@ fn write_text(
         }
         .map_err(|e| format!("Failed to write text clipboard: {e}"))
     })?;
+    let sequence = clipboard_sequence();
 
     log::info!(
         "Copied text clip {} to clipboard: {} chars (html: {})",
@@ -403,13 +489,13 @@ fn write_text(
         text.len(),
         use_html
     );
-    Ok(())
+    Ok((id, sequence))
 }
 
 fn write_files(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
     app: &AppHandle,
 ) -> Result<(), String> {
     let content = String::from_utf8_lossy(&item.content).into_owned();
@@ -592,7 +678,7 @@ fn write_file_list(clipboard: &mut Clipboard, paths: &[String]) -> Result<(), St
 fn write_image(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
 ) -> Result<(), String> {
     let img = image::load_from_memory(&item.content)
         .map_err(|e| format!("Failed to decode image clip {}: {e}", item.id))?;
@@ -620,46 +706,43 @@ fn write_image(
     Ok(())
 }
 
-/// The self-copy marker ritual every clipboard write shares (D5): stake the
-/// marker before writing, then clear it if the write failed or schedule its TTL
-/// expiry if it succeeded. `write` performs the actual clipboard call and owns
-/// its own error message. Structuring the invariant here keeps the write_*
-/// family from each re-implementing (and potentially skewing) it (#31).
+/// 写入前登记独立 ID；失败只清除当前写入，成功后的过期由读取时判断。
 fn write_with_marker(
-    marker_state: Arc<Mutex<Option<CopyMarker>>>,
+    marker_state: Arc<Mutex<Option<CopyWrite>>>,
     marker: CopyMarker,
     write: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    set_copy_marker(&marker_state, &marker);
+) -> Result<Uuid, String> {
+    let id = set_copy_marker(&marker_state, marker);
     if let Err(e) = write() {
-        clear_marker_if_current(&marker_state, &marker);
+        clear_marker_if_current(&marker_state, id);
         return Err(e);
     }
-    schedule_marker_clear(marker_state, marker);
-    Ok(())
+    // 文件授权可能需要等待，标记的有效期从写入完成时开始。
+    if let Some(current) = safe_lock(&marker_state)
+        .as_mut()
+        .filter(|current| current.id == id)
+    {
+        current.written_at = Some(Instant::now());
+    }
+    Ok(id)
 }
 
-fn set_copy_marker(marker_state: &Arc<Mutex<Option<CopyMarker>>>, marker: &CopyMarker) {
+fn set_copy_marker(marker_state: &Arc<Mutex<Option<CopyWrite>>>, marker: CopyMarker) -> Uuid {
+    let id = Uuid::new_v4();
     let mut last_copied = safe_lock(marker_state);
-    *last_copied = Some(marker.clone());
+    *last_copied = Some(CopyWrite {
+        marker,
+        id,
+        written_at: None,
+    });
+    id
 }
 
-fn clear_marker_if_current(marker_state: &Arc<Mutex<Option<CopyMarker>>>, marker: &CopyMarker) {
+fn clear_marker_if_current(marker_state: &Arc<Mutex<Option<CopyWrite>>>, id: Uuid) {
     let mut last_copied = safe_lock(marker_state);
-    if last_copied.as_ref() == Some(marker) {
+    if last_copied.as_ref().is_some_and(|write| write.id == id) {
         *last_copied = None;
     }
-}
-
-fn schedule_marker_clear(marker_state: Arc<Mutex<Option<CopyMarker>>>, marker: CopyMarker) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(COPY_MARKER_TTL).await;
-        let mut last_copied = safe_lock(&marker_state);
-        if last_copied.as_ref() == Some(&marker) {
-            *last_copied = None;
-            log::debug!("Cleared self-copy marker");
-        }
-    });
 }
 
 fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
@@ -815,6 +898,144 @@ fn paste_key() -> Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_write_expiry_preserves_identity_and_newer_writes() {
+        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
+        let state = Arc::new(Mutex::new(None));
+        let first = write_with_marker(state.clone(), marker.clone(), || {
+            let current = safe_lock(&state);
+            let current = current.as_ref().unwrap();
+            assert!(current.written_at.is_none());
+            assert!(current.matches(&marker));
+            Ok(())
+        })
+        .unwrap();
+        {
+            let mut current = safe_lock(&state);
+            let current = current.as_mut().unwrap();
+            assert!(current.written_at.is_some());
+            assert!(current.matches(&marker));
+            assert!(!current.matches(&CopyMarker::from_payload(ContentType::Text, b"other")));
+            current.written_at = Some(Instant::now() - COPY_MARKER_TTL);
+            assert!(!current.matches(&marker));
+            assert_eq!(current.id, first);
+        }
+        let second = write_with_marker(state.clone(), marker.clone(), || Ok(())).unwrap();
+        assert_ne!(first, second);
+        clear_marker_if_current(&state, first);
+        assert!(safe_lock(&state).as_ref().unwrap().matches(&marker));
+        assert_eq!(safe_lock(&state).as_ref().unwrap().id, second);
+        clear_marker_if_current(&state, second);
+        assert!(safe_lock(&state).is_none());
+    }
+
+    #[test]
+    fn failed_write_does_not_clear_newer_same_content_write() {
+        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
+        let state = Arc::new(Mutex::new(None));
+        let result = write_with_marker(state.clone(), marker.clone(), || {
+            set_copy_marker(&state, marker.clone());
+            Err("write failed".into())
+        });
+        assert_eq!(result, Err("write failed".into()));
+        assert!(safe_lock(&state).as_ref().unwrap().matches(&marker));
+        assert!(write_with_marker(state.clone(), marker, || Err("write failed".into())).is_err());
+        assert!(safe_lock(&state).is_none());
+    }
+
+    #[test]
+    fn restrip_holds_lock_and_rejects_replaced_writes() {
+        use std::cell::Cell;
+
+        let lock = tokio::sync::Mutex::new(());
+        let state = Arc::new(Mutex::new(None));
+        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
+        let id = set_copy_marker(&state, marker.clone());
+        let mut expected = RichTextWrite {
+            id,
+            text: "hello".into(),
+            html: "<b>hello</b>".into(),
+            sequence: Some(12),
+        };
+        let writes = Cell::new(0);
+        for sequence in [Some(12), None] {
+            expected.sequence = sequence;
+            restrip_if_unchanged(
+                &lock,
+                &state,
+                &expected,
+                || sequence,
+                || {
+                    assert!(lock.try_lock().is_err());
+                    true
+                },
+                || {
+                    assert!(lock.try_lock().is_err());
+                    writes.set(writes.get() + 1);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(writes.get(), 2);
+
+        let operation = lock.try_lock().unwrap();
+        restrip_if_unchanged(
+            &lock,
+            &state,
+            &expected,
+            || panic!("占用期间不读取剪贴板"),
+            || panic!("占用期间不读取内容"),
+            || panic!("占用期间不写入内容"),
+        )
+        .unwrap();
+        drop(operation);
+
+        expected.sequence = Some(12);
+        let sequence = Cell::new(Some(12));
+        restrip_if_unchanged(
+            &lock,
+            &state,
+            &expected,
+            || sequence.get(),
+            || {
+                sequence.set(Some(13));
+                true
+            },
+            || panic!("读取期间序号变化时不写入"),
+        )
+        .unwrap();
+        restrip_if_unchanged(
+            &lock,
+            &state,
+            &expected,
+            || Some(13),
+            || panic!("其他应用重新复制相同内容后不继续读取"),
+            || panic!("其他应用重新复制相同内容后不写入"),
+        )
+        .unwrap();
+        restrip_if_unchanged(
+            &lock,
+            &state,
+            &expected,
+            || Some(12),
+            || false,
+            || panic!("完整内容不匹配时不写入"),
+        )
+        .unwrap();
+
+        set_copy_marker(&state, marker);
+        restrip_if_unchanged(
+            &lock,
+            &state,
+            &expected,
+            || panic!("后一次写入替换旧 ID 后不读取剪贴板"),
+            || panic!("后一次写入替换旧 ID 后不读取内容"),
+            || panic!("后一次写入替换旧 ID 后不写入内容"),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn file_verification_rejects_partial_or_different_lists() {

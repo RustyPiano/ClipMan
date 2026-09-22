@@ -22,8 +22,9 @@ use commands::{
     register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, show_quickbar,
     toggle_pin, update_settings,
 };
+use paste::CopyWrite;
 use settings::SettingsManager;
-use storage::{ClipStorage, CopyMarker};
+use storage::ClipStorage;
 use tray::{build_tray_menu, TrayIconCache, TRAY_ID};
 
 use std::path::Path;
@@ -46,7 +47,7 @@ pub struct AppState {
     pub monitor: Mutex<Option<ClipboardMonitor>>,
     pub settings: Arc<SettingsManager>,
     pub settings_write_lock: Mutex<()>,
-    pub last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+    pub(crate) last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
     pub icon_cache: Arc<TrayIconCache>,
     pub quickbar_foreground_window: window::ForegroundWindowStore,
 }

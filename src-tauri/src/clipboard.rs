@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::storage::{encode_file_paths, ClipItem, ContentType, CopyMarker};
+use crate::{paste::CopyWrite, settings::Settings};
 
 type MonitorReadySender = mpsc::Sender<Result<(), String>>;
 const MONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -25,7 +26,7 @@ extern "system" {
 
 pub struct ClipboardMonitor {
     app_handle: AppHandle,
-    last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+    last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
     running: Arc<AtomicBool>,
     shutdown: Arc<Mutex<Option<Shutdown>>>,
     handle: Option<JoinHandle<()>>,
@@ -33,7 +34,7 @@ pub struct ClipboardMonitor {
 
 struct Handler {
     app_handle: AppHandle,
-    last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+    last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
     running: Arc<AtomicBool>,
     last_marker: Option<CopyMarker>,
 }
@@ -102,31 +103,14 @@ fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
     }
 }
 
-/// Whether the live clipboard is a rich-text write whose plain-text alt is
-/// exactly `text` — used to re-flatten ⌥Enter's one-off rich-paste residue
-/// without ever touching a newer copy.
-pub(crate) fn clipboard_holds_rich_text(clipboard: &mut Clipboard, text: &str) -> bool {
-    matches!(
-        read_clipboard_snapshot(clipboard),
-        Some(ClipboardSnapshot::Text { text: current, html }) if current == text && html.is_some()
-    )
-}
-
-/// Decides whether a freshly observed clipboard marker should be dispatched to
-/// storage, advancing `last_marker` as a side effect.
-///
-/// Returns false when the marker is unchanged (already recorded) or when it is
-/// our own write. Crucially, a self-copy skip still advances `last_marker`, so a
-/// later genuine copy of *different* content is never compared against stale
-/// state — matching the pre-refactor behavior where `last_text` was updated even
-/// on a self-copy skip (§2.2). `is_self_copied` is only evaluated when the
-/// marker actually changed, avoiding a needless lock on unchanged clipboards.
+/// 同文富文本需要重新经过过滤和保存；自身写入仍推进标记并跳过捕获。
 fn record_marker_and_decide_dispatch(
     marker: &CopyMarker,
     last_marker: &mut Option<CopyMarker>,
+    capture_rich_text: bool,
     is_self_copied: impl FnOnce() -> bool,
 ) -> bool {
-    if last_marker.as_ref() == Some(marker) {
+    if last_marker.as_ref() == Some(marker) && !capture_rich_text {
         return false;
     }
     *last_marker = Some(marker.clone());
@@ -170,7 +154,10 @@ impl ClipboardHandler for Handler {
 }
 
 impl ClipboardMonitor {
-    pub fn new(app_handle: AppHandle, last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>) -> Self {
+    pub(crate) fn new(
+        app_handle: AppHandle,
+        last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
+    ) -> Self {
         Self {
             app_handle,
             last_copied_by_us,
@@ -274,7 +261,7 @@ impl ClipboardMonitor {
     // Fallback polling implementation
     fn start_polling(
         app_handle: AppHandle,
-        last_copied_by_us: Arc<Mutex<Option<CopyMarker>>>,
+        last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
         running: Arc<AtomicBool>,
         ready_sender: Option<MonitorReadySender>,
     ) {
@@ -330,7 +317,7 @@ impl ClipboardMonitor {
     /// own writes, then dispatch a single record for the winning format.
     fn handle_clipboard_event(
         app_handle: &AppHandle,
-        last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
+        last_copied_by_us: &Arc<Mutex<Option<CopyWrite>>>,
         running: &Arc<AtomicBool>,
         clipboard: &mut Clipboard,
         last_marker: &mut Option<CopyMarker>,
@@ -345,26 +332,24 @@ impl ClipboardMonitor {
             return;
         }
 
+        let sequence = crate::paste::clipboard_sequence();
         let Some(snapshot) = read_clipboard_snapshot(clipboard) else {
             return;
         };
+        if sequence != crate::paste::clipboard_sequence() {
+            return;
+        }
         let marker = snapshot_marker(&snapshot);
 
-        let dispatch = record_marker_and_decide_dispatch(&marker, last_marker, || {
+        let capture_rich_text = matches!(&snapshot, ClipboardSnapshot::Text { html: Some(_), .. })
+            && app_handle
+                .state::<crate::AppState>()
+                .settings
+                .get()
+                .strips_rich_text_at_capture();
+        if !record_marker_and_decide_dispatch(&marker, last_marker, capture_rich_text, || {
             Self::is_self_copied(last_copied_by_us, &marker)
-        });
-        if !dispatch {
-            // globalPlain: re-copying already-recorded content re-introduces the
-            // rich flavor with an unchanged marker; flatten it again so the
-            // direct-paste promise holds. Our own writes (⌥Enter's rich paste,
-            // the strip itself) are excluded by the self-copy marker.
-            if let ClipboardSnapshot::Text { text, html } = &snapshot {
-                if Self::should_strip_rich_text(app_handle, html)
-                    && !Self::is_self_copied(last_copied_by_us, &marker)
-                {
-                    Self::strip_live_rich_text(app_handle, text);
-                }
-            }
+        }) {
             return;
         }
 
@@ -401,7 +386,7 @@ impl ClipboardMonitor {
                 Self::process_files_change(app_handle, paths, source_app)
             }
             ClipboardSnapshot::Text { text, html } => {
-                Self::process_text_change(app_handle, &text, html, source_app)
+                Self::process_text_change(app_handle, &text, html, source_app, sequence)
             }
             ClipboardSnapshot::Image(image) => {
                 Self::process_image_change(app_handle, running, image, &marker, source_app)
@@ -420,84 +405,48 @@ impl ClipboardMonitor {
         text: &str,
         html: Option<String>,
         source_app: Option<String>,
+        sequence: Option<u64>,
     ) {
         use crate::AppState;
 
         let settings = app_handle.state::<AppState>().settings.get();
-        let max_text_bytes = settings.max_text_bytes;
-        // Decide from the *pre-clamp* html: an oversized companion is dropped
-        // from the record below, but the live pasteboard is still rich and the
-        // mode promises plain direct pastes. read_clipboard_snapshot already
-        // filters empty html, so presence means rich.
-        let strip_rich = settings.strips_rich_text_at_capture() && html.is_some();
-
-        // Oversized Text/Files content is skipped entirely rather than
-        // truncated (§5): a partial path list or partial text is worse than
-        // no clip at all.
-        if text.len() > max_text_bytes {
-            log::info!(
-                "Skipping text clip: {} bytes exceeds max_text_bytes ({})",
-                text.len(),
-                max_text_bytes
-            );
-            return;
-        }
-
-        if let Some(kind) = secret_skip_reason(text, settings.skip_secrets) {
-            log::info!("🔒 Skipping captured secret ({kind})");
-            return;
-        }
-
-        let html = clamp_html_to_size_limit(html, max_text_bytes);
-
-        log::info!("📋 Text clipboard changed: {} chars", text.len());
-        let item = ClipItem {
-            id: Uuid::new_v4().to_string(),
-            content: text.as_bytes().to_vec(),
-            thumbnail: None,
-            content_type: ContentType::Text,
-            timestamp: crate::storage::current_timestamp(),
-            is_pinned: false,
-            pin_order: None,
-            label: None,
-            group_name: None,
-            source_app,
-            html,
-        };
-        let persisted = Self::save_to_storage(app_handle, item);
-
-        // globalPlain mode: flatten the live clipboard once the copy is durably
-        // recorded (or already known — dedup). If the insert failed, the live
-        // clipboard holds the only copy of the rich flavor, so keep it. The
-        // strip write uses the plain-text marker (D5) — the same value recorded
-        // above — so the monitor treats it as our own write and never
-        // re-captures it.
-        if strip_rich && persisted {
-            Self::strip_live_rich_text(app_handle, text);
+        if let Some(html) = capture_text(text, html, source_app, &settings, |item| {
+            Self::save_to_storage(app_handle, item)
+        }) {
+            Self::strip_live_rich_text(app_handle, text, &html, sequence);
         }
     }
 
-    /// Whether globalPlain mode is on and the snapshot carries a rich-text
-    /// (html) companion.
-    fn should_strip_rich_text(app_handle: &AppHandle, html: &Option<String>) -> bool {
-        app_handle
-            .state::<crate::AppState>()
-            .settings
-            .get()
-            .strips_rich_text_at_capture()
-            && html.is_some()
-    }
-
-    /// Rewrite the live system clipboard to plain text (globalPlain). Guarded
-    /// by the shared clipboard lock: a QuickBar take may be writing at this
-    /// moment, and one missed flatten beats clobbering the content the user
-    /// just asked to paste.
-    fn strip_live_rich_text(app_handle: &AppHandle, text: &str) {
+    /// 持锁核对捕获的完整内容，避免保存期间发生的另一项粘贴被覆盖。
+    fn strip_live_rich_text(app_handle: &AppHandle, text: &str, html: &str, sequence: Option<u64>) {
         use crate::AppState;
 
         let state = app_handle.state::<AppState>();
-        if state.clipboard_use_lock.try_lock().is_err() {
+        let Ok(_operation) = state.clipboard_use_lock.try_lock() else {
             log::debug!("Skipping globalPlain strip: a clipboard use is in flight");
+            return;
+        };
+        let settings = state.settings.get();
+        if settings.capture_paused || !settings.strips_rich_text_at_capture() {
+            return;
+        }
+        let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
+        if Self::is_self_copied(&state.last_copied_by_us, &marker)
+            || sequence != crate::paste::clipboard_sequence()
+        {
+            return;
+        }
+        let Ok(mut clipboard) = Clipboard::new() else {
+            return;
+        };
+        if clipboard
+            .get()
+            .file_list()
+            .is_ok_and(|paths| !paths.is_empty())
+            || clipboard.get_text().ok().as_deref() != Some(text)
+            || clipboard.get().html().ok().as_deref() != Some(html)
+            || sequence != crate::paste::clipboard_sequence()
+        {
             return;
         }
         let marker_state = state.last_copied_by_us.clone();
@@ -631,10 +580,12 @@ impl ClipboardMonitor {
     }
 
     fn is_self_copied(
-        last_copied_by_us: &Arc<Mutex<Option<CopyMarker>>>,
+        last_copied_by_us: &Arc<Mutex<Option<CopyWrite>>>,
         expected_marker: &CopyMarker,
     ) -> bool {
-        crate::safe_lock(last_copied_by_us).as_ref() == Some(expected_marker)
+        crate::safe_lock(last_copied_by_us)
+            .as_ref()
+            .is_some_and(|write| write.matches(expected_marker))
     }
 
     /// Persist a captured item. Returns false only when the insert failed —
@@ -757,6 +708,53 @@ impl ClipboardMonitor {
             max_dimension,
             image::imageops::FilterType::Lanczos3,
         )
+    }
+}
+
+/// 通过过滤且保存成功后，返回清理时需要核对的原始 HTML。
+fn capture_text(
+    text: &str,
+    html: Option<String>,
+    source_app: Option<String>,
+    settings: &Settings,
+    save: impl FnOnce(ClipItem) -> bool,
+) -> Option<String> {
+    if text.len() > settings.max_text_bytes {
+        log::info!(
+            "Skipping text clip: {} bytes exceeds max_text_bytes ({})",
+            text.len(),
+            settings.max_text_bytes
+        );
+        return None;
+    }
+    if let Some(kind) = secret_skip_reason(text, settings.skip_secrets) {
+        log::info!("🔒 Skipping captured secret ({kind})");
+        return None;
+    }
+
+    // 存储大小限制不会改变系统剪贴板，清理时仍需核对完整 HTML。
+    let strip_html = settings
+        .strips_rich_text_at_capture()
+        .then(|| html.clone())
+        .flatten();
+    let item = ClipItem {
+        id: Uuid::new_v4().to_string(),
+        content: text.as_bytes().to_vec(),
+        thumbnail: None,
+        content_type: ContentType::Text,
+        timestamp: crate::storage::current_timestamp(),
+        is_pinned: false,
+        pin_order: None,
+        label: None,
+        group_name: None,
+        source_app,
+        html: clamp_html_to_size_limit(html, settings.max_text_bytes),
+    };
+    log::info!("📋 Text clipboard changed: {} chars", text.len());
+    if save(item) {
+        strip_html
+    } else {
+        None
     }
 }
 
@@ -1153,6 +1151,7 @@ mod tests {
         assert!(!record_marker_and_decide_dispatch(
             &marker,
             &mut last_marker,
+            false,
             || true
         ));
         assert_eq!(Some(&marker), last_marker.as_ref());
@@ -1162,6 +1161,7 @@ mod tests {
         assert!(!record_marker_and_decide_dispatch(
             &marker,
             &mut last_marker,
+            false,
             || panic!("unchanged marker must not re-check self-copy")
         ));
         assert_eq!(Some(&marker), last_marker.as_ref());
@@ -1171,8 +1171,76 @@ mod tests {
         assert!(record_marker_and_decide_dispatch(
             &next,
             &mut last_marker,
+            false,
             || false
         ));
         assert_eq!(Some(&next), last_marker.as_ref());
+    }
+
+    #[test]
+    fn global_plain_recaptures_rich_text_with_the_same_plain_marker() {
+        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
+        let mut last_marker = None;
+        assert!(record_marker_and_decide_dispatch(
+            &marker,
+            &mut last_marker,
+            false,
+            || false
+        ));
+        assert!(record_marker_and_decide_dispatch(
+            &marker,
+            &mut last_marker,
+            true,
+            || false
+        ));
+        assert!(!record_marker_and_decide_dispatch(
+            &marker,
+            &mut last_marker,
+            true,
+            || true
+        ));
+    }
+
+    #[test]
+    fn rich_text_is_stripped_only_after_a_successful_save() {
+        let html = "<b>hello</b>";
+        for max_text_bytes in [5, 100] {
+            let settings = Settings {
+                paste_format: "globalPlain".into(),
+                max_text_bytes,
+                ..Settings::default()
+            };
+            for persisted in [false, true] {
+                let strip_html =
+                    capture_text("hello", Some(html.into()), None, &settings, |item| {
+                        assert_eq!(item.content, b"hello");
+                        assert_eq!(
+                            item.html.as_deref(),
+                            (html.len() <= max_text_bytes).then_some(html)
+                        );
+                        persisted
+                    });
+                assert_eq!(strip_html.as_deref(), persisted.then_some(html));
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_text_never_reaches_storage_or_clipboard_stripping() {
+        let settings = Settings {
+            paste_format: "globalPlain".into(),
+            max_text_bytes: 20,
+            skip_secrets: true,
+            ..Settings::default()
+        };
+        let secret = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
+        for text in [secret.as_str(), "ordinary text exceeding the size limit"] {
+            assert_eq!(
+                capture_text(text, Some("<b>private</b>".into()), None, &settings, |_| {
+                    panic!("被过滤的内容不能进入存储")
+                }),
+                None
+            );
+        }
     }
 }

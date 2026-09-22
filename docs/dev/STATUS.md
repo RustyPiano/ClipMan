@@ -4,15 +4,15 @@
 > 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 PLAN.md / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-09-11**
+**最后更新：2026-09-23**
 
 ## 当前状态一句话
 
-**v2.3.0 已发布；工作区有未提交改动**：QuickBar 行信息密度回归 v2.2 风格（方案 B）+ 开发产物瘦身，全部门禁绿。
+**最新发布版本为 v2.3.0**；当前代码包含三种粘贴格式及富文本保存、锁保护和延迟清理修复，本机自动检查全部通过。
 
 ## 工作区
 
-- 「粘贴格式」三模式（2026-09-11，含三路 subagent 审核修复）：`paste_format = original | takePlain | globalPlain`（默认 original，未知值两条路径都归一回 original）。takePlain：经 ClipMan 取用/仅复制均纯文本，⌥回车临时反转富文本；globalPlain 在此之上于捕获入库**成功后**把系统剪贴板富文本重写为纯文本（`paste::strip_rich_text_from_clipboard`，复用 marker 通道不会重采集）。审核修复：重复复制同段富文本（marker 去重早退）也会剥离、剥离决策用截断前 html（超大富文本不再逃逸）、存储失败不剥离（`save_to_storage` 返回 bool）、剥离持 `clipboard_use_lock`（争用即跳过）、⌥回车富文本残留约 2.3 秒后守卫式重剥离。设置页三选一原生 radio；store 经 `settings-changed` 实时刷新。跳过捕获的内容（忽略应用/密钥/超大/暂停）按语义保留富文本，UI 文案已避免绝对承诺。
+- 「粘贴格式」：`paste_format = original | takePlain | globalPlain`，默认 original。takePlain 经 ClipMan 取用和复制时使用纯文本，⌥回车临时反转富文本；globalPlain 还会在捕获并保存成功后清除系统剪贴板的富文本格式。同文富文本也经过过滤和保存；清理全程持锁，复核完整文本、HTML 和可用的系统序号。⌥回车约 2.3 秒后的清理按唯一写入 ID 核对，暂停捕获时跳过。自身复制标记通过写入时间判断有效期。设置经 `settings-changed` 实时刷新。
 - QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`），布尔版纯文本开关（`7b8a8e4`）被三模式取代（`e67c27a`）。
 - 磁盘瘦身：`[profile.dev.package."*"] debug = false` 后 `src-tauri/target` 12 GB→1.9 GB；Playwright 浏览器缓存**保留**（用户决定不再反复装卸，避免重复写盘）。
 - v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
@@ -20,14 +20,15 @@
 ## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
 
 ```
-cd src-tauri && cargo test               # 132 通过，1 个手动性能基准 ignored
+cd src-tauri && cargo test               # 139 通过，1 个手动性能基准 ignored
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo fmt --check
+cd src-tauri && cargo build
 bun run lint && bun run check            # 0 错误
 bun run test:types
-bun test tests/                          # 56 通过
+bun test tests/                          # 60 通过
 bun run build
-bun run test:ui                          # Chromium + WebKit，36 项
+bun run test:ui                          # Chromium + WebKit，44 项
 ```
 
 ## 待办（按优先级）
@@ -46,6 +47,7 @@ bun run test:ui                          # Chromium + WebKit，36 项
 
 ## 已知问题 / 注意事项
 
+- 本次富文本修复已通过单元测试和构建，未运行原生剪贴板交互验证；Windows/Linux 分支未在本机编译。Linux 的 arboard 接口未公开写入序号，无法区分外部应用再次复制完全相同的文本及 HTML；延迟清理使用最新写入 ID 和完整内容核对。
 - 搜索最多展示 1000 条，已提示缩小范围；没有追加搜索分页。
 - 应用排除仅 macOS 可用（支持 bundle ID / 兼容本地化名称）；Windows/Linux 已提示。
 - 合并仍跳过图片，执行前显示跳过数量。
