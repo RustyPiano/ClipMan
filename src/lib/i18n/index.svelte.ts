@@ -2,7 +2,7 @@
 
 export type Locale = 'zh-CN' | 'en';
 
-export interface Translations {
+interface Translations {
   // App
   copiedOnly: string;
   searchLimit: string;
@@ -30,7 +30,6 @@ export interface Translations {
   pin: string;
   unpin: string;
   editLabel: string;
-  labelPlaceholder: string;
   delete: string;
   clear: string;
   clearNonPinned: string;
@@ -48,27 +47,14 @@ export interface Translations {
   // Time
   justNow: string;
   minutesAgo: string;
-  hoursAgo: string;
-
-  // Source
-  source: string;
 
   // Empty states
   noPinnedItems: string;
-  noPinnedItemsHint: string;
   noClipboardHistory: string;
-  noClipboardHistoryHint: string;
   noSearchResults: string;
-  noSearchResultsHint: string;
-  noPinnedMatches: string;
-  noPinnedMatchesHint: string;
 
   // Search
   searchPlaceholder: string;
-
-  // Preview pane
-  selectToPreview: string;
-  charCount: string;
 
   // Settings sections
   settingsGeneral: string;
@@ -168,11 +154,8 @@ export interface Translations {
   loading: string;
 
   // Misc
-  switchTheme: string;
   decodeFailed: string;
   emptyContent: string;
-  checkedTask: string;
-  uncheckedTask: string;
 
   // Clipboard permission
   clipboardAccessTitle: string;
@@ -202,7 +185,7 @@ export interface Translations {
   fileCount: string;
   richTextBadge: string;
 
-  // Ignored apps (SPEC-4 §3)
+  // Ignored apps
   ignoredApps: string;
   ignoredAppsDesc: string;
   ignoredAppsPlaceholder: string;
@@ -210,11 +193,11 @@ export interface Translations {
   removeIgnoredApp: string;
   noIgnoredApps: string;
 
-  // Secret detection setting (SPEC-4 §2 UI)
+  // Secret detection setting
   skipSecrets: string;
   skipSecretsDesc: string;
 
-  // Capture size limits (SPEC-3 §5 UI)
+  // Capture size limits
   maxTextBytes: string;
   maxTextBytesDesc: string;
   maxImageDimension: string;
@@ -223,7 +206,6 @@ export interface Translations {
   // Multi-select merge paste
   selectedCount: string;
   mergePasteHint: string;
-  clearSelection: string;
 }
 
 const zh: Translations = {
@@ -254,7 +236,6 @@ const zh: Translations = {
   pin: '置顶',
   unpin: '取消置顶',
   editLabel: '编辑标签',
-  labelPlaceholder: '输入常用项标签',
   delete: '删除',
   clear: '清除',
   clearNonPinned: '清除非置顶',
@@ -272,26 +253,14 @@ const zh: Translations = {
   // Time
   justNow: '刚刚',
   minutesAgo: '{n}分钟前',
-  hoursAgo: '{n}小时前',
-
-  source: '来源',
 
   // Empty states
   noPinnedItems: '暂无置顶项目',
-  noPinnedItemsHint: '点击置顶图标收藏常用内容',
   noClipboardHistory: '暂无剪切板历史',
-  noClipboardHistoryHint: '复制内容后会自动出现在这里',
   noSearchResults: '没有匹配的结果',
-  noSearchResultsHint: '换个关键词试试',
-  noPinnedMatches: '没有匹配的置顶项',
-  noPinnedMatchesHint: '在「历史」中查看 {n} 条匹配',
 
   // Search
   searchPlaceholder: '搜索剪切板内容...',
-
-  // Preview pane
-  selectToPreview: '选择一项查看完整内容',
-  charCount: '{n} 字',
 
   // Settings sections
   settingsGeneral: '常规',
@@ -392,11 +361,8 @@ const zh: Translations = {
   loading: '加载中...',
 
   // Misc
-  switchTheme: '切换主题',
   decodeFailed: '[解码失败]',
   emptyContent: '[内容为空]',
-  checkedTask: '已完成任务',
-  uncheckedTask: '未完成任务',
 
   // Clipboard permission
   clipboardAccessTitle: '无法访问剪贴板',
@@ -448,7 +414,6 @@ const zh: Translations = {
   // Multi-select merge paste
   selectedCount: '已选 {n} 项',
   mergePasteHint: '合并粘贴（换行分隔）',
-  clearSelection: '清除选择',
 };
 
 const en: Translations = {
@@ -479,7 +444,6 @@ const en: Translations = {
   pin: 'Pin',
   unpin: 'Unpin',
   editLabel: 'Edit label',
-  labelPlaceholder: 'Enter pinned label',
   delete: 'Delete',
   clear: 'Clear',
   clearNonPinned: 'Clear Non-pinned',
@@ -497,26 +461,14 @@ const en: Translations = {
   // Time
   justNow: 'Just now',
   minutesAgo: '{n}m ago',
-  hoursAgo: '{n}h ago',
-
-  source: 'From',
 
   // Empty states
   noPinnedItems: 'No pinned items',
-  noPinnedItemsHint: 'Click the pin icon to save frequently used content',
   noClipboardHistory: 'No clipboard history',
-  noClipboardHistoryHint: 'Copied content will appear here',
   noSearchResults: 'No matching results',
-  noSearchResultsHint: 'Try a different keyword',
-  noPinnedMatches: 'No matching pinned items',
-  noPinnedMatchesHint: 'View {n} matches in History',
 
   // Search
   searchPlaceholder: 'Search clipboard...',
-
-  // Preview pane
-  selectToPreview: 'Select an item to see the full content',
-  charCount: '{n} chars',
 
   // Settings sections
   settingsGeneral: 'General',
@@ -620,11 +572,8 @@ const en: Translations = {
   loading: 'Loading...',
 
   // Misc
-  switchTheme: 'Switch theme',
   decodeFailed: '[Decode failed]',
   emptyContent: '[Empty content]',
-  checkedTask: 'Checked task',
-  uncheckedTask: 'Unchecked task',
 
   // Clipboard permission
   clipboardAccessTitle: 'Cannot access the clipboard',
@@ -682,40 +631,13 @@ const en: Translations = {
   // Multi-select merge paste
   selectedCount: '{n} selected',
   mergePasteHint: 'Merge paste (newlines)',
-  clearSelection: 'Clear selection',
 };
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };
 
+// 语言以后端设置 settings.locale 为准，各窗口读取设置后调用 setLocale。
 class I18n {
   private _locale = $state<Locale>('zh-CN');
-
-  constructor() {
-    // Detect system locale
-    if (typeof navigator !== 'undefined') {
-      const systemLang = navigator.language;
-      if (systemLang.startsWith('zh')) {
-        this._locale = 'zh-CN';
-      } else {
-        this._locale = 'en';
-      }
-
-      // Load saved preference
-      const saved = localStorage.getItem('locale') as Locale | null;
-      if (saved && (saved === 'zh-CN' || saved === 'en')) {
-        this._locale = saved;
-      }
-
-      // Sync locale across windows via storage events
-      window.addEventListener('storage', (event) => {
-        if (event.key === 'locale' && event.newValue) {
-          if (event.newValue === 'zh-CN' || event.newValue === 'en') {
-            this._locale = event.newValue as Locale;
-          }
-        }
-      });
-    }
-  }
 
   get locale() {
     return this._locale;
@@ -727,9 +649,6 @@ class I18n {
 
   setLocale(locale: Locale) {
     this._locale = locale;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('locale', locale);
-    }
   }
 
   // Helper for interpolation: t.minutesAgo with {n} -> "5分钟前"

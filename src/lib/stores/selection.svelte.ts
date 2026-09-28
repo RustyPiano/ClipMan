@@ -3,7 +3,7 @@ import { SvelteSet } from 'svelte/reactivity';
 export type QuickBarPanel = 'recent' | 'pinned';
 type Item = { id: string };
 
-export function clampIndex(index: number, itemCount: number) {
+function clampIndex(index: number, itemCount: number) {
   return Math.max(0, Math.min(index, itemCount - 1));
 }
 

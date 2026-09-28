@@ -3,17 +3,20 @@ import { listen } from '@tauri-apps/api/event';
 import { selectionStore } from './selection.svelte';
 import { toastStore } from './toast.svelte';
 import { i18n } from '$lib/i18n';
-import type { ClipItem, ClipDetail, PasteFormat, PasteMode, ReorderDirection } from '$lib/types';
+import type {
+  ClipItem,
+  ClipDetail,
+  PasteFormat,
+  PasteMode,
+  ReorderDirection,
+  Settings,
+} from '$lib/types';
 import {
   applyClipboardChanged,
   getPinnedDisplayItems,
   getRecentDisplayItems,
 } from '$lib/utils/clip-items';
 import { RequestSequencer } from '$lib/utils/request-sequencer';
-import { hasTauriRuntime } from '$lib/utils/tauri';
-
-// Re-export type for convenience
-export type { ClipItem } from '$lib/types';
 
 interface LoadHistoryOptions {
   showLoading?: boolean;
@@ -85,11 +88,6 @@ class ClipboardStore {
   // window imports this same singleton but must NOT initialize it — otherwise it
   // would needlessly pull a page of history and subscribe to every event.
   async initialize() {
-    if (!hasTauriRuntime()) {
-      this.isLoading = false;
-      return;
-    }
-
     // Subscribe before the first query. Any copy that lands while history is
     // loading is recorded and replayed over the response by loadHistory.
     await listen('clips-used', () => {
@@ -125,11 +123,6 @@ class ClipboardStore {
   }
 
   async loadHistory(options: LoadHistoryOptions = {}) {
-    if (!hasTauriRuntime()) {
-      this.isLoading = false;
-      return;
-    }
-
     const showLoading = options.showLoading ?? true;
     const requestId = this.historyRequests.next();
     this.pageRequests.next();
@@ -148,10 +141,8 @@ class ClipboardStore {
     const pageLimit = Math.max(ClipboardStore.PAGE_SIZE, this.recentItems.length);
 
     try {
-      // Ask for one sentinel row past the page: its presence — not a merely full
-      // page — is the authoritative "there are older rows" signal, so a history
-      // whose size is an exact multiple of the page no longer offers an empty
-      // page turn. The sentinel is trimmed before it reaches the list.
+      // 多取一行作为哨兵：它存在才说明还有更早的记录，历史条数恰好是页大小的整数倍时
+      // 不会出现一次空翻页。哨兵行在进入列表前去掉。
       const [recentRaw, pinned] = await Promise.all([
         invoke<ClipItem[]>('get_recent_clips', { limit: pageLimit + 1 }),
         invoke<ClipItem[]>('get_pinned_clips'),
@@ -186,11 +177,8 @@ class ClipboardStore {
         toastStore.add(`${i18n.t.history}: ${this.historyError}`, 'error');
       }
     } finally {
-      // Clear the full-screen spinner for the current request regardless of the
-      // search state. The previous `!searchQuery.trim()` guard let isLoading stick
-      // forever when a search became active mid-load (e.g. typing immediately on
-      // launch): the finally then skipped the clear and the search flow only
-      // manages isSearchPending, so the spinner never went away.
+      // 无论是否有搜索都结束当前请求的加载状态：搜索流程只管理 isSearchPending，
+      // 加载中途开始的搜索不会替它清除 isLoading。
       if (this.historyRequests.isCurrent(requestId)) {
         this.isLoading = false;
         this.historyPending = false;
@@ -207,7 +195,6 @@ class ClipboardStore {
    * the loaded tail.
    */
   async loadMoreRecent() {
-    if (!hasTauriRuntime()) return;
     if (this.isLoadingMore || !this.hasMoreRecent) return;
     if (this.searchQuery.trim() || this.activeSearchQuery.trim()) return;
 
@@ -223,9 +210,7 @@ class ClipboardStore {
     const requestId = this.pageRequests.next();
 
     try {
-      // limit + 1: the sentinel row past the page is the authoritative "there is
-      // another page" signal, so an exact page boundary no longer triggers an
-      // empty page turn. The sentinel is trimmed before it reaches the list.
+      // 与 loadHistory 相同，多取的一行是哨兵。
       const page = await invoke<ClipItem[]>('get_recent_clips', {
         limit: ClipboardStore.PAGE_SIZE + 1,
         beforeTimestamp: cursor.timestamp,
@@ -259,8 +244,8 @@ class ClipboardStore {
   }
 
   /**
-   * Collapse accumulated pages back to the first page (§1 reset points: panel
-   * switch to recent, quickbar-opened). No IPC — the live clipboard-changed
+   * Collapse accumulated pages back to the first page (panel switch to recent,
+   * quickbar-opened). No IPC — the live clipboard-changed
    * stream keeps page 1 fresh while hidden; this only drops the extra pages a
    * scroll accumulated, and supersedes any in-flight page load.
    */
@@ -274,41 +259,25 @@ class ClipboardStore {
   }
 
   async refreshSettings() {
-    if (!hasTauriRuntime()) return;
-
     try {
-      const settings = await invoke<{
-        autoPaste: boolean;
-        maxHistoryItems: number;
-        capturePaused: boolean;
-        pasteFormat: PasteFormat;
-      }>('get_settings');
+      const settings = await invoke<Settings>('get_settings');
       this.autoPaste = settings.autoPaste;
       this.capturePaused = settings.capturePaused;
       this.maxHistoryItems = settings.maxHistoryItems;
-      this.pasteFormat = settings.pasteFormat ?? 'original';
+      this.pasteFormat = settings.pasteFormat;
+      i18n.setLocale(settings.locale);
     } catch (error) {
       console.error('Failed to refresh settings:', error);
     }
   }
 
-  setSearchQuery(query: string) {
-    // Empty input is routed to clearSearch by SearchBar; this only stages a
-    // non-empty draft.
+  /** 暂存非空的搜索草稿；pending 表示随后会发起搜索（输入法组合期间为 false）。 */
+  setSearchQuery(query: string, pending = true) {
     this.searchRequests.next();
     this.pendingSearch = null;
     selectionStore.cancelUse();
     this.searchQuery = query;
-    this.isSearchPending = hasTauriRuntime();
-    this.searchError = null;
-  }
-
-  setSearchDraft(query: string) {
-    this.searchRequests.next();
-    this.pendingSearch = null;
-    selectionStore.cancelUse();
-    this.searchQuery = query;
-    this.isSearchPending = false;
+    this.isSearchPending = pending;
     this.searchError = null;
   }
 
@@ -337,9 +306,6 @@ class ClipboardStore {
     }
     if (!query.trim()) {
       return this.clearSearch();
-    }
-    if (!hasTauriRuntime()) {
-      return;
     }
 
     // A silent search refreshes the results of the *same* query in place — e.g.
@@ -403,17 +369,8 @@ class ClipboardStore {
   }
 
   async clearNonPinned() {
-    try {
-      // The backend emits `history-cleared` after clearing (the tray's "clear"
-      // item fires the same command), and our listener there clears the cache
-      // and reloads. So this path must NOT reload again — that was a redundant
-      // round trip on every clear.
-      await invoke('clear_non_pinned_history');
-      console.log('[SUCCESS] Cleared all non-pinned items');
-    } catch (error) {
-      console.error('[ERROR] Failed to clear non-pinned items:', error);
-      throw error;
-    }
+    // 后端清除后发出 history-cleared，由该事件的监听负责清缓存和重新加载。
+    await invoke('clear_non_pinned_history');
   }
 
   async togglePin(id: string) {
@@ -504,13 +461,13 @@ class ClipboardStore {
 
   /**
    * Merge the multi-selected clips (in selection order) into a single clipboard
-   * write and paste them, newline-separated (task #13). No-op when nothing is
+   * write and paste them, newline-separated. No-op when nothing is
    * selected; clears the selection once the paste is dispatched.
    */
   async useSelectedClips(mode: PasteMode = 'default') {
     const ids = [...selectionStore.selectedIds];
     if (!ids.length || this.isSearchPending) return;
-    if (await this.performUse('paste_clips', { ids, mode, separator: '\n' }, mode)) {
+    if (await this.performUse('paste_clips', { ids, mode }, mode)) {
       selectionStore.clearSelection();
     }
   }
@@ -545,7 +502,6 @@ class ClipboardStore {
   async fetchFullClip(id: string): Promise<ClipDetail | null> {
     const cached = this.getCachedFullClip(id);
     if (cached) return cached;
-    if (!hasTauriRuntime()) return null;
 
     const revision = this.cacheRevision;
     try {

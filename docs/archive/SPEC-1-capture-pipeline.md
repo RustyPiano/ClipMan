@@ -1,3 +1,5 @@
+> 已归档（2026-09-29）：已完成工作的历史记录，不作为当前指导；当前状态见 `docs/dev/STATUS.md`。
+
 # SPEC-1：采集管线重构 + Files 类型 + HTML 富文本（后端）
 
 > Wave 1-B · 模型：Opus · 文件域：`src-tauri/src/{storage,clipboard,paste,commands,tray}.rs`

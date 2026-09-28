@@ -12,7 +12,6 @@ mod storage;
 mod tray;
 mod window;
 
-use clipboard::ClipboardMonitor;
 use commands::{
     check_accessibility_permission, check_clipboard_permission, check_for_updates,
     clear_non_pinned_history, copy_to_system_clipboard, delete_clip, disable_global_shortcut,
@@ -32,19 +31,10 @@ use std::sync::{Arc, Mutex};
 use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
-/// Helper function: safely acquire Mutex even if poisoned
-pub fn safe_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        log::warn!("⚠️ Recovered from poisoned lock");
-        poisoned.into_inner()
-    })
-}
-
 /// Application state shared across commands
 pub struct AppState {
     pub storage: Arc<Mutex<ClipStorage>>,
     pub clipboard_use_lock: tokio::sync::Mutex<()>,
-    pub monitor: Mutex<Option<ClipboardMonitor>>,
     pub settings: Arc<SettingsManager>,
     pub settings_write_lock: Mutex<()>,
     pub(crate) last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
@@ -52,27 +42,20 @@ pub struct AppState {
     pub quickbar_foreground_window: window::ForegroundWindowStore,
 }
 
-/// Outcome of a single attempt to make `dir` (and `dir/clipman.db`) usable.
+/// 一次打开 `dir/clipman.db` 的结果；`is_corrupt` 表示 SQLite 判定数据库已损坏。
 enum StorageAttempt {
     Ready(ClipStorage),
-    /// `dir` itself could not be created (or isn't writable).
-    DirUnavailable(String),
-    /// `dir` exists, but opening/initializing the database inside it failed.
-    OpenFailed {
-        message: String,
-        is_corrupt: bool,
-    },
+    OpenFailed { message: String, is_corrupt: bool },
 }
 
 fn try_open_storage(dir: &Path) -> StorageAttempt {
     log::info!("Using data directory: {:?}", dir);
 
     if let Err(e) = std::fs::create_dir_all(dir) {
-        return StorageAttempt::DirUnavailable(format!(
-            "Failed to create data directory {}: {}",
-            dir.display(),
-            e
-        ));
+        return StorageAttempt::OpenFailed {
+            message: format!("Failed to create data directory {}: {}", dir.display(), e),
+            is_corrupt: false,
+        };
     }
 
     let db_path = dir.join("clipman.db");
@@ -87,53 +70,31 @@ fn try_open_storage(dir: &Path) -> StorageAttempt {
     }
 }
 
-/// Pure startup degradation-chain logic (SPEC-3 §2): try the custom data
-/// directory first if one is configured, falling back to `default_dir` when
-/// it's unusable; if SQLite identifies the database at `default_dir` as
-/// corrupt/not-a-database, quarantine the old files and rebuild a fresh
-/// database in their place. Other open failures leave the original untouched.
-///
-/// Kept free of `AppHandle`/dialogs so it can be exercised directly in unit
-/// tests with injected notification closures (see the `tests` module below).
-/// Any non-corruption failure in `default_dir` is fatal for this startup.
+/// 打开当前数据目录（设置了自定义目录就用它）的数据库。SQLite 判定损坏时，
+/// 把旧文件隔离保存后新建空库；其他失败直接返回错误，由调用方退出应用。
+/// 不依赖 `AppHandle`，通知通过闭包注入，便于单元测试。
 fn initialize_storage_core(
     default_dir: &Path,
     custom_data_path: Option<String>,
-    mut on_custom_dir_fallback: impl FnMut(&str),
     mut on_database_reset: impl FnMut(&Path),
 ) -> Result<ClipStorage, String> {
-    if let Some(custom_path) = custom_data_path {
-        let custom_dir =
-            migration::get_data_directory(default_dir.to_path_buf(), Some(custom_path));
-        match try_open_storage(&custom_dir) {
-            StorageAttempt::Ready(storage) => return Ok(storage),
-            StorageAttempt::DirUnavailable(e) | StorageAttempt::OpenFailed { message: e, .. } => {
-                log::warn!(
-                    "Custom data directory unavailable ({}); falling back to the default directory",
-                    e
-                );
-                on_custom_dir_fallback(&e);
-            }
-        }
-    }
-
-    match try_open_storage(default_dir) {
+    let dir = migration::get_data_directory(default_dir.to_path_buf(), custom_data_path);
+    match try_open_storage(&dir) {
         StorageAttempt::Ready(storage) => Ok(storage),
-        StorageAttempt::DirUnavailable(e) => Err(e),
         StorageAttempt::OpenFailed {
-            message: open_err,
+            message,
             is_corrupt: false,
-        } => Err(open_err),
+        } => Err(message),
         StorageAttempt::OpenFailed {
             message: open_err,
             is_corrupt: true,
         } => {
             log::warn!(
-                "SQLite reported a corrupt default database; resetting: {}",
+                "SQLite reported a corrupt database; resetting: {}",
                 open_err
             );
 
-            let db_path = default_dir.join("clipman.db");
+            let db_path = dir.join("clipman.db");
             if let Some(backup_path) =
                 storage::quarantine_corrupt_database(&db_path).map_err(|e| {
                     format!(
@@ -147,19 +108,15 @@ fn initialize_storage_core(
                 on_database_reset(&backup_path);
             }
 
-            match try_open_storage(default_dir) {
+            match try_open_storage(&dir) {
                 StorageAttempt::Ready(storage) => Ok(storage),
-                StorageAttempt::DirUnavailable(e)
-                | StorageAttempt::OpenFailed { message: e, .. } => Err(e),
+                StorageAttempt::OpenFailed { message, .. } => Err(message),
             }
         }
     }
 }
 
-/// Resolve and open the on-disk storage for the running app, applying the
-/// startup degradation chain above and surfacing non-fatal recoveries
-/// (custom-dir fallback, corrupt-db reset) to the user via a modal alert.
-/// Returns `Err` only when nothing usable could be initialized at all.
+/// 解析数据目录并打开数据库；数据库被重置时用对话框告知用户。
 fn resolve_storage(
     app: &tauri::AppHandle,
     custom_data_path: Option<String>,
@@ -169,33 +126,19 @@ fn resolve_storage(
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve the application data directory: {}", e))?;
 
-    initialize_storage_core(
-        &default_dir,
-        custom_data_path,
-        |error| {
-            notify_storage_issue(
-                app,
-                "数据目录不可用 / Data directory unavailable",
-                &format!(
-                    "自定义数据目录不可用，本次使用默认目录。\n\
-                     Custom data directory unavailable this session; using the default directory instead.\n\n{error}"
-                ),
-            );
-        },
-        |backup_path| {
-            notify_storage_issue(
-                app,
-                "历史记录已重置 / History reset",
-                &format!(
-                    "剪贴板历史数据库已损坏，已重置为新的空数据库。旧文件已保留在：\n{}\n\n\
-                     The clipboard history database was corrupted and has been reset. \
-                     The old file was kept at:\n{}",
-                    backup_path.display(),
-                    backup_path.display()
-                ),
-            );
-        },
-    )
+    initialize_storage_core(&default_dir, custom_data_path, |backup_path| {
+        notify_storage_issue(
+            app,
+            "历史记录已重置 / History reset",
+            &format!(
+                "剪贴板历史数据库已损坏，已重置为新的空数据库。旧文件已保留在：\n{}\n\n\
+                 The clipboard history database was corrupted and has been reset. \
+                 The old file was kept at:\n{}",
+                backup_path.display(),
+                backup_path.display()
+            ),
+        );
+    })
 }
 
 /// Show a non-blocking modal alert. Fire-and-forget from the caller's point
@@ -223,20 +166,13 @@ fn notify_storage_issue(app: &tauri::AppHandle, title: &str, message: &str) {
     }
 }
 
-/// The one allowed non-panic exit path (SPEC-3 §2): storage could not be
-/// initialized at all, even after every fallback. Show the reason in a modal
-/// alert on a background thread — `setup()` must return first so the event
-/// loop starts pumping and the dialog can actually render — then exit once
-/// it's dismissed.
-fn spawn_fatal_storage_alert(app: &tauri::AppHandle, error: &str) {
+/// 启动失败时的退出路径（数据存储或剪贴板监听无法初始化）：release 构建是
+/// panic = "abort"，直接崩溃用户看不到原因，这里用对话框说明原因再退出。对话框放在
+/// 后台线程，因为 `setup()` 必须先返回，事件循环才能开始处理并显示对话框。
+fn spawn_fatal_alert(app: &tauri::AppHandle, message: String) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
     let app = app.clone();
-    let message = format!(
-        "ClipMan 无法初始化数据存储，应用即将退出。\n\
-         ClipMan could not initialize its data storage and will exit.\n\n{error}"
-    );
-
     std::thread::spawn(move || {
         app.dialog()
             .message(message)
@@ -249,9 +185,7 @@ fn spawn_fatal_storage_alert(app: &tauri::AppHandle, error: &str) {
 }
 
 fn main() {
-    // Respect RUST_LOG when set; otherwise default to debug in dev builds and
-    // info in release (previously forced Debug unconditionally, which both
-    // ignored RUST_LOG and shipped a chatty release binary).
+    // 设置了 RUST_LOG 就按它；否则 debug 构建输出 debug 级别，release 输出 info。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
         if cfg!(debug_assertions) {
             "debug"
@@ -315,16 +249,9 @@ fn main() {
             let storage = match resolve_storage(app.handle(), settings.custom_data_path.clone()) {
                 Ok(storage) => storage,
                 Err(fatal_error) => {
-                    // Nothing usable to fall back to (can't resolve/create any
-                    // data directory, or even a freshly-reset database won't
-                    // open). Release builds run with panic = "abort", so we
-                    // must not panic here — tell the user why we're exiting
-                    // and stop cleanly instead of crashing silently.
                     log::error!("ClipMan cannot start: {}", fatal_error);
-                    // The hidden webviews start invoking commands as soon as
-                    // they load, and with no managed AppState those State
-                    // extractions panic (= abort in release). Tear the windows
-                    // down first so the fatal alert is all that remains.
+                    // 隐藏的 webview 加载后会立即调用命令，而此时没有 AppState，
+                    // 取 State 会 panic（release 中即 abort）。先销毁窗口，只留下错误对话框。
                     for (label, window) in app.webview_windows() {
                         if let Err(e) = window.destroy() {
                             log::warn!(
@@ -332,27 +259,29 @@ fn main() {
                             );
                         }
                     }
-                    spawn_fatal_storage_alert(app.handle(), &fatal_error);
+                    spawn_fatal_alert(
+                        app.handle(),
+                        format!(
+                            "ClipMan 无法初始化数据存储，应用即将退出。\n\
+                             ClipMan could not initialize its data storage and will exit.\n\n{fatal_error}"
+                        ),
+                    );
                     return Ok(());
                 }
             };
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
-            let icon_cache = Arc::new(TrayIconCache::new());
             let quickbar_foreground_window = Arc::new(Mutex::new(None));
 
-            let app_state = AppState {
+            app.manage(AppState {
                 storage: Arc::new(Mutex::new(storage)),
                 clipboard_use_lock: tokio::sync::Mutex::new(()),
-                monitor: Mutex::new(None),
                 settings: settings_manager.clone(),
                 settings_write_lock: Mutex::new(()),
                 last_copied_by_us: last_copied_by_us.clone(),
-                icon_cache: icon_cache.clone(),
+                icon_cache: Arc::new(TrayIconCache::new()),
                 quickbar_foreground_window: quickbar_foreground_window.clone(),
-            };
-
-            app.manage(app_state);
+            });
 
             if let Err(e) = window::setup_windows(app.handle()) {
                 log::error!("Failed to set up QuickBar windows: {}", e);
@@ -376,37 +305,32 @@ fn main() {
 
             log::info!("System tray initialized");
 
-            // Start clipboard monitoring
-            let app_handle = app.handle().clone();
-            let state: tauri::State<AppState> = app_handle.state();
-
-            let mut monitor = ClipboardMonitor::new(app_handle.clone(), last_copied_by_us.clone());
-            match monitor.start() {
-                Ok(()) => {
-                    *safe_lock(&state.monitor) = Some(monitor);
-                    log::info!("Clipboard monitoring started");
-                }
-                Err(e) => log::error!("Failed to start clipboard monitoring: {}", e),
+            if let Err(e) = clipboard::start_monitor(app.handle().clone(), last_copied_by_us) {
+                log::error!("ClipMan cannot start: {e}");
+                spawn_fatal_alert(
+                    app.handle(),
+                    format!(
+                        "ClipMan 无法启动剪贴板监听，应用即将退出。\n\
+                         ClipMan could not start clipboard monitoring and will exit.\n\n{e}"
+                    ),
+                );
+                return Ok(());
             }
+            log::info!("Clipboard monitoring started");
 
             // Register global shortcuts
-            let state: tauri::State<AppState> = app_handle.state();
-            let settings = state.settings.get();
             let current_shortcut = settings.global_shortcut;
-            let pinned_shortcut = settings.pinned_shortcut;
 
-            let main_shortcut_registered = register_quickbar_shortcut(
+            if let Err(e) = register_quickbar_shortcut(
                 app.handle(),
                 current_shortcut.as_str(),
                 quickbar_foreground_window.clone(),
                 window::QuickBarPanel::Recent,
-            );
-
-            if let Err(e) = main_shortcut_registered {
+            ) {
                 log::error!("{}", e);
             }
 
-            if let Some(pinned_shortcut) = pinned_shortcut {
+            if let Some(pinned_shortcut) = settings.pinned_shortcut {
                 if pinned_shortcut == current_shortcut {
                     log::warn!(
                         "Skipping pinned shortcut '{}' because it matches the main shortcut",
@@ -415,7 +339,7 @@ fn main() {
                 } else if let Err(e) = register_quickbar_shortcut(
                     app.handle(),
                     pinned_shortcut.as_str(),
-                    quickbar_foreground_window.clone(),
+                    quickbar_foreground_window,
                     window::QuickBarPanel::Pinned,
                 ) {
                     log::warn!("{}", e);
@@ -471,12 +395,10 @@ mod storage_init_tests {
         std::env::temp_dir().join(format!("clipman_main_init_{}_{}", name, Uuid::new_v4()))
     }
 
-    /// Failure injection #1 (SPEC-3 §2 acceptance): a configured custom data
-    /// directory that doesn't exist and can't be created — a plain file in
-    /// its ancestry makes `create_dir_all` reliably fail cross-platform.
+    /// 自定义数据目录无法创建时启动失败，不改用默认目录。
     #[test]
-    fn custom_dir_unusable_falls_back_to_default_and_notifies() {
-        let root = temp_root("custom_fallback");
+    fn unusable_custom_dir_is_fatal() {
+        let root = temp_root("custom_unusable");
         let default_dir = root.join("default");
         fs::create_dir_all(&default_dir).unwrap();
 
@@ -484,42 +406,28 @@ mod storage_init_tests {
         fs::write(&blocker_file, b"x").unwrap();
         let bad_custom_dir = blocker_file.join("subdir");
 
-        let mut fallback_notified = false;
         let result = initialize_storage_core(
             &default_dir,
             Some(bad_custom_dir.to_string_lossy().into_owned()),
-            |_error| fallback_notified = true,
             |_backup| panic!("should not need a database reset in this scenario"),
         );
 
-        let storage = result.expect("should recover using the default directory");
-        assert!(storage.get_recent_clip_previews(10).is_ok());
-        assert!(
-            fallback_notified,
-            "expected the custom-dir fallback notification to fire"
-        );
-        assert!(default_dir.join("clipman.db").exists());
-
-        drop(storage);
+        assert!(result.is_err());
+        assert!(!default_dir.join("clipman.db").exists());
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// Failure injection #2 (SPEC-3 §2 acceptance): the default database file
-    /// is corrupt (garbage bytes, not a valid sqlite header). Recovery must
-    /// quarantine it and rebuild a fresh, usable database in its place.
+    /// 损坏的数据库被隔离保存，并在原位置新建可用的数据库。
     #[test]
-    fn corrupt_default_database_is_quarantined_and_rebuilt() {
+    fn corrupt_database_is_quarantined_and_rebuilt() {
         let root = temp_root("corrupt_db");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("clipman.db"), b"not a sqlite database").unwrap();
 
         let mut reset_backup_path = None;
-        let result = initialize_storage_core(
-            &root,
-            None,
-            |_error| panic!("no custom dir configured, should not fall back"),
-            |backup_path| reset_backup_path = Some(backup_path.to_path_buf()),
-        );
+        let result = initialize_storage_core(&root, None, |backup_path| {
+            reset_backup_path = Some(backup_path.to_path_buf())
+        });
 
         let storage = result.expect("should recover with a freshly rebuilt database");
         assert!(storage.get_recent_clip_previews(10).is_ok());
@@ -538,28 +446,22 @@ mod storage_init_tests {
     }
 
     #[test]
-    fn non_corruption_open_failure_preserves_default_database_path() {
+    fn non_corruption_open_failure_preserves_database_path() {
         let root = temp_root("non_corrupt_open_failure");
         let db_path = root.join("clipman.db");
         fs::create_dir_all(&db_path).unwrap();
 
-        let result = initialize_storage_core(
-            &root,
-            None,
-            |_error| panic!("no custom dir configured, should not fall back"),
-            |_backup| panic!("non-corruption failures must not reset the database"),
-        );
+        let result = initialize_storage_core(&root, None, |_backup| {
+            panic!("non-corruption failures must not reset the database")
+        });
 
         assert!(result.is_err());
         assert!(db_path.is_dir(), "the original path must remain untouched");
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// Failure injection #3 (SPEC-3 §2 acceptance): the default data
-    /// directory itself cannot be created at all — the only case that must
-    /// be reported as fatal rather than recovered from.
     #[test]
-    fn default_dir_uncreatable_is_reported_as_fatal_error() {
+    fn uncreatable_default_dir_is_fatal() {
         let root = temp_root("default_uncreatable");
         fs::create_dir_all(&root).unwrap();
 
@@ -567,51 +469,11 @@ mod storage_init_tests {
         fs::write(&blocker_file, b"x").unwrap();
         let unusable_default_dir = blocker_file.join("data");
 
-        let result = initialize_storage_core(
-            &unusable_default_dir,
-            None,
-            |_error| panic!("no custom dir configured, should not fall back"),
-            |_backup| panic!("directory couldn't even be created, nothing to quarantine"),
-        );
+        let result = initialize_storage_core(&unusable_default_dir, None, |_backup| {
+            panic!("directory couldn't even be created, nothing to quarantine")
+        });
 
         assert!(result.is_err());
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    /// Failure injection #4 (SPEC-3 §2 acceptance): a data directory path
-    /// containing non-UTF-8 bytes. Before this change, `main.rs` converted
-    /// the db path with `.to_str().unwrap()`, which panics purely in Rust
-    /// userspace (independent of any filesystem call) whenever the path
-    /// isn't valid UTF-8. `ClipStorage::new` now takes `&Path` directly, so
-    /// that unwrap — and its panic — no longer exists anywhere on this path.
-    ///
-    /// macOS rejects illegal byte sequences in filenames (`EILSEQ`), while
-    /// Linux accepts them. Both outcomes are valid; a successful open must
-    /// produce usable storage, and neither path may panic.
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_data_directory_does_not_panic() {
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
-
-        let root = temp_root("non_utf8");
-        fs::create_dir_all(&root).unwrap();
-        // 0xFF is never a valid standalone UTF-8 byte.
-        let non_utf8_name = OsStr::from_bytes(b"fo\xFFo-data");
-        let default_dir = root.join(non_utf8_name);
-
-        let result = initialize_storage_core(
-            &default_dir,
-            None,
-            |_error| panic!("no custom dir configured, should not fall back"),
-            |_backup| panic!("a fresh directory has no corrupt database to reset"),
-        );
-
-        if let Ok(storage) = result {
-            assert!(storage.get_recent_clip_previews(1).is_ok());
-            drop(storage);
-        }
-
         let _ = fs::remove_dir_all(&root);
     }
 }

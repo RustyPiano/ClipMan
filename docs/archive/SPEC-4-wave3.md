@@ -1,3 +1,5 @@
+> 已归档（2026-09-29）：已完成工作的历史记录，不作为当前指导；当前状态见 `docs/dev/STATUS.md`。
+
 # SPEC-4：Wave 3（分页 / 秘密检测 / 应用忽略 / 多选粘贴）
 
 > 前置阅读 docs/dev/PLAN.md。基线（Wave 2 收官时）：Rust 83 测试全绿、clippy `-D warnings` 零警告、前端 33 测试 + lint/check/build 全绿。

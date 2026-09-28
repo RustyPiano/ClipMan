@@ -3,13 +3,13 @@
   import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { i18n } from '$lib/i18n';
-  import { hasTauriRuntime } from '$lib/utils/tauri';
   import { isMac } from '$lib/utils/platform';
   import { SEARCH_INPUT_ID, ROW_HEIGHT_REM } from '$lib/constants';
   import type { ClipItem, PasteMode } from '$lib/types';
@@ -23,9 +23,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { Settings, PanelRight, MoreHorizontal, Loader2, Search } from 'lucide-svelte';
 
-  const isSettingsWindow =
-    typeof window !== 'undefined' &&
-    (window as any).__TAURI_INTERNALS__?.metadata?.currentWindow?.label === 'settings';
+  const isSettingsWindow = getCurrentWindow().label === 'settings';
   $effect(() => {
     document.documentElement.lang = i18n.locale;
   });
@@ -44,11 +42,11 @@
       : clipboardStore.historyError
   );
   let resultsScroller: HTMLDivElement | undefined = $state();
-  let actions: globalThis.HTMLDetailsElement | undefined = $state();
+  let actions: HTMLDetailsElement | undefined = $state();
   let hoverSelectArmed = false;
   let scrollTop = $state(0);
   let viewportHeight = $state(480);
-  let viewportWidth = $state(typeof window === 'undefined' ? 820 : window.innerWidth);
+  let viewportWidth = $state(window.innerWidth);
   let previewEnabled = $state(localStorage.getItem('preview-enabled') !== 'false');
   const showPreview = $derived(previewEnabled && viewportWidth >= 620 && !!selectedItem);
   // One shared rem-based height keeps CSS, keyboard reveal and virtualization in sync.
@@ -110,10 +108,9 @@
   }
 
   function observeScroller(element: HTMLDivElement) {
-    const observer = new globalThis.ResizeObserver(() => {
+    const observer = new ResizeObserver(() => {
       viewportHeight = element.clientHeight;
-      rowHeight =
-        parseFloat(globalThis.getComputedStyle(document.documentElement).fontSize) * ROW_HEIGHT_REM;
+      rowHeight = parseFloat(getComputedStyle(document.documentElement).fontSize) * ROW_HEIGHT_REM;
     });
     observer.observe(element);
     observer.observe(document.documentElement);
@@ -191,7 +188,7 @@
   function handleKey(event: KeyboardEvent) {
     if (isSettingsWindow || event.defaultPrevented || event.isComposing || confirmStore.open)
       return;
-    const target = event.target as globalThis.HTMLElement;
+    const target = event.target as HTMLElement;
     if (target.closest('[data-row-editor]')) return;
     if (target.closest('[data-actions]')) {
       if (event.key === 'Escape') {
@@ -265,8 +262,8 @@
 
   function syncTheme(theme: typeof themeStore.current): Attachment {
     return () => {
-      const root = globalThis.document.documentElement;
-      const media = globalThis.matchMedia('(prefers-color-scheme: dark)');
+      const root = document.documentElement;
+      const media = matchMedia('(prefers-color-scheme: dark)');
 
       const apply = () => {
         const isDark = theme === 'dark' || (theme === 'system' && media.matches);
@@ -281,7 +278,7 @@
       };
 
       apply();
-      globalThis.localStorage.setItem('theme', theme);
+      localStorage.setItem('theme', theme);
 
       // In 'system' mode the effective theme tracks the OS appearance, so follow
       // live light/dark switches; fixed modes need no listener. The attachment is
@@ -301,19 +298,16 @@
     focusSearch();
     const unlisteners: (() => void)[] = [];
     let disposed = false;
-    if (hasTauriRuntime()) {
-      for (const subscription of [
-        listen<{ panel?: QuickBarPanel }>('quickbar-opened', (event) => {
-          resetPanel(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
-          void clipboardStore.refreshSettings();
-        }),
-        listen('quickbar-hidden', () => {
-          scrollTop = 0;
-          if (actions) actions.open = false;
-        }),
-      ])
-        void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
-    }
+    for (const subscription of [
+      listen<{ panel?: QuickBarPanel }>('quickbar-opened', (event) => {
+        resetPanel(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
+      }),
+      listen('quickbar-hidden', () => {
+        scrollTop = 0;
+        if (actions) actions.open = false;
+      }),
+    ])
+      void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
     return () => {
       disposed = true;
       unlisteners.forEach((stop) => stop());

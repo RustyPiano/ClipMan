@@ -49,7 +49,9 @@ impl ForegroundWindow {
 
 pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
-    setup_quickbar_window(&quickbar)?;
+    // 无边框、置顶、不进任务栏等基础属性写在 tauri.conf.json，这里只补平台专用设置。
+    setup_quickbar_macos(&quickbar)?;
+    setup_quickbar_windows(&quickbar)?;
     register_quickbar_events(&quickbar);
 
     if let Some(settings) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
@@ -73,7 +75,6 @@ pub fn show_quickbar_with_panel(
     foreground_store: &ForegroundWindowStore,
     panel: QuickBarPanel,
 ) -> Result<(), String> {
-    let started = std::time::Instant::now();
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
 
     remember_foreground_window(foreground_store, &quickbar);
@@ -93,12 +94,7 @@ pub fn show_quickbar_with_panel(
             panel: panel.as_str(),
         },
     )
-    .map_err(to_string)?;
-    log::debug!(
-        "quickbar: native show/focus completed in {:?}",
-        started.elapsed()
-    );
-    Ok(())
+    .map_err(to_string)
 }
 
 pub fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
@@ -117,13 +113,8 @@ pub fn open_settings_window(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-pub fn recorded_foreground_window(store: &ForegroundWindowStore) -> Option<ForegroundWindow> {
-    *crate::safe_lock(store)
-}
-
-#[cfg(windows)]
 pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
-    let target = recorded_foreground_window(store)
+    let target = (*store.lock().unwrap())
         .ok_or_else(|| "No foreground window was recorded before QuickBar opened".to_string())?;
     restore_foreground_window(target)
 }
@@ -132,7 +123,7 @@ pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Resu
 pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
-    let target = (*crate::safe_lock(store))
+    let target = (*store.lock().unwrap())
         .ok_or_else(|| "No foreground app was recorded before QuickBar opened".to_string())?;
     let pid = target.raw() as i32;
 
@@ -143,25 +134,6 @@ pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Resu
     if !running.activateWithOptions(NSApplicationActivationOptions::empty()) {
         return Err(format!("Failed to reactivate app (pid {pid})"));
     }
-
-    Ok(())
-}
-
-#[cfg(all(not(windows), not(target_os = "macos")))]
-#[allow(dead_code)]
-pub fn restore_recorded_foreground_window(_store: &ForegroundWindowStore) -> Result<(), String> {
-    Ok(())
-}
-
-fn setup_quickbar_window(window: &WebviewWindow) -> Result<(), String> {
-    window.set_decorations(false).map_err(to_string)?;
-    window.set_resizable(false).map_err(to_string)?;
-    window.set_always_on_top(true).map_err(to_string)?;
-    window.set_skip_taskbar(true).map_err(to_string)?;
-    window.set_focusable(true).map_err(to_string)?;
-
-    setup_quickbar_macos(window)?;
-    setup_quickbar_windows(window)?;
 
     Ok(())
 }
@@ -323,7 +295,7 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
 
-    log::info!("Configured QuickBar macOS non-activating panel style fallback");
+    log::info!("Configured QuickBar macOS non-activating panel");
     Ok(())
 }
 
@@ -381,7 +353,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.is_invalid() {
         log::warn!("No valid Windows foreground window to record");
-        *crate::safe_lock(store) = None;
+        *store.lock().unwrap() = None;
         return;
     }
 
@@ -392,7 +364,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
         }
     }
 
-    *crate::safe_lock(store) = Some(ForegroundWindow {
+    *store.lock().unwrap() = Some(ForegroundWindow {
         raw: foreground.0 as isize,
     });
     log::debug!("Recorded Windows foreground window before QuickBar show");
@@ -414,7 +386,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &Webview
         return;
     }
 
-    *crate::safe_lock(store) = Some(ForegroundWindow { raw: pid as isize });
+    *store.lock().unwrap() = Some(ForegroundWindow { raw: pid as isize });
     log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
 }
 
@@ -531,13 +503,5 @@ mod size_tests {
         let (w, h) = quickbar_logical_size(work_w, work_h);
         assert!(w <= work_w && h <= work_h);
         assert!(w <= QUICKBAR_MAX_WIDTH && h <= QUICKBAR_MAX_HEIGHT);
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    #[test]
-    fn quickbar_hidden_event_name_matches_frontend_listener() {
-        assert_eq!("quickbar-hidden", super::QUICKBAR_HIDDEN_EVENT);
     }
 }

@@ -14,6 +14,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/version-utils.sh"
 
 pkg=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
 conf=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
@@ -26,7 +27,8 @@ printf '  Cargo.toml      : %s\n' "$cargo"
 printf '  Cargo.lock      : %s\n' "$lock"
 
 fail=0
-for v in "$conf" "$cargo" "$lock"; do
+for v in "$pkg" "$conf" "$cargo" "$lock"; do
+  validate_version "$v"
   [ "$v" = "$pkg" ] || fail=1
 done
 if [ "$fail" -ne 0 ]; then
@@ -36,6 +38,7 @@ fi
 
 if [ "$#" -ge 1 ]; then
   expected="${1#v}"
+  validate_version "$expected"
   if [ "$pkg" != "$expected" ]; then
     echo "::error::manifest version ($pkg) does not match expected/tag ($expected)" >&2
     exit 1

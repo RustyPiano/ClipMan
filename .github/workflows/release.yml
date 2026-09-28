@@ -11,10 +11,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  # Re-run the same quality gates as CI on the tagged commit. This avoids
-  # publishing a tag pushed before (or despite) main CI finishing, without a
-  # fragile GitHub API lookup for another workflow run.
+  # 版本、说明和公钥检查先完成，再启动各平台质量检查。
   preflight:
     runs-on: ubuntu-latest
     steps:
@@ -31,46 +32,18 @@ jobs:
             exit 1
           fi
 
-      - name: install Linux dependencies
+      - name: verify updater public key continuity
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          python3 scripts/verify-release.py --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --check-key-only
 
-      - name: setup bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: install frontend dependencies
-        run: bun install --frozen-lockfile
-
-      - name: frontend quality gates
-        run: |
-          bun run lint
-          bun run check
-          bun test tests/
-          bun run test:types
-          bun run build
-          bunx playwright install --with-deps chromium webkit
-          bun run test:ui
-
-      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Rust quality gates
-        working-directory: src-tauri
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+  quality:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
 
   publish-tauri:
-    needs: preflight
+    needs: [preflight, quality]
     permissions:
       contents: write
     strategy:
@@ -101,11 +74,7 @@ jobs:
         with:
           bun-version: latest
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
+      # rustup 按 rust-toolchain.toml 安装固定工具链；两个 macOS 目标也列在该文件中。
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -118,25 +87,11 @@ jobs:
         id: release_notes
         shell: bash
         run: |
-          VERSION="$GITHUB_REF_NAME"
-          # Remove 'v' prefix to get version number
-          VERSION_NUM="${VERSION#v}"
-          NOTES_FILE="release_notes_${VERSION_NUM}.md"
-
-          if [ -f "$NOTES_FILE" ]; then
-            echo "Found release notes file: $NOTES_FILE"
-            # Read file content and set as output
-            NOTES=$(cat "$NOTES_FILE")
-            # Escape special characters for GitHub Actions
-            echo "notes<<EOF" >> $GITHUB_OUTPUT
-            echo "$NOTES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            # preflight already guards this; fail here too rather than ship a
-            # release with a placeholder body.
-            echo "::error::No release notes file found: $NOTES_FILE" >&2
-            exit 1
-          fi
+          # preflight 已确认文件存在。
+          NOTES=$(cat "release_notes_${GITHUB_REF_NAME#v}.md")
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       # macOS code signing with a SELF-SIGNED certificate (no Apple Developer
       # account). Goal: keep the app's Designated Requirement stable across
@@ -208,3 +163,24 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  verify-release:
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+    # GitHub 仅向具有推送权限的令牌展示草稿；校验脚本只调用读取接口。
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install signature verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+
+      - name: verify release assets and updater signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/verify-release.py --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+          echo '版本、平台、附件及更新签名验证通过；草稿可以进入人工发布检查。' >> "$GITHUB_STEP_SUMMARY"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Native smoke test of an already-built com.clipman.nativeqa app (macOS only).
 Usage: python3 scripts/native-qa/run.py '/absolute/path/ClipMan QA.app'
-Requires Accessibility permission for the terminal/agent and QA app. See REFACTOR-QUICKBAR.md.
+Requires Accessibility permission for the terminal/agent and QA app. See AGENTS.md.
 """
 import json
 import os

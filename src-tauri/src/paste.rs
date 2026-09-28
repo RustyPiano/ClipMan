@@ -13,12 +13,9 @@ use enigo::{
 };
 use image::GenericImageView;
 use serde::Serialize;
-use tauri::Manager;
 use tauri::{AppHandle, Emitter};
-use uuid::Uuid;
 
 use crate::{
-    safe_lock,
     storage::{
         encode_file_paths, join_file_paths, split_file_paths, ClipItem, ContentType, CopyMarker,
     },
@@ -32,7 +29,7 @@ const COPY_MARKER_TTL: Duration = Duration::from_secs(2);
 
 pub(crate) struct CopyWrite {
     marker: CopyMarker,
-    id: Uuid,
+    /// 写入完成的时间；写入进行中（例如等待文件访问授权）为 None，此时标记一直有效。
     written_at: Option<Instant>,
 }
 
@@ -45,29 +42,10 @@ impl CopyWrite {
     }
 }
 
-struct RichTextWrite {
-    id: Uuid,
-    text: String,
-    html: String,
-    sequence: Option<u64>,
-}
-
-impl RichTextWrite {
-    fn matches_clipboard(&self, clipboard: &mut Clipboard) -> bool {
-        !clipboard
-            .get()
-            .file_list()
-            .is_ok_and(|paths| !paths.is_empty())
-            && clipboard.get_text().is_ok_and(|text| text == self.text)
-            && clipboard.get().html().is_ok_and(|html| html == self.html)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteMode {
     Default,
     Opposite,
-    Paste,
     Copy,
 }
 
@@ -78,20 +56,12 @@ impl TryFrom<&str> for PasteMode {
         match mode {
             "default" => Ok(Self::Default),
             "opposite" => Ok(Self::Opposite),
-            "paste" => Ok(Self::Paste),
             "copy" => Ok(Self::Copy),
             _ => Err(format!(
-                "Invalid paste mode '{mode}'. Expected 'default', 'opposite', 'paste', or 'copy'."
+                "Invalid paste mode '{mode}'. Expected 'default', 'opposite', or 'copy'."
             )),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-enum PasteSimulation {
-    Pasted,
-    CopiedOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,7 +76,8 @@ pub struct UseRequest {
     pub ids: Vec<String>,
     pub mode: String,
     pub plain: bool,
-    pub separator: Option<String>,
+    /// 多条合并为一段换行分隔的纯文本写入。
+    pub merge: bool,
     pub hide: bool,
 }
 
@@ -117,29 +88,28 @@ pub async fn use_clips(
     state: &AppState,
     request: UseRequest,
 ) -> Result<UseOutcome, String> {
-    let started = std::time::Instant::now();
+    let UseRequest {
+        ids,
+        mode,
+        plain,
+        merge,
+        hide,
+    } = request;
     let _operation = state
         .clipboard_use_lock
         .try_lock()
         .map_err(|_| "A clipboard operation is already running".to_string())?;
-    let mode = PasteMode::try_from(request.mode.as_str())?;
+    let mode = PasteMode::try_from(mode.as_str())?;
     let simulate = should_simulate_paste(mode, state.settings.get().auto_paste);
-    let foreground = Arc::new(Mutex::new(*safe_lock(&state.quickbar_foreground_window)));
-    if request.ids.is_empty() || request.ids.len() > 10_000 {
+    let foreground = Arc::new(Mutex::new(
+        *state.quickbar_foreground_window.lock().unwrap(),
+    ));
+    if ids.is_empty() || ids.len() > 10_000 {
         return Err("Select between 1 and 10000 clips".to_string());
     }
-    if request
-        .separator
-        .as_ref()
-        .is_some_and(|value| value.len() > 4096)
-    {
-        return Err("Merge separator is too long".to_string());
-    }
     let storage = state.storage.clone();
-    let ids = request.ids;
-    let merge = request.separator.is_some();
     let mut items = tauri::async_runtime::spawn_blocking(move || {
-        let storage = safe_lock(&storage);
+        let storage = storage.lock().unwrap();
         let mut remaining = MAX_MERGE_BYTES;
         ids.iter()
             .map(|id| {
@@ -160,42 +130,39 @@ pub async fn use_clips(
     .await
     .map_err(|e| e.to_string())??;
 
-    let write_app = app.clone();
     let marker = state.last_copied_by_us.clone();
     let items = tauri::async_runtime::spawn_blocking(move || {
-        if let Some(separator) = request.separator {
+        if merge {
             // Images have no text representation. Do not count them as used.
             items.retain(|item| item.content_type != ContentType::Image);
             if items.is_empty() {
                 return Err("Merge paste had no text or file clips to merge".into());
             }
-            let (merged, _) = merge_clip_texts(
+            let merged = merge_clip_texts(
                 items
                     .iter()
                     .map(|item| (&item.content_type, item.content.as_slice())),
-                &separator,
             )?;
-            write_merged_text_to_system_clipboard(&merged, marker.clone())?;
+            write_merged_text_to_system_clipboard(&merged, &marker)?;
         } else {
             if items.len() != 1 {
                 return Err("A single copy requires exactly one clip".into());
             }
-            write_clip_to_system_clipboard(&items[0], marker.clone(), request.plain, &write_app)?;
+            write_clip_to_system_clipboard(&items[0], &marker, plain)?;
         }
         Ok::<_, String>(items)
     })
     .await
     .map_err(|error| error.to_string())??;
-    log::debug!("use: clipboard write completed in {:?}", started.elapsed());
 
     let action = async {
-        if request.hide {
+        if hide {
             hide_quickbar(app)?;
         }
         if simulate {
             simulate_paste(app, &foreground).await
         } else {
-            Ok(PasteSimulation::CopiedOnly)
+            Ok(())
         }
     }
     .await;
@@ -214,10 +181,6 @@ pub async fn use_clips(
             })
             .show();
     }
-    log::debug!(
-        "use: foreground action completed in {:?}",
-        started.elapsed()
-    );
 
     // This maintenance runs after hide/focus/paste, once for the whole operation.
     let storage = state.storage.clone();
@@ -225,7 +188,9 @@ pub async fn use_clips(
     let ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
     drop(items);
     match tauri::async_runtime::spawn_blocking(move || {
-        safe_lock(&storage)
+        storage
+            .lock()
+            .unwrap()
             .touch_timestamps(&ids, timestamp)
             .map_err(|e| e.to_string())
     })
@@ -240,40 +205,30 @@ pub async fn use_clips(
     Ok(outcome)
 }
 
-fn use_outcome(simulate: bool, action: Result<PasteSimulation, String>) -> UseOutcome {
+fn use_outcome(simulate: bool, action: Result<(), String>) -> UseOutcome {
     if let Err(error) = &action {
         log::warn!("Content was copied but could not be pasted: {error}");
     }
-    match action {
-        Ok(PasteSimulation::Pasted) => UseOutcome::PasteRequested,
-        _ if !simulate => UseOutcome::Copied,
-        _ => UseOutcome::CopiedOnly,
+    match (simulate, action) {
+        (false, _) => UseOutcome::Copied,
+        (true, Ok(())) => UseOutcome::PasteRequested,
+        (true, Err(_)) => UseOutcome::CopiedOnly,
     }
 }
 
-/// Join the plain-text form of clips (in order) with `separator`, skipping and
-/// counting Image clips (v1 has no text form for them). Text uses its bytes;
-/// Files use their decoded path text (D3). Pure so the merge order,
-/// image-skip, and separator behaviors are unit-testable without a clipboard.
+/// 按选择顺序用换行连接各条的纯文本形式：Text 用原文，Files 用解码后的路径文本。
 fn merge_clip_texts<'a>(
     clips: impl IntoIterator<Item = (&'a ContentType, &'a [u8])>,
-    separator: &str,
-) -> Result<(String, usize), String> {
+) -> Result<String, String> {
     let mut merged = String::new();
-    let mut skipped = 0;
-    let mut parts = 0;
-    for (kind, content) in clips {
-        if *kind == ContentType::Image {
-            skipped += 1;
-            continue;
-        }
+    for (index, (kind, content)) in clips.into_iter().enumerate() {
         let text = String::from_utf8_lossy(content);
         let text = if *kind == ContentType::Files {
             Cow::Owned(join_file_paths(&split_file_paths(&text)))
         } else {
             text
         };
-        let separator = if parts == 0 { "" } else { separator };
+        let separator = if index == 0 { "" } else { "\n" };
         let size = merged
             .len()
             .checked_add(separator.len())
@@ -285,17 +240,16 @@ fn merge_clip_texts<'a>(
             .map_err(|e| e.to_string())?;
         merged.push_str(separator);
         merged.push_str(&text);
-        parts += 1;
     }
-    Ok((merged, skipped))
+    Ok(merged)
 }
 
 /// Write merged plain text to the clipboard using the same self-copy marker +
-/// TTL cleanup as every other write (D5). Merge paste never carries html, so
-/// this is the plain-text write path only.
+/// TTL as every other write. Merge paste never carries html, so this is the
+/// plain-text write path only.
 fn write_merged_text_to_system_clipboard(
     merged: &str,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, merged.as_bytes());
@@ -314,12 +268,12 @@ fn write_merged_text_to_system_clipboard(
 
 /// Global-plain mode (`globalPlain`): replace the live clipboard's rich text
 /// with its plain-text form so a direct paste anywhere (without QuickBar) is
-/// unformatted. The marker hashes the plain text only (D5) — the same value
-/// the monitor just recorded — so the rewrite is treated as our own write and
+/// unformatted. The marker hashes the plain text only — the same value the
+/// monitor just recorded — so the rewrite is treated as our own write and
 /// never re-captured.
 pub fn strip_rich_text_from_clipboard(
     text: &str,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
@@ -347,131 +301,44 @@ pub(crate) fn clipboard_sequence() -> Option<u64> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn clipboard_sequence() -> Option<u64> {
-    // arboard 未公开其他平台的写入序号，使用写入 ID 和完整内容检查。
+    // arboard 未公开其他平台的写入序号，调用方改为核对完整内容。
     None
-}
-
-fn restrip_if_unchanged(
-    operation_lock: &tokio::sync::Mutex<()>,
-    marker_state: &Mutex<Option<CopyWrite>>,
-    expected: &RichTextWrite,
-    mut read_sequence: impl FnMut() -> Option<u64>,
-    holds_rich_text: impl FnOnce() -> bool,
-    strip: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    let Ok(_operation) = operation_lock.try_lock() else {
-        return Ok(());
-    };
-    if safe_lock(marker_state).as_ref().map(|write| write.id) == Some(expected.id)
-        && read_sequence() == expected.sequence
-        && holds_rich_text()
-        && read_sequence() == expected.sequence
-    {
-        strip()?;
-    }
-    Ok(())
-}
-
-/// 临时富文本粘贴过期后，仅剥离仍属于该次写入的内容。
-fn schedule_global_plain_restrip(
-    app: AppHandle,
-    expected: RichTextWrite,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
-) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(COPY_MARKER_TTL + Duration::from_millis(300)).await;
-        let state = app.state::<AppState>();
-        let settings = state.settings.get();
-        if settings.capture_paused || !settings.strips_rich_text_at_capture() {
-            return;
-        }
-        let Ok(mut clipboard) = Clipboard::new() else {
-            return;
-        };
-        if let Err(e) = restrip_if_unchanged(
-            &state.clipboard_use_lock,
-            &marker_state,
-            &expected,
-            clipboard_sequence,
-            || expected.matches_clipboard(&mut clipboard),
-            || strip_rich_text_from_clipboard(&expected.text, marker_state.clone()),
-        ) {
-            log::warn!("Failed to strip rich-text residue: {}", e);
-        }
-    });
 }
 
 fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
     match mode {
-        PasteMode::Default | PasteMode::Paste => auto_paste,
+        PasteMode::Default => auto_paste,
         PasteMode::Opposite => !auto_paste,
         PasteMode::Copy => false,
     }
 }
 
-pub fn write_clip_to_system_clipboard(
+fn write_clip_to_system_clipboard(
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
     plain_text_only: bool,
-    app: &AppHandle,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-    let rich_write = match &item.content_type {
-        ContentType::Text => Some(write_text(
-            &mut clipboard,
-            item,
-            marker_state.clone(),
-            plain_text_only,
-        )?),
-        ContentType::Image => {
-            write_image(&mut clipboard, item, marker_state.clone())?;
-            None
-        }
-        ContentType::Files => {
-            write_files(&mut clipboard, item, marker_state.clone(), app)?;
-            None
-        }
-    };
-
-    if let Some((id, sequence)) = rich_write.filter(|_| {
-        !plain_text_only
-            && item.html.as_deref().is_some_and(|html| !html.is_empty())
-            && app
-                .state::<AppState>()
-                .settings
-                .get()
-                .strips_rich_text_at_capture()
-    }) {
-        // arboard 会包装 HTML，后续核对使用剪贴板中实际存储的表示。
-        if let Ok(html) = clipboard.get().html() {
-            if sequence == clipboard_sequence() {
-                let expected = RichTextWrite {
-                    id,
-                    text: String::from_utf8_lossy(&item.content).into_owned(),
-                    html,
-                    sequence,
-                };
-                schedule_global_plain_restrip(app.clone(), expected, marker_state);
-            }
-        }
+    match &item.content_type {
+        ContentType::Text => write_text(&mut clipboard, item, marker_state, plain_text_only),
+        ContentType::Image => write_image(&mut clipboard, item, marker_state),
+        ContentType::Files => write_files(&mut clipboard, item, marker_state),
     }
-
-    Ok(())
 }
 
 fn write_text(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
     plain_text_only: bool,
-) -> Result<(Uuid, Option<u64>), String> {
+) -> Result<(), String> {
     let text = String::from_utf8_lossy(&item.content).into_owned();
-    // D5: the marker is always the plain-text hash, never the html — the monitor
+    // The marker is always the plain-text hash, never the html — the monitor
     // reads back the plain-text alt after a self-paste and must still match.
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
 
     let use_html = !plain_text_only && item.html.as_deref().is_some_and(|html| !html.is_empty());
-    let id = write_with_marker(marker_state, marker, || {
+    write_with_marker(marker_state, marker, || {
         if use_html {
             // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
             let html = item.html.as_deref().unwrap_or_default();
@@ -481,7 +348,6 @@ fn write_text(
         }
         .map_err(|e| format!("Failed to write text clipboard: {e}"))
     })?;
-    let sequence = clipboard_sequence();
 
     log::info!(
         "Copied text clip {} to clipboard: {} chars (html: {})",
@@ -489,51 +355,28 @@ fn write_text(
         text.len(),
         use_html
     );
-    Ok((id, sequence))
+    Ok(())
 }
 
 fn write_files(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
-    app: &AppHandle,
+    marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
-    let content = String::from_utf8_lossy(&item.content).into_owned();
-    let paths = split_file_paths(&content);
+    let paths = split_file_paths(&String::from_utf8_lossy(&item.content));
     // The self-copy marker must hash exactly the path list the monitor reads
     // back after our write, so resolve the platform's "effective" list first.
     let paths = effective_file_paths(paths);
-    let joined = join_file_paths(&paths);
     let marker = CopyMarker::from_payload(ContentType::Files, encode_file_paths(&paths).as_bytes());
 
-    let write_result = write_with_marker(marker_state.clone(), marker, || {
-        write_file_list(clipboard, &paths)
-    });
-
-    if let Err(file_err) = write_result {
-        // Degrade to the path text so the user still gets a usable clipboard,
-        // and tell them why the real files didn't make it (macOS quietly
-        // rejecting the URLs looks like "paste did nothing" otherwise).
-        log::warn!(
-            "Failed to write file list for clip {} ({file_err}); falling back to text",
-            item.id
-        );
-        notify_file_paste_blocked(app);
-        let text_marker = CopyMarker::from_payload(ContentType::Text, joined.as_bytes());
-        write_with_marker(marker_state, text_marker, || {
-            clipboard.set_text(joined.as_str()).map_err(|text_err| {
-                format!(
-                    "Failed to write file list clipboard: {file_err}; text fallback failed: {text_err}"
-                )
-            })
-        })?;
-        log::info!(
-            "Copied {} file path(s) as text for clip {}",
-            paths.len(),
-            item.id
-        );
-        return Ok(());
-    }
+    write_with_marker(marker_state, marker, || write_file_list(clipboard, &paths)).map_err(
+        |e| {
+            format!(
+                "Failed to write the file list for clip {} ({e}). Check that the files exist and ClipMan can access them.",
+                item.id
+            )
+        },
+    )?;
 
     log::info!(
         "Copied {} file(s) to clipboard for clip {}",
@@ -634,18 +477,6 @@ fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), S
     verify_file_list(&expected, &actual)
 }
 
-/// Shown when macOS blocks a file paste: without it the rejected write looks
-/// like "pressing Enter did nothing". Non-fatal, fire-and-forget.
-fn notify_file_paste_blocked(app: &AppHandle) {
-    use tauri_plugin_notification::NotificationExt;
-    let chinese = app.state::<AppState>().settings.get().locale == "zh-CN";
-    let _ = app.notification().builder().title("ClipMan").body(if chinese {
-        "部分文件无法写入剪贴板，已改为复制全部路径文本。请检查文件是否存在及访问权限。"
-    } else {
-        "Some files could not be restored. All paths were copied as text. Check that the files exist and are accessible."
-    }).show();
-}
-
 fn verify_file_list(expected: &[String], actual: &[String]) -> Result<(), String> {
     let mut expected = expected.iter().collect::<Vec<_>>();
     let mut actual = actual.iter().collect::<Vec<_>>();
@@ -678,7 +509,7 @@ fn write_file_list(clipboard: &mut Clipboard, paths: &[String]) -> Result<(), St
 fn write_image(
     clipboard: &mut Clipboard,
     item: &ClipItem,
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
     let img = image::load_from_memory(&item.content)
         .map_err(|e| format!("Failed to decode image clip {}: {e}", item.id))?;
@@ -706,43 +537,23 @@ fn write_image(
     Ok(())
 }
 
-/// 写入前登记独立 ID；失败只清除当前写入，成功后的过期由读取时判断。
+/// 写入前登记标记，写入期间标记一直有效；成功后记录完成时间，有效期从此开始计算，
+/// 失败时清除标记。所有写入都在 `clipboard_use_lock` 内执行，不会有另一次写入替换标记。
 fn write_with_marker(
-    marker_state: Arc<Mutex<Option<CopyWrite>>>,
+    marker_state: &Mutex<Option<CopyWrite>>,
     marker: CopyMarker,
     write: impl FnOnce() -> Result<(), String>,
-) -> Result<Uuid, String> {
-    let id = set_copy_marker(&marker_state, marker);
-    if let Err(e) = write() {
-        clear_marker_if_current(&marker_state, id);
-        return Err(e);
-    }
-    // 文件授权可能需要等待，标记的有效期从写入完成时开始。
-    if let Some(current) = safe_lock(&marker_state)
-        .as_mut()
-        .filter(|current| current.id == id)
-    {
-        current.written_at = Some(Instant::now());
-    }
-    Ok(id)
-}
-
-fn set_copy_marker(marker_state: &Arc<Mutex<Option<CopyWrite>>>, marker: CopyMarker) -> Uuid {
-    let id = Uuid::new_v4();
-    let mut last_copied = safe_lock(marker_state);
-    *last_copied = Some(CopyWrite {
-        marker,
-        id,
+) -> Result<(), String> {
+    *marker_state.lock().unwrap() = Some(CopyWrite {
+        marker: marker.clone(),
         written_at: None,
     });
-    id
-}
-
-fn clear_marker_if_current(marker_state: &Arc<Mutex<Option<CopyWrite>>>, id: Uuid) {
-    let mut last_copied = safe_lock(marker_state);
-    if last_copied.as_ref().is_some_and(|write| write.id == id) {
-        *last_copied = None;
-    }
+    let result = write();
+    *marker_state.lock().unwrap() = result.is_ok().then(|| CopyWrite {
+        marker,
+        written_at: Some(Instant::now()),
+    });
+    result
 }
 
 fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
@@ -754,7 +565,7 @@ fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
 async fn simulate_paste(
     app: &AppHandle,
     foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<PasteSimulation, String> {
+) -> Result<(), String> {
     // The body blocks: it waits (up to 5s) on a main-thread round-trip to bring
     // the previous app forward, then sleeps 60ms and posts the Cmd+V CGEvent.
     // Running that on a Tokio worker would stall the async runtime, so hand it
@@ -770,29 +581,28 @@ async fn simulate_paste(
 fn simulate_paste_blocking(
     app: &AppHandle,
     foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<PasteSimulation, String> {
+) -> Result<(), String> {
+    use tauri::Manager;
+
     // Without the Accessibility permission, the CGEvent post that sends Cmd+V
     // fails *silently* — enigo returns Ok but nothing is typed. So we cannot
     // rely on a paste error to detect the problem; check the permission up
     // front. When it is missing (commonly after an update invalidates the
-    // grant), guide the user to re-authorize and degrade to copy-only: the clip
-    // is already on the clipboard, so they can paste manually.
+    // grant), guide the user to re-authorize; the clip is already on the
+    // clipboard, so they can paste manually.
     if !crate::accessibility::is_trusted() {
-        log::warn!("Accessibility permission missing; cannot auto-paste");
         if let Err(e) = app.emit("accessibility-permission-required", ()) {
             log::error!("Failed to emit accessibility-permission-required event: {e}");
         }
         crate::accessibility::guide_reauthorization(app);
-        return Ok(PasteSimulation::CopiedOnly);
+        return Err("Accessibility permission missing; cannot auto-paste".into());
     }
 
     // The QuickBar stole keyboard focus while it was open. It is now hidden, so
     // bring the previously frontmost app back to the front before pressing
     // Cmd+V; otherwise the keystroke is delivered to nothing.
-    if let Err(e) = restore_recorded_foreground_window_on_main_thread(app, foreground_store) {
-        log::warn!("Could not reactivate previous app before paste: {}", e);
-        return Ok(PasteSimulation::CopiedOnly);
-    }
+    restore_recorded_foreground_window_on_main_thread(app, foreground_store)
+        .map_err(|e| format!("Could not reactivate previous app before paste: {e}"))?;
     // Give the reactivated app a brief moment to become key and accept input.
     thread::sleep(Duration::from_millis(60));
 
@@ -801,10 +611,9 @@ fn simulate_paste_blocking(
         .get_webview_window(crate::window::QUICKBAR_WINDOW_LABEL)
         .is_some_and(|window| window.is_visible().unwrap_or(true))
     {
-        return Ok(PasteSimulation::CopiedOnly);
+        return Err("QuickBar reopened before the paste was sent".into());
     }
     send_paste_shortcut(Key::Meta)
-        .map(|_| PasteSimulation::Pasted)
         .map_err(|e| format!("accessibility_permission_required_or_input_simulation_failed: {e}"))
 }
 
@@ -832,31 +641,20 @@ fn restore_recorded_foreground_window_on_main_thread(
 async fn simulate_paste(
     _app: &AppHandle,
     foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<PasteSimulation, String> {
+) -> Result<(), String> {
     crate::window::restore_recorded_foreground_window(foreground_store)?;
-    send_paste_shortcut(Key::Control).map(|_| PasteSimulation::Pasted)
+    send_paste_shortcut(Key::Control)
 }
 
 #[cfg(target_os = "linux")]
 async fn simulate_paste(
     _app: &AppHandle,
     _foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<PasteSimulation, String> {
+) -> Result<(), String> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        log::warn!("Wayland detected; degrading paste request to copy-only");
-        return Ok(PasteSimulation::CopiedOnly);
+        return Err("Wayland does not support simulated paste; copied only".into());
     }
-
-    match send_paste_shortcut(Key::Control) {
-        Ok(()) => Ok(PasteSimulation::Pasted),
-        Err(e) => {
-            log::warn!(
-                "Linux paste simulation failed; degrading to copy-only: {}",
-                e
-            );
-            Ok(PasteSimulation::CopiedOnly)
-        }
-    }
+    send_paste_shortcut(Key::Control)
 }
 
 fn send_paste_shortcut(modifier: Key) -> Result<(), String> {
@@ -900,141 +698,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copy_write_expiry_preserves_identity_and_newer_writes() {
+    fn copy_marker_is_valid_while_writing_and_expires_after_ttl() {
         let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
-        let state = Arc::new(Mutex::new(None));
-        let first = write_with_marker(state.clone(), marker.clone(), || {
-            let current = safe_lock(&state);
+        let state = Mutex::new(None);
+        write_with_marker(&state, marker.clone(), || {
+            let current = state.lock().unwrap();
             let current = current.as_ref().unwrap();
             assert!(current.written_at.is_none());
             assert!(current.matches(&marker));
             Ok(())
         })
         .unwrap();
-        {
-            let mut current = safe_lock(&state);
-            let current = current.as_mut().unwrap();
-            assert!(current.written_at.is_some());
-            assert!(current.matches(&marker));
-            assert!(!current.matches(&CopyMarker::from_payload(ContentType::Text, b"other")));
-            current.written_at = Some(Instant::now() - COPY_MARKER_TTL);
-            assert!(!current.matches(&marker));
-            assert_eq!(current.id, first);
-        }
-        let second = write_with_marker(state.clone(), marker.clone(), || Ok(())).unwrap();
-        assert_ne!(first, second);
-        clear_marker_if_current(&state, first);
-        assert!(safe_lock(&state).as_ref().unwrap().matches(&marker));
-        assert_eq!(safe_lock(&state).as_ref().unwrap().id, second);
-        clear_marker_if_current(&state, second);
-        assert!(safe_lock(&state).is_none());
+
+        let mut current = state.lock().unwrap();
+        let current = current.as_mut().unwrap();
+        assert!(current.written_at.is_some());
+        assert!(current.matches(&marker));
+        assert!(!current.matches(&CopyMarker::from_payload(ContentType::Text, b"other")));
+        current.written_at = Some(Instant::now() - COPY_MARKER_TTL);
+        assert!(!current.matches(&marker));
     }
 
     #[test]
-    fn failed_write_does_not_clear_newer_same_content_write() {
+    fn failed_write_clears_marker() {
         let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
-        let state = Arc::new(Mutex::new(None));
-        let result = write_with_marker(state.clone(), marker.clone(), || {
-            set_copy_marker(&state, marker.clone());
-            Err("write failed".into())
-        });
-        assert_eq!(result, Err("write failed".into()));
-        assert!(safe_lock(&state).as_ref().unwrap().matches(&marker));
-        assert!(write_with_marker(state.clone(), marker, || Err("write failed".into())).is_err());
-        assert!(safe_lock(&state).is_none());
-    }
-
-    #[test]
-    fn restrip_holds_lock_and_rejects_replaced_writes() {
-        use std::cell::Cell;
-
-        let lock = tokio::sync::Mutex::new(());
-        let state = Arc::new(Mutex::new(None));
-        let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
-        let id = set_copy_marker(&state, marker.clone());
-        let mut expected = RichTextWrite {
-            id,
-            text: "hello".into(),
-            html: "<b>hello</b>".into(),
-            sequence: Some(12),
-        };
-        let writes = Cell::new(0);
-        for sequence in [Some(12), None] {
-            expected.sequence = sequence;
-            restrip_if_unchanged(
-                &lock,
-                &state,
-                &expected,
-                || sequence,
-                || {
-                    assert!(lock.try_lock().is_err());
-                    true
-                },
-                || {
-                    assert!(lock.try_lock().is_err());
-                    writes.set(writes.get() + 1);
-                    Ok(())
-                },
-            )
-            .unwrap();
-        }
-        assert_eq!(writes.get(), 2);
-
-        let operation = lock.try_lock().unwrap();
-        restrip_if_unchanged(
-            &lock,
-            &state,
-            &expected,
-            || panic!("占用期间不读取剪贴板"),
-            || panic!("占用期间不读取内容"),
-            || panic!("占用期间不写入内容"),
-        )
-        .unwrap();
-        drop(operation);
-
-        expected.sequence = Some(12);
-        let sequence = Cell::new(Some(12));
-        restrip_if_unchanged(
-            &lock,
-            &state,
-            &expected,
-            || sequence.get(),
-            || {
-                sequence.set(Some(13));
-                true
-            },
-            || panic!("读取期间序号变化时不写入"),
-        )
-        .unwrap();
-        restrip_if_unchanged(
-            &lock,
-            &state,
-            &expected,
-            || Some(13),
-            || panic!("其他应用重新复制相同内容后不继续读取"),
-            || panic!("其他应用重新复制相同内容后不写入"),
-        )
-        .unwrap();
-        restrip_if_unchanged(
-            &lock,
-            &state,
-            &expected,
-            || Some(12),
-            || false,
-            || panic!("完整内容不匹配时不写入"),
-        )
-        .unwrap();
-
-        set_copy_marker(&state, marker);
-        restrip_if_unchanged(
-            &lock,
-            &state,
-            &expected,
-            || panic!("后一次写入替换旧 ID 后不读取剪贴板"),
-            || panic!("后一次写入替换旧 ID 后不读取内容"),
-            || panic!("后一次写入替换旧 ID 后不写入内容"),
-        )
-        .unwrap();
+        let state = Mutex::new(None);
+        assert!(write_with_marker(&state, marker, || Err("write failed".into())).is_err());
+        assert!(state.lock().unwrap().is_none());
     }
 
     #[test]
@@ -1050,16 +740,14 @@ mod tests {
     #[test]
     fn merge_budget_counts_separators_and_decodes_json_files() {
         let files = encode_file_paths(&["/tmp/a\nb.txt".into()]);
-        let result = merge_clip_texts([(&ContentType::Files, files.as_bytes())], "\n").unwrap();
-        assert_eq!(result.0, "/tmp/a\nb.txt");
-        let separator = "x".repeat(MAX_MERGE_BYTES);
-        assert!(merge_clip_texts(
-            [
-                (&ContentType::Text, b"a".as_slice()),
-                (&ContentType::Text, b"b".as_slice())
-            ],
-            &separator
-        )
+        let merged = merge_clip_texts([(&ContentType::Files, files.as_bytes())]).unwrap();
+        assert_eq!(merged, "/tmp/a\nb.txt");
+        // Exactly at the limit alone, but the newline separator pushes it over.
+        let full = vec![b'a'; MAX_MERGE_BYTES - 1];
+        assert!(merge_clip_texts([
+            (&ContentType::Text, full.as_slice()),
+            (&ContentType::Text, b"b".as_slice())
+        ])
         .is_err());
     }
 
@@ -1073,93 +761,28 @@ mod tests {
             use_outcome(false, Err("hide failed".into())),
             UseOutcome::Copied
         );
-        assert_eq!(
-            use_outcome(true, Ok(PasteSimulation::Pasted)),
-            UseOutcome::PasteRequested
-        );
+        assert_eq!(use_outcome(true, Ok(())), UseOutcome::PasteRequested);
     }
 
     #[test]
     fn paste_mode_resolution_uses_backend_auto_paste_setting() {
         assert!(should_simulate_paste(PasteMode::Default, true));
         assert!(!should_simulate_paste(PasteMode::Default, false));
-        assert!(should_simulate_paste(PasteMode::Paste, true));
-        assert!(!should_simulate_paste(PasteMode::Paste, false));
         assert!(!should_simulate_paste(PasteMode::Copy, true));
         assert!(!should_simulate_paste(PasteMode::Copy, false));
         assert!(!should_simulate_paste(PasteMode::Opposite, true));
         assert!(should_simulate_paste(PasteMode::Opposite, false));
     }
 
-    fn merge(clips: &[(ContentType, Vec<u8>)], separator: &str) -> (String, usize) {
-        merge_clip_texts(
-            clips
-                .iter()
-                .map(|(kind, content)| (kind, content.as_slice())),
-            separator,
-        )
-        .unwrap()
-    }
-
-    fn clip(content_type: ContentType, content: &[u8]) -> (ContentType, Vec<u8>) {
-        (content_type, content.to_vec())
-    }
-
     #[test]
-    fn merge_preserves_selection_order() {
-        let clips = [
-            clip(ContentType::Text, b"first"),
-            clip(ContentType::Text, b"second"),
-            clip(ContentType::Text, b"third"),
-        ];
-        let (merged, skipped) = merge(&clips, "\n");
-        assert_eq!(merged, "first\nsecond\nthird");
-        assert_eq!(skipped, 0);
-    }
-
-    #[test]
-    fn merge_skips_and_counts_image_clips() {
-        let clips = [
-            clip(ContentType::Text, b"a"),
-            clip(ContentType::Image, b"\x89PNG-bytes"),
-            clip(ContentType::Text, b"b"),
-            clip(ContentType::Image, b"more-png"),
-        ];
-        let (merged, skipped) = merge(&clips, "\n");
-        // Images are dropped from the merge; only text survives, in order.
-        assert_eq!(merged, "a\nb");
-        assert_eq!(skipped, 2);
-    }
-
-    #[test]
-    fn merge_uses_the_given_separator_verbatim() {
-        let clips = [clip(ContentType::Text, b"a"), clip(ContentType::Text, b"b")];
-        assert_eq!(merge(&clips, "\n").0, "a\nb");
-        assert_eq!(merge(&clips, "\t").0, "a\tb");
-        assert_eq!(merge(&clips, "").0, "ab");
-    }
-
-    #[test]
-    fn merge_includes_files_paths_as_text() {
-        // Legacy newline-separated file records remain readable.
-        let clips = [
-            clip(ContentType::Files, b"/a/one.txt\n/a/two.txt"),
-            clip(ContentType::Text, b"tail"),
-        ];
-        let (merged, skipped) = merge(&clips, "\n");
-        assert_eq!(merged, "/a/one.txt\n/a/two.txt\ntail");
-        assert_eq!(skipped, 0);
-    }
-
-    #[test]
-    fn merge_of_only_images_yields_empty_text_and_full_skip_count() {
-        let clips = [
-            clip(ContentType::Image, b"one"),
-            clip(ContentType::Image, b"two"),
-            clip(ContentType::Image, b"three"),
-        ];
-        let (merged, skipped) = merge(&clips, "\n");
-        assert_eq!(merged, "");
-        assert_eq!(skipped, 3);
+    fn merge_preserves_selection_order_and_includes_file_paths() {
+        let files = encode_file_paths(&["/a/one.txt".into(), "/a/two.txt".into()]);
+        let merged = merge_clip_texts([
+            (&ContentType::Text, b"first".as_slice()),
+            (&ContentType::Files, files.as_bytes()),
+            (&ContentType::Text, b"tail".as_slice()),
+        ])
+        .unwrap();
+        assert_eq!(merged, "first\n/a/one.txt\n/a/two.txt\ntail");
     }
 }

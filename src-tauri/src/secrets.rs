@@ -1,6 +1,6 @@
-//! High-confidence secret detection for the clipboard capture pipeline (§2).
+//! High-confidence secret detection for the clipboard capture pipeline.
 //!
-//! v1 deliberately sticks to a short list of high-confidence, low-noise
+//! This deliberately sticks to a short list of high-confidence, low-noise
 //! patterns (PEM private keys, cloud/API tokens). It does *not* attempt
 //! entropy heuristics or mnemonic-phrase detection — both have high false
 //! positive rates against ordinary text, and a false "why wasn't this
@@ -71,7 +71,7 @@ mod tests {
     use super::*;
 
     // Shared negative samples that must never be flagged by *any* pattern,
-    // regardless of which specific regex is under test (SPEC-4 §2).
+    // regardless of which specific regex is under test.
     const PLAIN_CHINESE_TEXT: &str = "今天天气不错，我们去公园散步吧。";
     const PLAIN_URL: &str = "https://example.com/docs/getting-started?ref=readme";
     const SHA256_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(Some("PEM private key"), detect_secret(pem));
 
         // The empty-prefix alternative (plain "PRIVATE KEY", e.g. PKCS#8) also
-        // matches per the spec's `(RSA |EC |OPENSSH |ENCRYPTED |)` group.
+        // matches via the `(RSA |EC |OPENSSH |ENCRYPTED |)` group.
         let pkcs8 = "-----BEGIN PRIVATE KEY-----\nMIIEvQ...\n-----END PRIVATE KEY-----";
         assert_eq!(Some("PEM private key"), detect_secret(pkcs8));
     }

@@ -1,3 +1,5 @@
+> 已归档（2026-09-29）：已完成工作的历史记录，不作为当前指导；当前状态见 `docs/dev/STATUS.md`。
+
 # SPEC-2：前端支持 files/富文本 + ⌥Enter 纯文本粘贴
 
 > Wave 2-A · 模型：Opus · 文件域：`src/lib/**`、`src/routes/**`

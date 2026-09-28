@@ -12,80 +12,79 @@ pub const CURRENT_DB_USER_VERSION: i64 = 3;
 const THUMBNAIL_SIZE: u32 = 256;
 const BACKFILL_BATCH_SIZE: i64 = 100;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DatabaseUpgrade {
-    pub rebuilt_plaintext_storage: bool,
-    pub needs_fts_rebuild: bool,
-}
-
-/// Upgrade the clipboard database to the current plaintext schema marker.
+/// 把数据库升级到当前格式，返回是否需要重建 FTS 索引。版本号由调用方在索引重建后更新。
 pub fn upgrade_clip_database_to_current(
     conn: &rusqlite::Connection,
     data_dir: &Path,
-) -> Result<DatabaseUpgrade, String> {
-    let mut user_version: i64 = conn
+) -> Result<bool, String> {
+    let user_version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| format!("Failed to read database user_version: {}", e))?;
-    let mut upgrade = DatabaseUpgrade {
-        rebuilt_plaintext_storage: false,
-        needs_fts_rebuild: false,
-    };
+    let mut needs_fts_rebuild = false;
 
     if user_version < 1 {
         upgrade_to_v1_plaintext(conn, data_dir)?;
-        upgrade.rebuilt_plaintext_storage = true;
-        upgrade.needs_fts_rebuild = true;
-        user_version = 1;
+        needs_fts_rebuild = true;
     }
 
     if user_version < 2 {
         backfill_v2_search_columns(conn)?;
-        upgrade.needs_fts_rebuild = true;
+        needs_fts_rebuild = true;
     }
 
-    if user_version < 3 {
-        let mut cursor = 0;
-        loop {
-            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-            let ids = {
-                let mut stmt = tx.prepare("SELECT rowid,id FROM clips WHERE content_type='files' AND rowid>?1 ORDER BY rowid LIMIT ?2").map_err(|e| e.to_string())?;
-                let rows = stmt
-                    .query_map(rusqlite::params![cursor, BACKFILL_BATCH_SIZE], |row| {
-                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                    })
-                    .map_err(|e| e.to_string())?;
-                rows.collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?
-            };
-            if ids.is_empty() {
-                break;
-            }
-            for (rowid, id) in ids {
-                let content: Vec<u8> = tx
-                    .query_row("SELECT content FROM clips WHERE id=?1", [&id], |row| {
-                        row.get(0)
-                    })
-                    .map_err(|e| e.to_string())?;
-                let encoded = crate::storage::encode_file_paths(&crate::storage::split_file_paths(
-                    &String::from_utf8_lossy(&content),
-                ));
-                tx.execute(
-                    "UPDATE clips SET content=?1, content_hash=?2 WHERE id=?3",
-                    rusqlite::params![
-                        encoded.as_bytes(),
-                        crate::storage::hash_bytes(encoded.as_bytes()),
-                        id
-                    ],
+    if convert_legacy_file_lists(conn)? {
+        needs_fts_rebuild = true;
+    }
+
+    Ok(needs_fts_rebuild)
+}
+
+/// 把换行分隔的旧文件列表转成 JSON 数组。每次打开数据库都执行：2.2.x 不拒绝 v3 数据库，
+/// 降级期间写入的文件记录仍是旧格式。返回是否转换了记录。
+fn convert_legacy_file_lists(conn: &rusqlite::Connection) -> Result<bool, String> {
+    let mut converted = false;
+    loop {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let rows = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, content FROM clips
+                     WHERE content_type = 'files' AND NOT json_valid(CAST(content AS TEXT))
+                     LIMIT ?1",
                 )
                 .map_err(|e| e.to_string())?;
-                cursor = rowid;
-            }
-            tx.commit().map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([BACKFILL_BATCH_SIZE], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?
+        };
+        if rows.is_empty() {
+            break;
         }
-        upgrade.needs_fts_rebuild = true;
+        for (id, content) in rows {
+            let paths: Vec<String> = String::from_utf8_lossy(&content)
+                .split('\n')
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let encoded = crate::storage::encode_file_paths(&paths);
+            tx.execute(
+                "UPDATE clips SET content = ?1, content_hash = ?2 WHERE id = ?3",
+                rusqlite::params![
+                    encoded.as_bytes(),
+                    crate::storage::hash_bytes(encoded.as_bytes()),
+                    id
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        converted = true;
     }
-
-    Ok(upgrade)
+    Ok(converted)
 }
 
 pub fn mark_clip_database_current(conn: &rusqlite::Connection) -> Result<(), String> {
@@ -418,15 +417,14 @@ mod tests {
         .unwrap();
         std::fs::write(test_dir.join(".clipman.key"), [7u8; 32]).unwrap();
 
-        let upgrade = upgrade_clip_database_to_current(&conn, &test_dir).unwrap();
+        let needs_fts_rebuild = upgrade_clip_database_to_current(&conn, &test_dir).unwrap();
 
         let row_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM clips", [], |row| row.get(0))
             .unwrap();
         assert_eq!(0, row_count);
         assert!(!test_dir.join(".clipman.key").exists());
-        assert!(upgrade.rebuilt_plaintext_storage);
-        assert!(upgrade.needs_fts_rebuild);
+        assert!(needs_fts_rebuild);
 
         let user_version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -486,7 +484,7 @@ mod tests {
         .unwrap();
         conn.pragma_update(None, "user_version", 1).unwrap();
 
-        let upgrade = upgrade_clip_database_to_current(&conn, &test_dir).unwrap();
+        let needs_fts_rebuild = upgrade_clip_database_to_current(&conn, &test_dir).unwrap();
 
         let missing_hashes: i64 = conn
             .query_row(
@@ -509,8 +507,7 @@ mod tests {
         assert_eq!(0, missing_hashes);
         assert!(!image_thumbnail.is_empty());
         assert_eq!(1, user_version);
-        assert!(!upgrade.rebuilt_plaintext_storage);
-        assert!(upgrade.needs_fts_rebuild);
+        assert!(needs_fts_rebuild);
 
         mark_clip_database_current(&conn).unwrap();
         let user_version: i64 = conn

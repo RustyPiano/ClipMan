@@ -11,7 +11,6 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(() => {
     const w = window as any;
-    localStorage.setItem('locale', 'en');
     const callbacks = new Map<number, (event: unknown) => void>();
     const listeners = new Map<string, number[]>();
     let nextId = 0;
@@ -25,7 +24,6 @@ test.beforeEach(async ({ page }) => {
       pinOrder: null,
       label: null as string | null,
       sourceApp: 'Editor',
-      groupName: null,
       hasHtml: false,
       contentBytes: 20,
       fileCount: 0,
@@ -64,20 +62,20 @@ test.beforeEach(async ({ page }) => {
     clips[4] = {
       ...clips[4],
       contentType: 'files',
-      content: btoa('/tmp/report.pdf\n/tmp/budget.xlsx'),
+      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
       fileCount: 2,
     };
     clips[6] = { ...clips[6], label: 'Build gate' };
     clips[7] = {
       ...clips[7],
       contentType: 'files',
-      content: btoa('/tmp/report.pdf\n/tmp/budget.xlsx\n/tmp/notes.md'),
+      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx', '/tmp/notes.md'])),
       fileCount: 3,
     };
     clips[8] = {
       ...clips[8],
       contentType: 'files',
-      content: btoa('C:\\Users\\me\\report.docx'),
+      content: btoa(JSON.stringify(['C:\\Users\\me\\report.docx'])),
       fileCount: 1,
     };
     let pasteFormat = 'original';
@@ -108,8 +106,8 @@ test.beforeEach(async ({ page }) => {
             maxHistoryItems: 10000,
             capturePaused: false,
             pasteFormat,
+            locale: 'en',
           };
-        if (cmd === 'check_clipboard_permission') return 'granted';
         if (cmd === 'check_accessibility_permission') return true;
         if (cmd === 'get_pinned_clips')
           return structuredClone(clips.filter((item) => item.isPinned));

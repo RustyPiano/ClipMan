@@ -5,21 +5,31 @@ on:
     branches:
       - main
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
-  # Cheap guard (no toolchain): fail fast if package.json / tauri.conf.json /
-  # Cargo.toml / Cargo.lock ever disagree on the app version. Prevents the
-  # stale-version drift that shipped mismatched README/badge versions before.
+  # 版本检查和发布校验脚本测试不依赖 Rust 构建。
   versions:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: manifest versions agree
         run: bash scripts/check-versions.sh
+
+      - name: install signature verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+
+      - name: release verification tests
+        run: python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
 
   frontend:
     runs-on: ubuntu-latest
@@ -73,12 +83,7 @@ jobs:
       - name: build frontend (for frontendDist)
         run: bun run build
 
-      # dtolnay/rust-toolchain@stable installs the `stable` toolchain and does
-      # NOT read rust-toolchain.toml. cargo invocations below still resolve to
-      # the channel pinned in rust-toolchain.toml (1.96.0) via rustup's override.
-      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@stable
-
+      # rustup 按 rust-toolchain.toml 自动安装固定版本的工具链和组件。
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -117,9 +122,6 @@ jobs:
       - name: build frontend (for frontendDist)
         run: bun run build
 
-      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -155,21 +157,15 @@ jobs:
       - name: build frontend (for frontendDist)
         run: bun run build
 
-      - name: install Rust (stable via dtolnay; cargo channel pinned by rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: add Windows MSVC target
-        run: rustup target add x86_64-pc-windows-msvc
-
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: cargo clippy (windows target)
+      - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
-      - name: cargo test (windows target)
+      - name: cargo test
         working-directory: src-tauri
-        run: cargo test --target x86_64-pc-windows-msvc
+        run: cargo test

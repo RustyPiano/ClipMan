@@ -2,7 +2,7 @@
   import type { Snippet } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
 
-  type Props = Omit<HTMLAttributes<globalThis.HTMLDivElement>, 'class'> & {
+  type Props = Omit<HTMLAttributes<HTMLDivElement>, 'class'> & {
     class?: string;
     children?: Snippet;
   };

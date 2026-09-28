@@ -12,7 +12,6 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.addInitScript(() => {
     const w = window as any;
-    localStorage.setItem('locale', 'en');
     w.calls = [];
     w.failLoad = false;
     w.failSave = false;
@@ -67,6 +66,7 @@ test.beforeEach(async ({ page }) => {
           return w.settings;
         }
         if (cmd === 'get_current_data_path') return '/qa/data';
+        if (cmd === 'plugin:dialog|open') return '/qa/new-data';
         if (cmd === 'update_settings') {
           if (w.failSave) throw new Error('save unavailable');
           return {
@@ -91,12 +91,13 @@ test('failed settings load cannot expose or save invented defaults; retry reads 
     (window as any).failLoad = true;
   });
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  // 语言来自后端设置；读取失败时界面保持默认中文。
+  await expect(page.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
   await expect(page.locator('#pinned-shortcut-input')).toHaveCount(0);
   await page.evaluate(() => {
     (window as any).failLoad = false;
   });
-  await page.getByRole('button', { name: 'Re-check', exact: true }).click();
+  await page.getByRole('button', { name: '重新检查', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
   expect(
     await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'update_settings'))
@@ -203,4 +204,49 @@ test('paste format radios switch modes and persist the choice on save', async ({
       })
     )
     .toBe('globalPlain');
+});
+
+// 模态对话框外的内容不可交互：连续按 Tab，焦点只会停在对话框内，或离开网页（落到 body）。
+async function expectTabStaysInDialog(page: Page, browserName: string) {
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    expect(
+      await page.evaluate(
+        () =>
+          document.activeElement === document.body ||
+          document.querySelector('dialog[open]')!.contains(document.activeElement)
+      )
+    ).toBe(true);
+  }
+}
+
+test('confirmation dialog focuses its action and Escape cancels', async ({ page, browserName }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Reset', exact: true }).click();
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog.getByRole('button', { name: 'Reset', exact: true })).toBeFocused();
+  await expectTabStaysInDialog(page, browserName);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(
+    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'update_settings'))
+  ).toEqual([]);
+});
+
+test('migration dialog keeps focus inside and Escape cancels', async ({ page, browserName }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Storage', exact: true }).click();
+  await page.getByRole('button', { name: 'Change location', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Confirm data migration' });
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await expectTabStaysInDialog(page, browserName);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      (window as any).calls.some((c: any) => c.cmd === 'migrate_data_location')
+    )
+  ).toBe(false);
 });

@@ -1,5 +1,5 @@
 use rusqlite::{params, Connection, OptionalExtension, Result, Row};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::ErrorKind;
@@ -12,7 +12,7 @@ pub fn current_timestamp() -> f64 {
     chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ContentType {
     Text,
@@ -38,8 +38,7 @@ impl ContentType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyMarker {
     pub hash: String,
     pub content_type: ContentType,
@@ -66,28 +65,23 @@ impl CopyMarker {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ClipItem {
     pub id: String,
-    #[serde(with = "serde_bytes")]
     pub content: Vec<u8>,
-    #[serde(with = "serde_bytes")]
     pub thumbnail: Option<Vec<u8>>,
     pub content_type: ContentType,
     pub timestamp: f64,
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
-    pub group_name: Option<String>,
     /// App that was frontmost when the clip was captured (the copy source).
     pub source_app: Option<String>,
-    /// Optional HTML companion to a Text clip's plain-text `content` (D2).
+    /// Optional HTML companion to a Text clip's plain-text `content`.
     pub html: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ClipPreviewItem {
     pub id: String,
     pub preview_content: Vec<u8>,
@@ -97,7 +91,6 @@ pub struct ClipPreviewItem {
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
-    pub group_name: Option<String>,
     pub source_app: Option<String>,
     pub has_html: bool,
     pub content_bytes: usize,
@@ -115,56 +108,10 @@ pub struct FrontendClipItem {
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
-    pub group_name: Option<String>,
     pub source_app: Option<String>,
     pub has_html: bool,
     pub content_bytes: usize,
     pub file_count: usize,
-}
-
-impl ClipPreviewItem {
-    pub fn from_clip_item(item: &ClipItem) -> Self {
-        Self::from_clip_item_with_id(item, item.id.clone())
-    }
-
-    pub fn from_clip_item_with_id(item: &ClipItem, id: String) -> Self {
-        let preview_content = match item.content_type {
-            ContentType::Text => item
-                .content
-                .iter()
-                .take(TEXT_PREVIEW_BYTES)
-                .copied()
-                .collect(),
-            ContentType::Files => encode_file_paths(
-                &split_file_paths(&String::from_utf8_lossy(&item.content))
-                    .into_iter()
-                    .take(1)
-                    .collect::<Vec<_>>(),
-            )
-            .into_bytes(),
-            ContentType::Image => Vec::new(),
-        };
-
-        Self {
-            id,
-            preview_content,
-            thumbnail: item.thumbnail.clone(),
-            content_type: item.content_type.clone(),
-            timestamp: item.timestamp,
-            is_pinned: item.is_pinned,
-            pin_order: item.pin_order,
-            label: item.label.clone(),
-            group_name: item.group_name.clone(),
-            source_app: item.source_app.clone(),
-            has_html: item.html.is_some(),
-            content_bytes: item.content.len(),
-            file_count: if item.content_type == ContentType::Files {
-                split_file_paths(&String::from_utf8_lossy(&item.content)).len()
-            } else {
-                0
-            },
-        }
-    }
 }
 
 impl FrontendClipItem {
@@ -192,7 +139,6 @@ impl FrontendClipItem {
             is_pinned: item.is_pinned,
             pin_order: item.pin_order,
             label: item.label,
-            group_name: item.group_name,
             source_app: item.source_app,
             has_html: item.has_html,
             content_bytes: item.content_bytes,
@@ -217,22 +163,29 @@ pub struct ClipStorage {
 }
 
 const CLIP_COLUMNS: &str =
-    "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name, source_app, html";
-const FILES_TEXT_SQL: &str = "CASE WHEN content_type='files' AND json_valid(CAST(content AS TEXT))
+    "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, source_app, html";
+/// Files 记录的内容是 JSON 路径数组（打开数据库时已统一转换），这里展开成换行分隔的路径文本。
+const FILES_TEXT_SQL: &str = "CASE WHEN content_type='files'
     THEN CAST(COALESCE((SELECT group_concat(value, char(10)) FROM json_each(CAST(content AS TEXT))), '') AS BLOB) ELSE content END";
-const CLIP_PREVIEW_COLUMNS: &str = "id,
-     CASE WHEN content_type='text' THEN substr(content, 1, 4096)
-       WHEN content_type='files' THEN CASE WHEN json_valid(CAST(content AS TEXT))
-         THEN CAST(CASE WHEN json_array_length(CAST(content AS TEXT))>0 THEN json_array(substr(json_extract(CAST(content AS TEXT), '$[0]'), 1, 4096)) ELSE '[]' END AS BLOB)
-         ELSE substr(content, 1, 4096) END ELSE x'' END AS preview_content,
-     thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name, source_app,
-     (html IS NOT NULL) AS has_html, length(content) AS content_bytes,
-     CASE WHEN content_type='files' THEN CASE WHEN json_valid(CAST(content AS TEXT))
-       THEN json_array_length(CAST(content AS TEXT))
-       WHEN length(content)>0 THEN length(CAST(content AS TEXT))-length(replace(CAST(content AS TEXT),char(10),''))+1 ELSE 0 END
-       ELSE 0 END AS file_count";
+/// 列表预览中文本取开头部分。
+const TEXT_HEAD_PREVIEW: &str = "substr(content, 1, 4096)";
+/// 搜索结果中文本取命中位置附近的摘要（`?2` 是查询词）。
+const TEXT_MATCH_EXCERPT: &str = "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)";
 const FTS_REBUILD_BATCH_SIZE: i64 = 100;
-const TEXT_PREVIEW_BYTES: usize = 4096;
+
+/// 预览列清单；`text_preview` 是文本类型的预览表达式。Files 只预览第一个路径。
+fn preview_columns(text_preview: &str) -> String {
+    format!(
+        "id,
+     CASE WHEN content_type='text' THEN {text_preview}
+       WHEN content_type='files' THEN CAST(CASE WHEN json_array_length(CAST(content AS TEXT))>0
+         THEN json_array(substr(json_extract(CAST(content AS TEXT), '$[0]'), 1, 4096)) ELSE '[]' END AS BLOB)
+       ELSE x'' END AS preview_content,
+     thumbnail, content_type, timestamp, is_pinned, pin_order, label, source_app,
+     (html IS NOT NULL) AS has_html, length(content) AS content_bytes,
+     CASE WHEN content_type='files' THEN json_array_length(CAST(content AS TEXT)) ELSE 0 END AS file_count"
+    )
+}
 
 impl ClipStorage {
     pub fn new(db_path: &Path) -> Result<Self> {
@@ -267,19 +220,21 @@ impl ClipStorage {
 
         Self::initialize_schema(&conn)?;
 
-        let upgrade = crate::migration::upgrade_clip_database_to_current(&conn, &data_dir)
-            .map_err(string_to_rusqlite_error)?;
+        let needs_fts_rebuild =
+            crate::migration::upgrade_clip_database_to_current(&conn, &data_dir)
+                .map_err(string_to_rusqlite_error)?;
 
         Self::initialize_fts(&conn)?;
         Self::ensure_incremental_auto_vacuum(&conn)?;
 
         let storage = Self { conn, data_dir };
-        if upgrade.needs_fts_rebuild || storage.fts_needs_rebuild()? {
+        if needs_fts_rebuild || storage.fts_needs_rebuild()? {
             storage.rebuild_fts_index()?;
-            if upgrade.needs_fts_rebuild {
-                crate::migration::mark_clip_database_current(&storage.conn)
-                    .map_err(string_to_rusqlite_error)?;
-            }
+        }
+        // 索引重建成功后才记录新版本号，中途失败时下次打开会重新升级。
+        if version < crate::migration::CURRENT_DB_USER_VERSION {
+            crate::migration::mark_clip_database_current(&storage.conn)
+                .map_err(string_to_rusqlite_error)?;
         }
         Ok(storage)
     }
@@ -298,11 +253,10 @@ impl ClipStorage {
         Ok(removed)
     }
 
-    /// One-time migration to incremental auto_vacuum (§4). `auto_vacuum`
-    /// only takes effect after a `VACUUM`, so a database created before this
-    /// change (or by an older ClipMan version) pays a one-time full rewrite
-    /// here; every later open sees `auto_vacuum = INCREMENTAL` already and
-    /// skips straight past this check.
+    /// One-time migration to incremental auto_vacuum. `auto_vacuum` only takes
+    /// effect after a `VACUUM`, so a database without it pays a one-time full
+    /// rewrite here; every later open sees `auto_vacuum = INCREMENTAL` already
+    /// and skips straight past this check.
     fn ensure_incremental_auto_vacuum(conn: &Connection) -> Result<()> {
         const INCREMENTAL: i64 = 2;
 
@@ -315,13 +269,13 @@ impl ClipStorage {
         conn.pragma_update(None, "auto_vacuum", INCREMENTAL)?;
         conn.execute("VACUUM", [])?;
         log::info!(
-            "🧹 Migrated database to incremental auto_vacuum in {:?}",
+            "Migrated database to incremental auto_vacuum in {:?}",
             start.elapsed()
         );
         Ok(())
     }
 
-    /// Best-effort reclaim of pages freed by a delete/prune (§4). SQLite
+    /// Best-effort reclaim of pages freed by a delete/prune. SQLite
     /// forbids running `incremental_vacuum` inside a transaction, so every
     /// caller must invoke this only *after* its own transaction has
     /// committed. Failures are only logged: reclaiming disk space must never
@@ -340,7 +294,7 @@ impl ClipStorage {
                 Ok(())
             });
         if let Err(error) = result {
-            log::warn!("⚠️ Failed to reclaim database space: {}", error);
+            log::warn!("Failed to reclaim database space: {}", error);
         }
     }
 
@@ -372,7 +326,7 @@ impl ClipStorage {
 
         if let Some(id) = existing_id {
             log::debug!(
-                "⏭️ Duplicate content detected (hash: {}), updating timestamp",
+                "Duplicate content detected (hash: {}), updating timestamp",
                 &content_hash[..8]
             );
             Self::refresh_duplicate_with_conn(
@@ -389,9 +343,9 @@ impl ClipStorage {
         conn.execute(
             "INSERT INTO clips (
                 id, content, thumbnail, content_hash, content_type, timestamp,
-                is_pinned, pin_order, label, group_name, source_app, html
+                is_pinned, pin_order, label, source_app, html
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 item.id,
                 item.content,
@@ -402,7 +356,6 @@ impl ClipStorage {
                 item.is_pinned as i32,
                 item.pin_order,
                 item.label,
-                item.group_name,
                 item.source_app,
                 item.html,
             ],
@@ -415,8 +368,9 @@ impl ClipStorage {
     }
 
     pub fn get_recent_clip_previews(&self, limit: usize) -> Result<Vec<ClipPreviewItem>> {
+        let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              WHERE is_pinned = 0
              ORDER BY timestamp DESC, id DESC
@@ -427,7 +381,7 @@ impl ClipStorage {
         items.collect()
     }
 
-    /// Keyset-paginated recent previews (§1). `before` is the `(timestamp, id)`
+    /// Keyset-paginated recent previews. `before` is the `(timestamp, id)`
     /// cursor of the last row the caller already holds; `None` returns the
     /// first page. The strict `id` tiebreak keeps paging stable even when many
     /// rows share a timestamp, where a timestamp-only cursor would drop rows
@@ -441,8 +395,9 @@ impl ClipStorage {
             return self.get_recent_clip_previews(limit);
         };
 
+        let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              WHERE is_pinned = 0
                AND (timestamp < ?1 OR (timestamp = ?1 AND id < ?2))
@@ -457,24 +412,11 @@ impl ClipStorage {
         items.collect()
     }
 
-    pub fn get_pinned_clip_previews(&self) -> Result<Vec<ClipPreviewItem>> {
+    /// 按置顶顺序返回；`limit` 为 -1 表示不限制（SQLite 的 LIMIT 语义）。
+    pub fn get_pinned_clip_previews(&self, limit: i64) -> Result<Vec<ClipPreviewItem>> {
+        let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
-             FROM clips
-             WHERE is_pinned = 1
-             ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC"
-        ))?;
-
-        let items = stmt.query_map([], Self::preview_from_row)?;
-        items.collect()
-    }
-
-    pub fn get_pinned_clip_previews_with_limit(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<ClipPreviewItem>> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              WHERE is_pinned = 1
              ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC
@@ -506,14 +448,8 @@ impl ClipStorage {
 
     pub fn update_pin(&self, id: &str, is_pinned: bool, limit: usize) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        Self::update_pin_with_conn(&tx, id, is_pinned)?;
-        Self::prune_history_with_conn(&tx, limit)?;
-        tx.commit()
-    }
-
-    fn update_pin_with_conn(conn: &Connection, id: &str, is_pinned: bool) -> Result<()> {
         let pin_order = if is_pinned {
-            let max_order: Option<i32> = conn.query_row(
+            let max_order: Option<i32> = tx.query_row(
                 "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
                 [],
                 |row| row.get(0),
@@ -524,46 +460,34 @@ impl ClipStorage {
             None
         };
 
-        conn.execute(
+        tx.execute(
             "UPDATE clips SET is_pinned = ?1, pin_order = ?2 WHERE id = ?3",
             params![is_pinned as i32, pin_order, id],
         )?;
-
-        Ok(())
+        Self::prune_history_with_conn(&tx, limit)?;
+        tx.commit()
     }
 
     pub fn set_clip_label(&self, id: &str, label: Option<String>) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        Self::set_clip_label_with_conn(&tx, id, label)?;
-        tx.commit()
-    }
-
-    fn set_clip_label_with_conn(conn: &Connection, id: &str, label: Option<String>) -> Result<()> {
-        let label = normalize_label(label);
-
-        conn.execute(
+        tx.execute(
             "UPDATE clips SET label = ?1 WHERE id = ?2",
-            params![label, id],
+            params![normalize_label(label), id],
         )?;
-        Self::sync_fts_for_clip_id_with_conn(conn, id)?;
-        Ok(())
+        Self::sync_fts_for_clip_id_with_conn(&tx, id)?;
+        tx.commit()
     }
 
     pub fn reorder_pinned(&self, id: &str, direction: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        Self::reorder_pinned_with_conn(&tx, id, direction)?;
-        tx.commit()
-    }
-
-    fn reorder_pinned_with_conn(conn: &Connection, id: &str, direction: &str) -> Result<()> {
         let move_up = match direction {
             "up" => true,
             "down" => false,
             _ => return Err(rusqlite::Error::InvalidParameterName(direction.to_string())),
         };
 
+        let tx = self.conn.unchecked_transaction()?;
         let mut pinned_ids = {
-            let mut stmt = conn.prepare(
+            let mut stmt = tx.prepare(
                 "SELECT id
                  FROM clips
                  WHERE is_pinned = 1
@@ -592,45 +516,35 @@ impl ClipStorage {
         pinned_ids.swap(index, swap_index);
 
         for (index, pinned_id) in pinned_ids.iter().enumerate() {
-            conn.execute(
+            tx.execute(
                 "UPDATE clips SET pin_order = ?1 WHERE id = ?2",
                 params![(index + 1) as i32, pinned_id],
             )?;
         }
 
-        Ok(())
+        tx.commit()
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        Self::delete_with_conn(&tx, id)?;
+        tx.execute("DELETE FROM clips_fts WHERE clip_id = ?1", params![id])?;
+        tx.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
         tx.commit()?;
         self.reclaim_space();
-        Ok(())
-    }
-
-    fn delete_with_conn(conn: &Connection, id: &str) -> Result<()> {
-        conn.execute("DELETE FROM clips_fts WHERE clip_id = ?1", params![id])?;
-        conn.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn clear_non_pinned(&self) -> Result<()> {
+        log::info!("Clearing non-pinned clipboard history");
         let tx = self.conn.unchecked_transaction()?;
-        Self::clear_non_pinned_with_conn(&tx)?;
-        tx.commit()?;
-        self.reclaim_space();
-        Ok(())
-    }
-
-    fn clear_non_pinned_with_conn(conn: &Connection) -> Result<()> {
-        log::info!("🗑️ Clearing non-pinned clipboard history");
-        conn.execute(
+        tx.execute(
             "DELETE FROM clips_fts
              WHERE clip_id IN (SELECT id FROM clips WHERE is_pinned = 0)",
             [],
         )?;
-        conn.execute("DELETE FROM clips WHERE is_pinned = 0", [])?;
+        tx.execute("DELETE FROM clips WHERE is_pinned = 0", [])?;
+        tx.commit()?;
+        self.reclaim_space();
         Ok(())
     }
 
@@ -708,24 +622,21 @@ impl ClipStorage {
                 "Merge exceeds the 50 MB content limit".into(),
             ));
         }
-        let columns = CLIP_COLUMNS.replacen(
-            "content,",
-            "CASE WHEN content_type = 'image' THEN x'' ELSE content END,",
-            1,
-        );
-        let columns = columns.replace("thumbnail,", "NULL,").replace(
-            "label, group_name, source_app, html",
-            "NULL, NULL, NULL, NULL",
-        );
+        // 列顺序与 `CLIP_COLUMNS` 一致，交给 `clip_from_row` 读取。
         self.conn
-            .prepare(&format!("SELECT {columns} FROM clips WHERE id = ?1"))?
+            .prepare(
+                "SELECT id, CASE WHEN content_type = 'image' THEN x'' ELSE content END, NULL,
+                        content_type, timestamp, is_pinned, pin_order, NULL, NULL, NULL
+                 FROM clips WHERE id = ?1",
+            )?
             .query_row([id], Self::clip_from_row)
             .optional()
     }
 
     pub fn get_preview_by_id(&self, id: &str) -> Result<Option<ClipPreviewItem>> {
+        let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              WHERE id = ?1"
         ))?;
@@ -735,8 +646,7 @@ impl ClipStorage {
 
     /// Bump several clips' timestamps to the same value in a single transaction,
     /// so a merge paste moves every touched clip to the top of the recent list
-    /// with one write instead of one round-trip (and one prepared statement) per
-    /// clip (#38). Single and merge use the same update path.
+    /// with one write. Single and merge use the same update path.
     pub fn touch_timestamps(&self, ids: &[String], new_timestamp: f64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
@@ -746,12 +656,12 @@ impl ClipStorage {
             }
         }
         tx.commit()?;
-        log::debug!("📍 Touched {} item timestamp(s)", ids.len());
+        log::debug!("Touched {} item timestamp(s)", ids.len());
         Ok(())
     }
 
     /// Refresh a duplicate clip on re-copy: bump its timestamp and let present
-    /// metadata win while missing fields keep the old values via COALESCE (D6).
+    /// metadata win while missing fields keep the old values via COALESCE.
     fn refresh_duplicate_with_conn(
         conn: &Connection,
         id: &str,
@@ -767,7 +677,7 @@ impl ClipStorage {
              WHERE id = ?4",
             params![new_timestamp, html, source_app, id],
         )?;
-        log::debug!("📍 Refreshed duplicate item {}", id);
+        log::debug!("Refreshed duplicate item {}", id);
         Ok(())
     }
 
@@ -783,7 +693,6 @@ impl ClipStorage {
                 is_pinned INTEGER DEFAULT 0,
                 pin_order INTEGER,
                 label TEXT,
-                group_name TEXT,
                 source_app TEXT,
                 html TEXT
             )",
@@ -793,7 +702,6 @@ impl ClipStorage {
         Self::add_column_if_missing(conn, "content_hash", "TEXT")?;
         Self::add_column_if_missing(conn, "thumbnail", "BLOB")?;
         Self::add_column_if_missing(conn, "label", "TEXT")?;
-        Self::add_column_if_missing(conn, "group_name", "TEXT")?;
         Self::add_column_if_missing(conn, "source_app", "TEXT")?;
         Self::add_column_if_missing(conn, "html", "TEXT")?;
 
@@ -809,11 +717,10 @@ impl ClipStorage {
             "CREATE INDEX IF NOT EXISTS idx_content_hash ON clips(content_hash, content_type)",
             [],
         )?;
-        // Keyset pagination (§1) orders the recent list by (timestamp DESC,
-        // id DESC) so duplicate timestamps can't drop or repeat rows across
-        // pages; the index must carry the id tiebreak or SQLite falls back to
-        // a temp sort. The old 2-column index is dropped — the 3-column index
-        // is a strict prefix superset for every query that used it.
+        // Keyset pagination orders the recent list by (timestamp DESC, id DESC)
+        // so duplicate timestamps can't drop or repeat rows across pages; the
+        // index must carry the id tiebreak or SQLite falls back to a temp sort.
+        // 旧库里可能还有只含时间戳的同名用途索引，它被下面的三列索引完全覆盖，删除即可。
         conn.execute("DROP INDEX IF EXISTS idx_recent_unpinned_timestamp", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recent_unpinned_ts_id
@@ -860,7 +767,7 @@ impl ClipStorage {
 
     fn add_column_if_missing(conn: &Connection, name: &str, column_type: &str) -> Result<()> {
         if !Self::has_column(conn, name)? {
-            log::info!("📦 Migrating database: adding {} column", name);
+            log::info!("Migrating database: adding {} column", name);
             conn.execute(
                 &format!("ALTER TABLE clips ADD COLUMN {name} {column_type}"),
                 [],
@@ -893,9 +800,8 @@ impl ClipStorage {
             is_pinned: row.get::<_, i32>(5)? != 0,
             pin_order: row.get(6)?,
             label: row.get(7)?,
-            group_name: row.get(8)?,
-            source_app: row.get(9)?,
-            html: row.get(10)?,
+            source_app: row.get(8)?,
+            html: row.get(9)?,
         })
     }
 
@@ -909,17 +815,17 @@ impl ClipStorage {
             is_pinned: row.get::<_, i32>(5)? != 0,
             pin_order: row.get(6)?,
             label: row.get(7)?,
-            group_name: row.get(8)?,
-            source_app: row.get(9)?,
-            has_html: row.get::<_, i32>(10)? != 0,
-            content_bytes: row.get(11)?,
-            file_count: row.get(12)?,
+            source_app: row.get(8)?,
+            has_html: row.get::<_, i32>(9)? != 0,
+            content_bytes: row.get(10)?,
+            file_count: row.get(11)?,
         })
     }
 
     fn get_all_previews_for_search(&self) -> Result<Vec<ClipPreviewItem>> {
+        let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CLIP_PREVIEW_COLUMNS}
+            "SELECT {columns}
              FROM clips
              ORDER BY timestamp DESC, id DESC
              LIMIT 1001"
@@ -931,8 +837,7 @@ impl ClipStorage {
 
     fn search_previews_with_fts(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
         let fts_query = escape_fts_query(query);
-        let columns = CLIP_PREVIEW_COLUMNS.replace("substr(content, 1, 4096)",
-            "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)");
+        let columns = preview_columns(TEXT_MATCH_EXCERPT);
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
@@ -950,8 +855,7 @@ impl ClipStorage {
 
     fn search_previews_with_like(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
         let like_query = format!("%{}%", escape_like_query(query));
-        let columns = CLIP_PREVIEW_COLUMNS.replace("substr(content, 1, 4096)",
-            "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)");
+        let columns = preview_columns(TEXT_MATCH_EXCERPT);
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
@@ -970,17 +874,12 @@ impl ClipStorage {
 
     fn rebuild_fts_index(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        Self::rebuild_fts_index_with_conn(&tx)?;
-        tx.commit()
-    }
-
-    fn rebuild_fts_index_with_conn(conn: &Connection) -> Result<()> {
-        conn.execute("DELETE FROM clips_fts", [])?;
+        tx.execute("DELETE FROM clips_fts", [])?;
 
         let mut last_rowid = 0;
         loop {
             let rows = {
-                let mut stmt = conn.prepare(
+                let mut stmt = tx.prepare(
                     "SELECT rowid, id,
                         CASE WHEN content_type IN ('text','files') THEN content ELSE x'' END AS search_content,
                         content_type, label
@@ -1002,11 +901,11 @@ impl ClipStorage {
             last_rowid = batch_last_rowid;
 
             for payload in rows {
-                Self::insert_fts_payload_with_conn(conn, &payload)?;
+                Self::insert_fts_payload_with_conn(&tx, &payload)?;
             }
         }
 
-        Ok(())
+        tx.commit()
     }
 
     fn sync_fts_for_clip_id_with_conn(conn: &Connection, id: &str) -> Result<()> {
@@ -1096,20 +995,15 @@ pub fn encode_file_paths(paths: &[String]) -> String {
     serde_json::to_string(paths).expect("a list of strings is JSON serializable")
 }
 
-/// Human-readable path text, used only for merge/fallback display.
+/// Human-readable path text for merge, search and tray display.
 pub fn join_file_paths(paths: &[String]) -> String {
     paths.join("\n")
 }
 
-/// Read v3 JSON arrays and legacy newline-separated records.
+/// 解析 Files 记录的 JSON 路径数组。旧的换行格式在打开数据库时已全部转换。
 pub fn split_file_paths(content: &str) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(content).unwrap_or_else(|_| {
-        content
-            .split('\n')
-            .filter(|line| !line.is_empty())
-            .map(str::to_owned)
-            .collect()
-    })
+    serde_json::from_str(content)
+        .expect("files clips store a JSON array of paths (legacy rows are converted on open)")
 }
 
 fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
@@ -1153,78 +1047,26 @@ fn io_to_rusqlite_error(error: std::io::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
+/// 把数据库备份到 `destination_db_path`。调用方保证目标文件不存在：迁移前
+/// `prepare_destination_directory` 拒绝含数据库文件的目录，升级前备份用带 UUID 的新文件名。
+/// 所以失败时可以直接删除本次创建的文件。
 fn backup_connection(conn: &Connection, destination_db_path: &Path) -> Result<()> {
-    if let Some(parent) = destination_db_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(io_to_rusqlite_error)?;
-        }
-    }
-
-    let temp_db_path = temp_backup_path(destination_db_path);
-    remove_sqlite_database_files(&temp_db_path)?;
-
-    let backup_result = (|| -> Result<()> {
-        let mut destination = Connection::open(&temp_db_path)?;
+    let result = (|| -> Result<()> {
+        let mut destination = Connection::open(destination_db_path)?;
         let backup = rusqlite::backup::Backup::new(conn, &mut destination)?;
-        backup.run_to_completion(512, Duration::from_millis(1), None)?;
-        Ok(())
+        backup.run_to_completion(512, Duration::from_millis(1), None)
     })();
 
-    if let Err(error) = backup_result {
-        if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
+    if result.is_err() {
+        if let Err(cleanup_error) = remove_sqlite_database_files(destination_db_path) {
             log::warn!(
                 "Failed to clean incomplete backup {}: {}",
-                temp_db_path.display(),
+                destination_db_path.display(),
                 cleanup_error
             );
         }
-        return Err(error);
     }
-
-    let mut staged_destination = stage_sqlite_files_for_replacement(destination_db_path)?;
-    if let Err(error) = fs::rename(&temp_db_path, destination_db_path) {
-        staged_destination.restore();
-        if let Err(cleanup_error) = remove_sqlite_database_files(&temp_db_path) {
-            log::warn!(
-                "Failed to clean unused backup {}: {}",
-                temp_db_path.display(),
-                cleanup_error
-            );
-        }
-        return Err(io_to_rusqlite_error(error));
-    }
-    if let Err(cleanup_error) = remove_sqlite_sidecars(&temp_db_path) {
-        log::warn!(
-            "Failed to clean temporary backup sidecars for {}: {}",
-            temp_db_path.display(),
-            cleanup_error
-        );
-    }
-    if let Err(cleanup_error) = staged_destination.cleanup() {
-        log::warn!(
-            "Failed to clean replaced destination backup for {}: {}",
-            destination_db_path.display(),
-            cleanup_error
-        );
-    }
-
-    Ok(())
-}
-
-fn temp_backup_path(destination_db_path: &Path) -> PathBuf {
-    let file_name = destination_db_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("clipman.db");
-    destination_db_path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()))
-}
-
-fn replaced_backup_path(destination_db_path: &Path) -> PathBuf {
-    let file_name = destination_db_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("clipman.db");
-    destination_db_path.with_file_name(format!(".{file_name}.{}.replaced", uuid::Uuid::new_v4()))
+    result
 }
 
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -1239,15 +1081,10 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn remove_sqlite_sidecars(path: &Path) -> Result<()> {
+fn remove_sqlite_database_files(path: &Path) -> Result<()> {
     for suffix in ["-wal", "-shm", "-journal"] {
         remove_file_if_exists(&sqlite_sidecar_path(path, suffix))?;
     }
-    Ok(())
-}
-
-fn remove_sqlite_database_files(path: &Path) -> Result<()> {
-    remove_sqlite_sidecars(path)?;
     remove_file_if_exists(path)
 }
 
@@ -1268,7 +1105,7 @@ impl StagedSqliteReplacement {
         for (staged_path, original_path) in self.moved_files.iter().rev() {
             if let Err(error) = fs::rename(staged_path, original_path) {
                 log::warn!(
-                    "Failed to restore replaced database file {} to {}: {}",
+                    "Failed to restore moved database file {} to {}: {}",
                     staged_path.display(),
                     original_path.display(),
                     error
@@ -1276,14 +1113,6 @@ impl StagedSqliteReplacement {
             }
         }
         self.moved_files.clear();
-    }
-
-    fn cleanup(mut self) -> Result<()> {
-        for (staged_path, _) in &self.moved_files {
-            remove_file_if_exists(staged_path)?;
-        }
-        self.moved_files.clear();
-        Ok(())
     }
 }
 
@@ -1319,11 +1148,6 @@ fn stage_sqlite_files(path: &Path, staged_db_path: &Path) -> Result<StagedSqlite
     Ok(staged)
 }
 
-fn stage_sqlite_files_for_replacement(path: &Path) -> Result<StagedSqliteReplacement> {
-    let staged_db_path = replaced_backup_path(path);
-    stage_sqlite_files(path, &staged_db_path)
-}
-
 pub(crate) fn is_corrupt_database_error(error: &rusqlite::Error) -> bool {
     matches!(
         error.sqlite_error_code(),
@@ -1334,8 +1158,8 @@ pub(crate) fn is_corrupt_database_error(error: &rusqlite::Error) -> bool {
 /// Move a (possibly corrupt) sqlite database file and its `-wal`/`-shm`/
 /// `-journal` sidecars out of the way to a unique `<name>.corrupt-<uuid>`
 /// backup, so a fresh database can be created in its place. Used by the
-/// startup recovery path in `main.rs` when opening the default database
-/// fails. Returns the path the primary db file was moved to, or `None` if
+/// startup recovery path in `main.rs` when SQLite reports the database as
+/// corrupt. Returns the path the primary db file was moved to, or `None` if
 /// nothing existed at `db_path`.
 pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<Option<PathBuf>> {
     let file_name = db_path
@@ -1358,6 +1182,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
+
+    const TEXT_PREVIEW_BYTES: usize = 4096;
 
     fn temp_db_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("clipman_{}_{}.db", name, Uuid::new_v4()))
@@ -1386,7 +1212,6 @@ mod tests {
             is_pinned,
             pin_order,
             label: None,
-            group_name: None,
             source_app: None,
             html: None,
         }
@@ -1472,7 +1297,17 @@ mod tests {
         );
         drop(backup);
         drop(storage);
+        // 降级到 2.2.x 期间写入的换行格式记录，在版本号仍为 3 时打开也会被转换。
+        Connection::open(&path)
+            .unwrap()
+            .execute("INSERT INTO clips(id,content,content_type,timestamp,is_pinned) VALUES('downgraded',?1,'files',2,0)", [b"/tmp/a.txt\n\n/tmp/b.txt\n".as_slice()])
+            .unwrap();
         let reopened = ClipStorage::new(&path).unwrap();
+        assert_eq!(
+            reopened.get_by_id("downgraded").unwrap().unwrap().content,
+            encode_file_paths(&["/tmp/a.txt".into(), "/tmp/b.txt".into()]).as_bytes()
+        );
+        assert_eq!(reopened.search_clip_previews("b.txt").unwrap().len(), 1);
         assert_eq!(
             fs::read_dir(&root)
                 .unwrap()
@@ -1567,17 +1402,9 @@ mod tests {
         let owned: Vec<String> = paths.iter().map(|path| path.to_string()).collect();
         ClipItem {
             content_type: ContentType::Files,
-            content: join_file_paths(&owned).into_bytes(),
+            content: encode_file_paths(&owned).into_bytes(),
             ..test_item(id, b"", timestamp, false, None)
         }
-    }
-
-    fn query_plan_details(storage: &ClipStorage, sql: &str) -> Vec<String> {
-        let mut stmt = storage.conn.prepare(sql).unwrap();
-        stmt.query_map([], |row| row.get::<_, String>(3))
-            .unwrap()
-            .collect::<Result<Vec<_>>>()
-            .unwrap()
     }
 
     #[test]
@@ -1597,7 +1424,6 @@ mod tests {
         assert!(columns.contains(&"content_hash".to_string()));
         assert!(columns.contains(&"thumbnail".to_string()));
         assert!(columns.contains(&"label".to_string()));
-        assert!(columns.contains(&"group_name".to_string()));
 
         let journal_mode: String = storage
             .conn
@@ -1610,47 +1436,6 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(crate::migration::CURRENT_DB_USER_VERSION, user_version);
-
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn insert_stores_plaintext_content() {
-        let db_path = temp_db_path("plaintext");
-        let storage = ClipStorage::new(&db_path).unwrap();
-        storage
-            .insert(&test_item("plain", b"Hello, ClipMan!", 1, false, None), 100)
-            .unwrap();
-
-        let stored_content: Vec<u8> = storage
-            .conn
-            .query_row("SELECT content FROM clips WHERE id = 'plain'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(b"Hello, ClipMan!".to_vec(), stored_content);
-
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn new_database_creates_trigram_fts_table() {
-        let db_path = temp_db_path("fts_schema");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        let table_sql: String = storage
-            .conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'clips_fts'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(table_sql.contains("fts5"));
-        assert!(table_sql.contains("clip_id UNINDEXED"));
-        assert!(table_sql.contains("tokenize='trigram'"));
 
         drop(storage);
         cleanup_db(&db_path);
@@ -1774,7 +1559,7 @@ mod tests {
         assert_eq!(vec!["recent-new", "recent-old"], recent_ids);
 
         let pinned_ids: Vec<String> = storage
-            .get_pinned_clip_previews()
+            .get_pinned_clip_previews(-1)
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -1869,7 +1654,6 @@ mod tests {
 
         let mut existing = test_item("pinned", b"same content", 10, true, Some(2));
         existing.label = Some("favorite".to_string());
-        existing.group_name = Some("snippets".to_string());
         storage.insert(&existing, 100).unwrap();
 
         let incoming = test_item("new-id", b"same content", 20, false, None);
@@ -1882,7 +1666,6 @@ mod tests {
         assert!(stored.is_pinned);
         assert_eq!(Some(2), stored.pin_order);
         assert_eq!(Some("favorite".to_string()), stored.label);
-        assert_eq!(Some("snippets".to_string()), stored.group_name);
         assert!(storage.get_by_id("new-id").unwrap().is_none());
 
         drop(storage);
@@ -1907,7 +1690,7 @@ mod tests {
         storage.reorder_pinned("second", "up").unwrap();
 
         let pinned: Vec<(String, Option<i32>)> = storage
-            .get_pinned_clip_previews()
+            .get_pinned_clip_previews(-1)
             .unwrap()
             .into_iter()
             .map(|item| (item.id, item.pin_order))
@@ -1924,45 +1707,13 @@ mod tests {
         storage.reorder_pinned("second", "down").unwrap();
 
         let pinned_ids: Vec<String> = storage
-            .get_pinned_clip_previews()
+            .get_pinned_clip_previews(-1)
             .unwrap()
             .into_iter()
             .map(|item| item.id)
             .collect();
         assert_eq!(vec!["first", "second", "third"], pinned_ids);
 
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn delete_removes_clip_and_fts_row_together() {
-        let db_path = temp_db_path("delete_atomicity");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        let item = test_item("delete-me", b"searchable text", 1, false, None);
-        storage.insert(&item, 100).unwrap();
-        storage.delete("delete-me").unwrap();
-
-        let clip_count: i64 = storage
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM clips WHERE id = 'delete-me'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let fts_count: i64 = storage
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM clips_fts WHERE clip_id = 'delete-me'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        assert_eq!(0, clip_count);
-        assert_eq!(0, fts_count);
         drop(storage);
         cleanup_db(&db_path);
     }
@@ -2010,32 +1761,6 @@ mod tests {
     }
 
     #[test]
-    fn label_update_keeps_fts_row_in_sync() {
-        let db_path = temp_db_path("label_atomicity");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        storage
-            .insert(&test_item("clip", b"body text", 1, false, None), 100)
-            .unwrap();
-        storage
-            .set_clip_label("clip", Some("new label".to_string()))
-            .unwrap();
-
-        let label: String = storage
-            .conn
-            .query_row(
-                "SELECT label FROM clips_fts WHERE clip_id = 'clip'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        assert_eq!("new label", label);
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
     fn clear_non_pinned_removes_matching_fts_rows() {
         let db_path = temp_db_path("clear_non_pinned_atomicity");
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -2058,54 +1783,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(vec!["pinned".to_string()], remaining_clip_ids);
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn recent_query_uses_index_without_temp_sort() {
-        let db_path = temp_db_path("recent_query_plan");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        let details = query_plan_details(
-            &storage,
-            "EXPLAIN QUERY PLAN
-             SELECT id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name
-             FROM clips
-             WHERE is_pinned = 0
-             ORDER BY timestamp DESC, id DESC
-             LIMIT 100",
-        );
-
-        assert!(!details
-            .iter()
-            .any(|detail| detail.contains("USE TEMP B-TREE")));
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn recent_page_query_uses_index_without_temp_sort() {
-        let db_path = temp_db_path("recent_page_query_plan");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        // The keyset page query filters on the (timestamp, id) cursor and orders
-        // by (timestamp DESC, id DESC); the extended index must satisfy both so
-        // no temp b-tree sort appears.
-        let details = query_plan_details(
-            &storage,
-            "EXPLAIN QUERY PLAN
-             SELECT id, timestamp, is_pinned
-             FROM clips
-             WHERE is_pinned = 0
-               AND (timestamp < 100 OR (timestamp = 100 AND id < 'z'))
-             ORDER BY timestamp DESC, id DESC
-             LIMIT 100",
-        );
-
-        assert!(!details
-            .iter()
-            .any(|detail| detail.contains("USE TEMP B-TREE")));
         drop(storage);
         cleanup_db(&db_path);
     }
@@ -2210,48 +1887,6 @@ mod tests {
     }
 
     #[test]
-    fn prune_query_uses_index_without_temp_sort() {
-        let db_path = temp_db_path("prune_query_plan");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        let details = query_plan_details(
-            &storage,
-            "EXPLAIN QUERY PLAN
-             SELECT id FROM clips
-             WHERE is_pinned = 0
-             ORDER BY timestamp DESC, id DESC
-             LIMIT -1 OFFSET 100",
-        );
-
-        assert!(!details
-            .iter()
-            .any(|detail| detail.contains("USE TEMP B-TREE")));
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn pinned_query_uses_index_without_temp_sort() {
-        let db_path = temp_db_path("pinned_query_plan");
-        let storage = ClipStorage::new(&db_path).unwrap();
-
-        let details = query_plan_details(
-            &storage,
-            "EXPLAIN QUERY PLAN
-             SELECT id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, group_name
-             FROM clips
-             WHERE is_pinned = 1
-             ORDER BY pin_order IS NULL, pin_order ASC, timestamp DESC",
-        );
-
-        assert!(!details
-            .iter()
-            .any(|detail| detail.contains("USE TEMP B-TREE")));
-        drop(storage);
-        cleanup_db(&db_path);
-    }
-
-    #[test]
     fn current_database_does_not_rebuild_fts_on_every_open() {
         let db_path = temp_db_path("fts_no_rebuild");
         {
@@ -2259,8 +1894,8 @@ mod tests {
             ClipStorage::initialize_schema(&conn).unwrap();
             ClipStorage::initialize_fts(&conn).unwrap();
             conn.execute(
-                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label, group_name)
-                 VALUES ('clip', x'68656c6c6f', NULL, 'hash', 'text', 1, 0, NULL, NULL, NULL)",
+                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label)
+                 VALUES ('clip', x'68656c6c6f', NULL, 'hash', 'text', 1, 0, NULL, NULL)",
                 [],
             )
             .unwrap();
@@ -2306,14 +1941,14 @@ mod tests {
             ClipStorage::initialize_schema(&conn).unwrap();
             ClipStorage::initialize_fts(&conn).unwrap();
             conn.execute(
-                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label, group_name)
-                 VALUES ('first', x'6669727374', NULL, 'hash-1', 'text', 1, 0, NULL, NULL, NULL)",
+                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label)
+                 VALUES ('first', x'6669727374', NULL, 'hash-1', 'text', 1, 0, NULL, NULL)",
                 [],
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label, group_name)
-                 VALUES ('second', x'7365636f6e64', NULL, 'hash-2', 'text', 2, 0, NULL, NULL, NULL)",
+                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label)
+                 VALUES ('second', x'7365636f6e64', NULL, 'hash-2', 'text', 2, 0, NULL, NULL)",
                 [],
             )
             .unwrap();
@@ -2395,8 +2030,8 @@ mod tests {
 
             for index in 0..(FTS_REBUILD_BATCH_SIZE as usize + 5) {
                 conn.execute(
-                    "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label, group_name)
-                     VALUES (?1, ?2, NULL, ?3, 'text', ?4, 0, NULL, NULL, NULL)",
+                    "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label)
+                     VALUES (?1, ?2, NULL, ?3, 'text', ?4, 0, NULL, NULL)",
                     params![
                         format!("clip-{index:03}"),
                         format!("needle{index:03}").into_bytes(),
@@ -2472,7 +2107,6 @@ mod tests {
                     is_pinned: false,
                     pin_order: None,
                     label: None,
-                    group_name: None,
                     source_app: None,
                     html: None,
                 },
@@ -2491,18 +2125,6 @@ mod tests {
 
         drop(storage);
         cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn clip_preview_from_clip_item_truncates_text_payload() {
-        let mut long_text = vec![b'a'; TEXT_PREVIEW_BYTES];
-        long_text.extend(vec![b'b'; 128]);
-        let item = test_item("text", &long_text, 1, false, None);
-
-        let preview = ClipPreviewItem::from_clip_item(&item);
-
-        assert_eq!(TEXT_PREVIEW_BYTES, preview.preview_content.len());
-        assert_eq!(&long_text[..TEXT_PREVIEW_BYTES], preview.preview_content);
     }
 
     #[test]
@@ -2540,7 +2162,9 @@ mod tests {
                 };
                 item.content = match item.content_type {
                     ContentType::Image => vec![0; 1024],
-                    ContentType::Files => format!("/tmp/report-{count}.txt").into_bytes(),
+                    ContentType::Files => {
+                        encode_file_paths(&[format!("/tmp/report-{count}.txt")]).into_bytes()
+                    }
                     ContentType::Text => format!(
                         "{}needle-{count}中文",
                         "x".repeat(if count % 20 == 2 { 65536 } else { 256 })
@@ -2599,14 +2223,20 @@ mod tests {
 
     #[test]
     fn preview_encoding_does_not_split_utf8() {
+        let db_path = temp_db_path("preview_utf8");
+        let storage = ClipStorage::new(&db_path).unwrap();
         let item = test_item("unicode", "中".repeat(2000).as_bytes(), 1, false, None);
-        let preview = FrontendClipItem::from_preview(ClipPreviewItem::from_clip_item(&item));
+        storage.insert(&item, 100).unwrap();
+        let preview =
+            FrontendClipItem::from_preview(storage.get_preview_by_id("unicode").unwrap().unwrap());
         let bytes = data_encoding::BASE64
             .decode(preview.content.as_bytes())
             .unwrap();
         assert!(std::str::from_utf8(&bytes).is_ok());
         assert_eq!(bytes.len(), 4095);
         assert_eq!(preview.content_bytes, 6000);
+        drop(storage);
+        cleanup_db(&db_path);
     }
 
     #[test]
@@ -2696,7 +2326,7 @@ mod tests {
         }
 
         let ids: Vec<String> = storage
-            .get_pinned_clip_previews_with_limit(2)
+            .get_pinned_clip_previews(2)
             .unwrap()
             .into_iter()
             .map(|item| item.id)
@@ -2705,75 +2335,6 @@ mod tests {
         assert_eq!(vec!["pinned-0".to_string(), "pinned-1".to_string()], ids);
         drop(storage);
         cleanup_db(&db_path);
-    }
-
-    #[test]
-    fn backup_to_path_replaces_destination_and_stale_sidecars() {
-        let source_path = temp_db_path("backup_source");
-        let destination_path = temp_db_path("backup_destination");
-        let storage = ClipStorage::new(&source_path).unwrap();
-        storage
-            .insert(
-                &labeled_item("backup", b"backup needle", "backup label", 1),
-                100,
-            )
-            .unwrap();
-
-        fs::write(&destination_path, b"stale").unwrap();
-        for suffix in ["-wal", "-shm", "-journal"] {
-            fs::write(sqlite_sidecar_path(&destination_path, suffix), b"stale").unwrap();
-        }
-
-        storage.backup_to_path(&destination_path).unwrap();
-
-        assert!(destination_path.exists());
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!sqlite_sidecar_path(&destination_path, suffix).exists());
-        }
-        drop(storage);
-
-        let restored = ClipStorage::new(&destination_path).unwrap();
-        let ids: Vec<String> = restored
-            .search_clip_previews("needle")
-            .unwrap()
-            .into_iter()
-            .map(|item| item.id)
-            .collect();
-
-        assert_eq!(vec!["backup".to_string()], ids);
-        drop(restored);
-        cleanup_db(&source_path);
-        cleanup_db(&destination_path);
-    }
-
-    #[test]
-    fn staged_sqlite_replacement_restore_recovers_original_files() {
-        let destination_path = temp_db_path("stage_restore");
-        fs::write(&destination_path, b"old-db").unwrap();
-        for suffix in ["-wal", "-shm", "-journal"] {
-            fs::write(
-                sqlite_sidecar_path(&destination_path, suffix),
-                format!("old{suffix}").as_bytes(),
-            )
-            .unwrap();
-        }
-
-        let mut staged = stage_sqlite_files_for_replacement(&destination_path).unwrap();
-        assert!(!destination_path.exists());
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!sqlite_sidecar_path(&destination_path, suffix).exists());
-        }
-
-        staged.restore();
-
-        assert_eq!(b"old-db".to_vec(), fs::read(&destination_path).unwrap());
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert_eq!(
-                format!("old{suffix}").into_bytes(),
-                fs::read(sqlite_sidecar_path(&destination_path, suffix)).unwrap()
-            );
-        }
-        cleanup_db(&destination_path);
     }
 
     #[test]
@@ -2870,22 +2431,6 @@ mod tests {
     }
 
     #[test]
-    fn file_path_join_split_roundtrip_and_filters_blank_lines() {
-        let paths = vec!["/a/b.txt".to_string(), "/c/d e.png".to_string()];
-        let joined = join_file_paths(&paths);
-
-        assert_eq!("/a/b.txt\n/c/d e.png", joined);
-        assert_eq!(paths, split_file_paths(&joined));
-
-        // Trailing and doubled newlines must never produce empty path entries.
-        assert_eq!(
-            vec!["/a".to_string(), "/b".to_string()],
-            split_file_paths("/a\n\n/b\n")
-        );
-        assert!(split_file_paths("").is_empty());
-    }
-
-    #[test]
     fn files_clip_roundtrips_and_is_searchable_by_path() {
         let db_path = temp_db_path("files_roundtrip");
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -2944,9 +2489,10 @@ mod tests {
         let files_preview = storage.get_preview_by_id("files").unwrap().unwrap();
         assert_eq!(ContentType::Files, files_preview.content_type);
         assert_eq!(
-            "/Users/bob/a.txt\n/Users/bob/b.txt",
-            String::from_utf8_lossy(&files_preview.preview_content)
+            vec!["/Users/bob/a.txt".to_string()],
+            split_file_paths(&String::from_utf8_lossy(&files_preview.preview_content))
         );
+        assert_eq!(2, files_preview.file_count);
         assert!(!files_preview.has_html);
 
         let rich_preview = storage.get_preview_by_id("rich").unwrap().unwrap();
@@ -2981,7 +2527,7 @@ mod tests {
         );
 
         // A plain-text re-copy of identical content refreshes the timestamp
-        // but keeps missing metadata via COALESCE (D6).
+        // but keeps missing metadata via COALESCE.
         let dup_id = storage
             .insert(&test_item("plain-dup", b"hello", 2, false, None), 100)
             .unwrap();
@@ -3049,8 +2595,8 @@ mod tests {
             let conn = Connection::open(&db_path).unwrap();
             ClipStorage::initialize_schema(&conn).unwrap();
             conn.execute(
-                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label, group_name)
-                 VALUES ('legacy', x'6c6567616379', NULL, 'hash', 'text', 1, 0, NULL, NULL, NULL)",
+                "INSERT INTO clips (id, content, thumbnail, content_hash, content_type, timestamp, is_pinned, pin_order, label)
+                 VALUES ('legacy', x'6c6567616379', NULL, 'hash', 'text', 1, 0, NULL, NULL)",
                 [],
             )
             .unwrap();

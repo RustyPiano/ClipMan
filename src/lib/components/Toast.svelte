@@ -4,8 +4,7 @@
   import { CheckCircle, AlertCircle, Info } from 'lucide-svelte';
   import type { ToastType } from '$lib/types';
 
-  // Each toast type gets its own colour so an `info` toast no longer borrows the
-  // red error style (only `error` is red; `info` is neutral/blue).
+  // 只有 error 用红色，info 用中性的蓝色。
   const toastStyles: Record<ToastType, string> = {
     success: 'bg-emerald-500 text-white',
     error: 'bg-red-500 text-white',

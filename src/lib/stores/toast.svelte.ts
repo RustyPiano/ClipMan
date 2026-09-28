@@ -1,5 +1,4 @@
 import type { Toast } from '$lib/types';
-export type { Toast, ToastType } from '$lib/types';
 
 const TOAST_DURATION_MS = 2000;
 

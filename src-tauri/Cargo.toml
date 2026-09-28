@@ -30,18 +30,17 @@ enigo = { version = "0.3.0", default-features = false, features = ["x11rb"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_bytes = "0.11"
 
 # Async Runtime
-# Tauri owns the runtime; we use time for marker expiry and sync for the shared use guard.
-tokio = { version = "1.40", features = ["time", "sync"] }
+# Tauri 负责运行时；这里只用 sync 提供剪贴板操作共用的异步锁。
+tokio = { version = "1.40", features = ["sync"] }
 
 data-encoding = "2.6"
 sha2 = "0.10"
 
 # Utilities
 uuid = { version = "1.10", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
+chrono = "0.4"
 log = "0.4"
 env_logger = "0.11"
 lru = "0.12"

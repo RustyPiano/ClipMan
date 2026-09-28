@@ -5,16 +5,7 @@
   "windows": ["main", "settings"],
   "permissions": [
     "core:default",
-    "core:event:allow-listen",
-    "core:event:allow-emit",
-    "core:window:allow-show",
     "core:window:allow-hide",
-    "core:window:allow-set-focus",
-    "dialog:default",
-    "global-shortcut:default",
-    "store:default",
-    "updater:default",
-    "notification:default",
-    "notification:allow-is-permission-granted"
+    "dialog:default"
   ]
 }

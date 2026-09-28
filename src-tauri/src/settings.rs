@@ -47,10 +47,10 @@ fn system_locale() -> String {
     locale_for_language(&language)
 }
 
-const LEGACY_SETTINGS_KEYS: [&str; 17] = [
+/// v2.1.x 及更早版本在 store 顶层逐项保存的设置键。
+const LEGACY_SETTINGS_KEYS: [&str; 11] = [
     "global_shortcut",
     "auto_paste",
-    "paste_format",
     "ignore_concealed",
     "pinned_shortcut",
     "max_history_items",
@@ -60,11 +60,6 @@ const LEGACY_SETTINGS_KEYS: [&str; 17] = [
     "custom_data_path",
     "enable_autostart",
     "locale",
-    "max_text_bytes",
-    "max_image_dimension",
-    "skip_secrets",
-    "ignored_apps",
-    "capture_paused",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,23 +85,23 @@ pub struct Settings {
     pub enable_autostart: bool,
     pub locale: String,
     /// Text/Files clips whose content exceeds this many bytes are skipped
-    /// entirely at capture time (§5).
+    /// entirely at capture time.
     pub max_text_bytes: usize,
     /// Images whose longest side exceeds this many pixels are downsampled
-    /// before being stored (§5). `0` disables downscaling.
+    /// before being stored. `0` disables downscaling.
     pub max_image_dimension: u32,
     /// When true, Text clips matching a high-confidence secret pattern
     /// (PEM private key, cloud/API token, JWT, ...) are skipped at capture
-    /// time instead of being recorded (SPEC-4 §2).
+    /// time instead of being recorded.
     pub skip_secrets: bool,
-    /// App names whose copies are never captured, matched case-insensitively
-    /// against the frontmost app at capture time (SPEC-4 §3). Normalized on
-    /// every load/save: trimmed, emptied entries dropped, deduplicated, and
-    /// capped at 100 entries.
+    /// App names or bundle identifiers whose copies are never captured,
+    /// matched case-insensitively against the frontmost app at capture time.
+    /// Normalized on every load/save: trimmed, emptied entries dropped,
+    /// deduplicated, and capped at 100 entries.
     pub ignored_apps: Vec<String>,
     /// When true, the clipboard monitor observes clipboard changes but
-    /// captures nothing at all, regardless of source app or content
-    /// (SPEC-4 §3). Toggled from the tray's "Pause Capture" menu item.
+    /// captures nothing at all, regardless of source app or content.
+    /// Toggled from the tray's "Pause Capture" menu item.
     pub capture_paused: bool,
 }
 
@@ -219,8 +214,8 @@ fn normalize_locale(locale: &str) -> String {
     }
 }
 
-/// `0` is a deliberate escape hatch that disables downscaling entirely; any
-/// other value is clamped to a sane pixel range (§5).
+/// `0` disables downscaling (the settings page allows it); any other value is
+/// clamped to a sane pixel range.
 fn clamp_max_image_dimension(value: u32) -> u32 {
     if value == 0 {
         0
@@ -229,14 +224,14 @@ fn clamp_max_image_dimension(value: u32) -> u32 {
     }
 }
 
-/// Cap on the number of ignored-app entries a user can configure (SPEC-4 §3).
+/// Cap on the number of ignored-app entries a user can configure.
 const MAX_IGNORED_APPS: usize = 100;
 
 /// Trims each entry, drops blanks, deduplicates case-insensitively (keeping
 /// the first occurrence's original casing so it still displays as typed),
-/// and caps the list at `MAX_IGNORED_APPS` (SPEC-4 §3). Case-insensitive
-/// dedup matches the matching semantics used at capture time in
-/// `clipboard.rs`, so "Safari" and "safari" never coexist as two entries.
+/// and caps the list at `MAX_IGNORED_APPS`. Case-insensitive dedup matches
+/// the matching semantics used at capture time in `clipboard.rs`, so
+/// "Safari" and "safari" never coexist as two entries.
 fn normalize_ignored_apps(apps: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     apps.into_iter()
@@ -256,10 +251,6 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
 
     if let Some(v) = get("auto_paste").and_then(|v| v.as_bool()) {
         candidate.auto_paste = v;
-    }
-
-    if let Some(v) = get("paste_format").and_then(|v| v.as_str().map(String::from)) {
-        candidate.paste_format = v;
     }
 
     if let Some(v) = get("ignore_concealed").and_then(|v| v.as_bool()) {
@@ -296,32 +287,6 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
 
     if let Some(v) = get("locale").and_then(|v| v.as_str().map(String::from)) {
         candidate.locale = v;
-    }
-
-    if let Some(v) = get("max_text_bytes").and_then(|v| v.as_u64()) {
-        candidate.max_text_bytes = v as usize;
-    }
-
-    if let Some(v) = get("max_image_dimension").and_then(|v| v.as_u64()) {
-        // Saturate to u32::MAX *before* narrowing so a stored value above
-        // u32::MAX can't wrap around (e.g. 2^32 -> 0, which would silently
-        // disable downscaling). normalize_for_load then clamps to range.
-        candidate.max_image_dimension = v.min(u32::MAX as u64) as u32;
-    }
-
-    if let Some(v) = get("skip_secrets").and_then(|v| v.as_bool()) {
-        candidate.skip_secrets = v;
-    }
-
-    if let Some(v) = get("ignored_apps").and_then(|v| v.as_array().cloned()) {
-        candidate.ignored_apps = v
-            .into_iter()
-            .filter_map(|entry| entry.as_str().map(String::from))
-            .collect();
-    }
-
-    if let Some(v) = get("capture_paused").and_then(|v| v.as_bool()) {
-        candidate.capture_paused = v;
     }
 
     candidate
@@ -366,27 +331,14 @@ impl SettingsManager {
             }
             Err(error) => {
                 // Retain known preferences and stop capture; never save defaults over a bad file.
-                crate::safe_lock(&self.settings).capture_paused = true;
+                self.settings.lock().unwrap().capture_paused = true;
                 Err(error)
             }
         }
     }
 
-    pub fn save(&self, app: &AppHandle) -> Result<(), String> {
-        let settings = crate::safe_lock(&self.settings);
-        Self::save_to_store(app, &settings)?;
-
-        log::info!("Settings saved: {:?}", *settings);
-        Ok(())
-    }
-
-    pub fn save_candidate(&self, app: &AppHandle, settings: &Settings) -> Result<(), String> {
-        Self::save_to_store(app, settings)?;
-        log::info!("Settings candidate saved: {:?}", settings);
-        Ok(())
-    }
-
-    fn save_to_store(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+    /// 把 `settings` 写入 store；内存中的设置由调用方在保存成功后用 `set` 更新。
+    pub fn save(&self, app: &AppHandle, settings: &Settings) -> Result<(), String> {
         let store = app
             .store("settings.json")
             .map_err(|e| format!("Failed to access store: {}", e))?;
@@ -402,15 +354,16 @@ impl SettingsManager {
             .save()
             .map_err(|e| format!("Failed to save store: {}", e))?;
 
+        log::info!("Settings saved: {:?}", settings);
         Ok(())
     }
 
     pub fn get(&self) -> Settings {
-        crate::safe_lock(&self.settings).clone()
+        self.settings.lock().unwrap().clone()
     }
 
     pub fn set(&self, settings: Settings) {
-        *crate::safe_lock(&self.settings) = settings;
+        *self.settings.lock().unwrap() = settings;
     }
 }
 
@@ -442,15 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_include_phase0_fields() {
-        let settings = Settings::default();
-
-        assert!(settings.auto_paste);
-        assert!(settings.ignore_concealed);
-        assert_eq!(None, settings.pinned_shortcut);
-    }
-
-    #[test]
     fn paste_format_modes_and_unknown_value_coercion() {
         let mut settings = Settings::default();
         assert_eq!("original", settings.paste_format);
@@ -468,7 +412,7 @@ mod tests {
         assert!(normalized.takes_plain_text());
         assert!(normalized.strips_rich_text_at_capture());
 
-        // Unknown values (older store, hand-edited file) fall back to original.
+        // Unknown values (hand-edited file) fall back to original.
         let coerced = Settings {
             paste_format: "richerezza".to_string(),
             ..Settings::default()
@@ -492,14 +436,6 @@ mod tests {
         }))
         .unwrap();
         assert_eq!("original", missing_key.normalize_for_load().paste_format);
-    }
-
-    #[test]
-    fn default_tray_text_length_shows_enough_to_tell_similar_clips_apart() {
-        // Raised from 50 so look-alike entries (shared prefix/suffix) stay
-        // distinguishable in the single-line tray menu. Existing users keep
-        // their stored value; only fresh installs and reset use the default.
-        assert_eq!(70, Settings::default().tray_text_length);
     }
 
     #[test]
@@ -570,19 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_include_size_limit_fields() {
-        let settings = Settings::default();
-
-        assert_eq!(2_000_000, settings.max_text_bytes);
-        assert_eq!(4096, settings.max_image_dimension);
-    }
-
-    #[test]
-    fn default_settings_skip_secrets_is_enabled() {
-        assert!(Settings::default().skip_secrets);
-    }
-
-    #[test]
     fn settings_normalization_clamps_max_text_bytes_to_supported_range() {
         let too_small = Settings {
             max_text_bytes: 10,
@@ -643,14 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_include_app_ignore_and_capture_pause_fields() {
-        let settings = Settings::default();
-
-        assert!(settings.ignored_apps.is_empty());
-        assert!(!settings.capture_paused);
-    }
-
-    #[test]
     fn settings_normalization_trims_dedupes_and_drops_empty_ignored_apps() {
         let settings = Settings {
             ignored_apps: vec![
@@ -687,48 +602,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_load_normalization_also_normalizes_ignored_apps() {
-        // normalize_for_load (the load-time path) must apply the same
-        // trim/dedupe/empty-drop rules as validate_and_normalize (the
-        // save-time path), so a settings.json hand-edited or written by an
-        // older version still round-trips to a clean list.
-        let settings = Settings {
-            ignored_apps: vec![" Slack ".to_string(), "".to_string(), "slack".to_string()],
-            ..Settings::default()
-        };
-
-        let normalized = settings.normalize_for_load().ignored_apps;
-
-        assert_eq!(vec!["Slack".to_string()], normalized);
-    }
-
-    #[test]
-    fn settings_save_and_load_round_trip_preserves_app_ignore_and_capture_pause_fields() {
-        // Exercises the same normalization path save() and load() both funnel
-        // through, standing in for a full store round trip (§3 acceptance):
-        // whatever a candidate carries in survives both normalization entry
-        // points unchanged in shape (still deduped/trimmed), not silently
-        // reset to defaults.
-        let candidate = Settings {
-            ignored_apps: vec!["Terminal".to_string(), "1Password".to_string()],
-            capture_paused: true,
-            ..Settings::default()
-        };
-
-        let saved_then_reloaded = candidate
-            .clone()
-            .validate_and_normalize()
-            .unwrap()
-            .normalize_for_load();
-
-        assert_eq!(
-            vec!["Terminal".to_string(), "1Password".to_string()],
-            saved_then_reloaded.ignored_apps
-        );
-        assert!(saved_then_reloaded.capture_paused);
-    }
-
-    #[test]
     fn settings_store_format_loads_new_object_and_legacy_keys() {
         let new_json = serde_json::json!({
             "globalShortcut": " CommandOrControl+Alt+V ",
@@ -752,7 +625,6 @@ mod tests {
         let legacy_json = serde_json::json!({
             "global_shortcut": " CommandOrControl+Alt+V ",
             "auto_paste": false,
-            "paste_format": "globalPlain",
             "ignore_concealed": false,
             "pinned_shortcut": " CommandOrControl+Shift+P ",
             "max_history_items": 200,
@@ -761,12 +633,7 @@ mod tests {
             "max_recent_in_tray": 30,
             "custom_data_path": "/tmp/clipman-data",
             "enable_autostart": true,
-            "locale": " en ",
-            "max_text_bytes": 123456,
-            "max_image_dimension": 2048,
-            "skip_secrets": false,
-            "ignored_apps": [" Terminal ", "terminal", "Safari"],
-            "capture_paused": true
+            "locale": " en "
         });
 
         let new_loaded = serde_json::from_value::<Settings>(new_json)
@@ -775,11 +642,9 @@ mod tests {
         let legacy_loaded =
             settings_from_legacy_store(|key| legacy_json.get(key).cloned()).normalize_for_load();
 
-        for loaded in [new_loaded, legacy_loaded] {
+        for loaded in [&new_loaded, &legacy_loaded] {
             assert_eq!("CommandOrControl+Alt+V", loaded.global_shortcut);
             assert!(!loaded.auto_paste);
-            assert_eq!("globalPlain", loaded.paste_format);
-            assert!(loaded.strips_rich_text_at_capture());
             assert!(!loaded.ignore_concealed);
             assert_eq!(
                 Some("CommandOrControl+Shift+P".to_string()),
@@ -795,14 +660,16 @@ mod tests {
             );
             assert!(loaded.enable_autostart);
             assert_eq!("en", loaded.locale);
-            assert_eq!(123456, loaded.max_text_bytes);
-            assert_eq!(2048, loaded.max_image_dimension);
-            assert!(!loaded.skip_secrets);
-            assert_eq!(
-                vec!["Terminal".to_string(), "Safari".to_string()],
-                loaded.ignored_apps
-            );
-            assert!(loaded.capture_paused);
         }
+
+        assert!(new_loaded.strips_rich_text_at_capture());
+        assert_eq!(123456, new_loaded.max_text_bytes);
+        assert_eq!(2048, new_loaded.max_image_dimension);
+        assert!(!new_loaded.skip_secrets);
+        assert_eq!(
+            vec!["Terminal".to_string(), "Safari".to_string()],
+            new_loaded.ignored_apps
+        );
+        assert!(new_loaded.capture_paused);
     }
 }

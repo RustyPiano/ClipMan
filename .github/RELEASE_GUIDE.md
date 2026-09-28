@@ -1,6 +1,6 @@
 # ClipMan 发布指南
 
-## 📋 发布步骤
+## 发布步骤
 
 ### 1. 准备发布
 
@@ -15,47 +15,50 @@ git status            # 工作区应干净
 
 ### 2. 升级版本号 + 创建标签
 
-版本号遵循语义化版本 (`vMAJOR.MINOR.PATCH`)。有两条路，任选其一：
+版本号使用不带前导零的 `X.Y.Z`，例如 `2.3.1`。准备脚本在修改文件前检查格式、版本顺序和已有标签；相同版本在标签尚未创建时可以重复执行。有两条发布路径：
 
-**路径 A —— 本地脚本（无需 Rust/bun 工具链，纯 sed）**
+**路径 A —— 本地脚本（需要 Bash 和 Git，无需 Rust/Bun）**
 
 ```bash
-VERSION=2.2.1                  # 示例：替换为实际版本
+VERSION=2.3.1                  # 示例：替换为实际版本
+git fetch origin --tags
 scripts/release.sh "$VERSION"  # 同步四个清单 + README 下载文件名 + 生成 release notes
 $EDITOR "release_notes_${VERSION}.md"
 git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock \
   README.md README_EN.md "release_notes_${VERSION}.md"
 git commit -m "release: v${VERSION}"
-git push origin main
-# 等 main CI 全绿后再打标签；release preflight 仍会对该 commit 重跑质量门
 git tag "v${VERSION}"
-git push origin "v${VERSION}"  # 推送标签即触发 release.yml
+git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
+# Release 会检查标签对应的提交，所有检查通过后才开始打包。
 ```
 
 **路径 B —— GitHub「Prepare Release」工作流（在 Actions 页一键触发）**
 
 1. 先把填好的 `release_notes_<版本号>.md` 提交到 `main`（工作流不会替你生成，避免发出空说明）。
-2. Actions → **Prepare Release** → 从 `main` 运行 → 填入不带 `v` 的版本号。它会跑同一个 `scripts/release.sh`、提交、打标签并推送；从其他分支运行会直接失败。
-3. **前置条件：** 必须配置 `RELEASE_PAT` secret（`contents: write` 权限的 PAT）。GitHub 不允许内置 `GITHUB_TOKEN` 触发下游工作流；没有 PAT 时工作流会在修改仓库前停止，请改用上面的本地发布路径。
+2. Actions → **Prepare Release** → 从 `main` 运行 → 填入不带 `v` 的版本号。流程检查输入后同步版本，仅暂存发布相关文件，在本地创建提交和标签，再一次性推送两者；任一推送被拒绝时，远端两者都保持原状。同一时间只运行一个发布准备任务。
+3. **前置条件：** 必须配置 `RELEASE_PAT` secret（具有仓库 `contents: write` 权限的 Personal Access Token）。内置 `GITHUB_TOKEN` 推送标签不会触发下游 Release 工作流；没有 PAT 时，Prepare Release 在修改仓库前停止。
+4. 已有标签的版本直接在对应 **Release** 运行中重试。构建或上传失败时使用 **Re-run failed jobs**；最终检查发现附件或更新清单不完整时使用 **Re-run all jobs**，重新生成并验证产物。需要修改源码或配置时使用新版本号。Prepare Release 会拒绝再次修改已有标签的版本。
 
-> 版本徽章已改为动态（shields `github/v/release`），README 无需再手动改版本号；下载文件名由 `scripts/release.sh` 自动重写。
+> README 的版本徽章是动态的（shields `github/v/release`），下载文件名由 `scripts/release.sh` 重写。
 
 ### 3. 等待构建完成
 
 1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipMan/actions`
 2. 查看 "Release" workflow 运行状态
-3. 等待所有平台构建完成 (约 10-20 分钟)
+3. `preflight` 核对版本、发布说明和上一公开版本的更新公钥。
+4. `quality` 调用 CI，前端及 macOS/Linux/Windows Rust 检查并行运行，全部通过后才启动四个打包任务。
+5. 等待 `verify-release` 通过。该作业核对 `latest.json` 的版本、平台、附件归属和更新签名。失败时保持草稿，处理原因后重新运行 Release。
 
 构建产物（具体的 updater 压缩包/签名后缀随 Tauri 版本变化，以 Draft Release 为准）：
 
 - **macOS (Apple Silicon / Intel)**: `.dmg`, `.app.tar.gz` 及签名
 - **Windows**: `.exe`, `.msi` 及 updater 压缩包/签名
-- **Linux**: `.deb`, `.AppImage` 及 updater 压缩包/签名
+- **Linux**: `.deb`, `.rpm`, `.AppImage` 及签名
 - **Updater**: `latest.json`
 
 ### 4. 编辑 Release 说明
 
-构建完成后:
+`Release` 的全部作业通过后：
 
 1. 进入 Releases: `https://github.com/RustyPiano/ClipMan/releases`
 2. 找到当前标签对应的 Draft release
@@ -64,6 +67,8 @@ git push origin "v${VERSION}"  # 推送标签即触发 release.yml
 5. 可选: 添加截图或演示 GIF
 6. 取消勾选 "Set as a pre-release" (如果这是正式版本)
 7. 点击 "Publish release"
+
+`verify-release` 的通过记录是公开草稿前的必要检查。GitHub 的手动发布按钮不会自动受到工作流结果限制。
 
 ### 5. 验证发布
 
@@ -84,52 +89,22 @@ codesign --verify --strict /Applications/ClipMan.app
 # 应显示 Authority=ClipMan Code Signing，且严格验证成功
 ```
 
-## 🔧 版本号规则
-
-遵循语义化版本 (SemVer):
-
-- **主版本号 (Major)**: 不兼容的 API 改动
-  - 例: `v1.0.0` → `v2.0.0`
-
-- **次版本号 (Minor)**: 向后兼容的功能新增
-  - 例: `v1.0.0` → `v1.1.0`
-
-- **修订号 (Patch)**: 向后兼容的问题修正
-  - 例: `v1.0.0` → `v1.0.1`
-
-示例:
-
-```bash
-# Bug 修复
-git tag -a v1.0.1 -m "Fix: 修复搜索功能问题"
-
-# 新功能
-git tag -a v1.1.0 -m "Feature: 添加图片复制支持"
-
-# 重大更新
-git tag -a v2.0.0 -m "Breaking: 升级到 Tauri 3.0"
-```
-
-## 📝 Release 说明模板
-
-### 简短版 (GitHub Release)
+## Release 说明
 
 创建或更新仓库根目录的 `release_notes_<版本号>.md`，例如 `release_notes_1.10.0.md`。Release workflow 会按 tag 自动读取该文件。
 
-### 详细版 (博客/公告)
-
-参考 `.github/RELEASE_TEMPLATE.md`
-
-## ⚠️ 注意事项
+## 注意事项
 
 ### 发布检查清单
 
 自动化已覆盖的（由 `scripts/release.sh` + CI 保证，无需手动核对）：
 
-- ✅ 四个清单文件版本号一致（CI `versions` + release `preflight` 作业强制）
-- ✅ README 版本徽章（动态）与下载文件名（脚本重写）
-- ✅ 缺失 `release_notes_<版本>.md` 会让 release 失败，而非发出空说明
-- ✅ 标签 commit 的前端、测试类型和 Linux Rust 质量门会在打包前重跑
+- 四个清单文件版本号一致（CI `versions` + release `preflight` 作业强制）
+- README 版本徽章（动态）与下载文件名（脚本重写）
+- 缺失 `release_notes_<版本>.md` 会让 release 失败，而非发出空说明
+- 标签提交使用与 CI 相同的前端、测试类型及 macOS/Linux/Windows Rust 检查
+- 新版本沿用上一公开正式版本的更新公钥
+- 四个平台的安装包、更新清单、下载附件及更新签名通过统一校验
 
 仍需人工确认：
 
@@ -154,13 +129,19 @@ GitHub Actions secrets 已配置时，GitHub 只能列出 secret 名称，不能
 gh secret list --repo RustyPiano/ClipMan
 ```
 
-如果本机没有环境变量，也找不到当初生成的私钥，只能重新生成一组 updater signing key：
+本机缺少更新私钥，而 GitHub Secrets 仍保存原私钥时，继续通过 Actions 发布，并从独立备份恢复本机所需的原私钥。更新私钥、密码和对应公钥需要妥善备份。
+
+原私钥彻底丢失时，新密钥签名的更新无法通过既有客户端中的旧公钥验证，旧用户需要手动安装新版本。常规发布会拒绝与上一公开版本不同的公钥；有意更换密钥需要明确安排升级迁移，不能直接覆盖 Secrets 和配置后继续发布。首次发布没有历史公钥可供比较，最终产物仍须通过当前公钥验签。参见 [Tauri 更新签名说明](https://v2.tauri.app/plugin/updater/#signing-updates)。
+
+### 单独验证发布产物
+
+本机安装 `gh`、Python 3 和 `minisign` 后，可以只读验证已经构建的草稿或公开版本。校验草稿时，`gh` 登录账户需要该仓库的推送权限：
 
 ```bash
-bun tauri signer generate --write-keys ~/.tauri/clipman.key
+python3 scripts/verify-release.py --repo RustyPiano/ClipMan --tag v2.3.0
 ```
 
-把新的 private key 写入 GitHub secrets，把新的 public key 同步更新到 `src-tauri/tauri.conf.json` 的 updater `pubkey`。
+本地四份版本清单应与指定标签一致。下载和验签文件保存在已忽略的 `src-tauri/target/release-verification/`，脚本不会修改 Release。仅核对与上一公开版本的公钥是否一致时，增加 `--check-key-only`。
 
 如果只验证代码是否能编译，使用：
 
@@ -173,7 +154,7 @@ cd src-tauri && cargo build
 
 **Q: Workflow 构建失败怎么办?**
 
-A: 检查 Actions 日志,常见原因:
+A: 检查失败作业的 Actions 日志，并在对应 Release 运行中重新运行失败作业。已有标签保持不变。常见原因：
 
 - Rust 依赖问题: 更新 `Cargo.toml`
 - Node/Bun 依赖: 运行 `bun install`
@@ -207,25 +188,14 @@ A:
 
 参考: https://tauri.app/distribute/
 
-## 🚀 发布流程涉及的文件
+## 发布流程涉及的文件
 
 | 文件                                    | 作用                                                                               |
 | --------------------------------------- | ---------------------------------------------------------------------------------- |
 | `scripts/release.sh`                    | 一键升级四个清单 + README 文件名 + 生成 release notes 模板（纯 sed，无工具链依赖） |
 | `scripts/check-versions.sh`             | 断言四个清单版本一致；可选传入期望版本/标签再断言相等                              |
-| `.github/workflows/prepare-release.yml` | Actions 页一键升级 + 打标签（需 `RELEASE_PAT`）                                    |
-| `.github/workflows/ci.yml`              | 每次 push/PR 校验版本、前端与 macOS/Linux/Windows Rust                             |
-| `.github/workflows/release.yml`         | 标签触发；`preflight` 先校验版本/release notes 并重跑质量门，再构建/签名/建草稿    |
-
-## 📊 发布后
-
-1. **更新文档**: 确保 README 和文档中的链接指向最新版本
-2. **社交媒体**: 在 Twitter, Reddit, Hacker News 等平台宣传
-3. **收集反馈**: 关注 Issues 和 Discussions
-4. **规划下一版本**: 根据反馈制定 roadmap
-
-## 🔗 相关资源
-
-- [Tauri 发布指南](https://v2.tauri.app/distribute/)
-- [GitHub Releases 文档](https://docs.github.com/en/repositories/releasing-projects-on-github)
-- [语义化版本规范](https://semver.org/lang/zh-CN/)
+| `scripts/version-utils.sh`             | 共享版本格式、顺序和已有标签检查                                                  |
+| `scripts/verify-release.py`            | 校验历史公钥、平台附件、更新清单及更新包签名                                      |
+| `.github/workflows/prepare-release.yml` | 检查输入、同步版本、原子推送提交与标签（需 `RELEASE_PAT`）                         |
+| `.github/workflows/ci.yml`              | push/PR 与 Release 共用的前端、发布脚本及 macOS/Linux/Windows Rust 检查           |
+| `.github/workflows/release.yml`         | 校验发布输入和公钥、调用 CI、构建签名与草稿、统一验证产物                         |

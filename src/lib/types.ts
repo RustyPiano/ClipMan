@@ -1,12 +1,11 @@
 // Shared type definitions for ClipMan frontend
 
 import type { Locale } from './i18n';
-export type { Locale };
 
 /**
  * Clipboard item content types
  */
-export type ContentType = 'text' | 'image' | 'files';
+type ContentType = 'text' | 'image' | 'files';
 
 /**
  * Clipboard item from backend
@@ -21,13 +20,12 @@ export interface ClipItem {
   isPinned: boolean;
   pinOrder: number | null;
   label: string | null;
-  groupName: string | null;
   /** App that was frontmost when the clip was captured (copy source). */
   sourceApp: string | null;
   /** Whether a text clip carries an HTML (rich-text) companion. */
   hasHtml: boolean;
-  contentBytes?: number;
-  fileCount?: number;
+  contentBytes: number;
+  fileCount: number;
 }
 
 /** Bounded, decoded content fetched only for a selected preview. */

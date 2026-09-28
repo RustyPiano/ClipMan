@@ -69,9 +69,7 @@
   // Three sections inside the fixed-height row: an optional label title line,
   // a content preview (two text lines / file paths / an inline image thumbnail;
   // compressed to one line when a label shares the row) and a metadata line.
-  const trimmedLabel = $derived((item.label ?? '').trim());
-  const visiblePaths = $derived(trimmedLabel ? paths.slice(0, 1) : paths.slice(0, 2));
-  const fileCount = $derived(item.fileCount ?? paths.length);
+  const visiblePaths = $derived(item.label ? paths.slice(0, 1) : paths.slice(0, 2));
   const age = $derived(Math.max(0, getNow() - item.timestamp * 1000));
   const time = $derived(
     age < 60000
@@ -137,7 +135,7 @@
     { id: 'delete', icon: Trash2, label: t.delete, run: () => clipboardStore.deleteItem(item.id) },
   ]);
 
-  async function saveLabel(event: globalThis.SubmitEvent) {
+  async function saveLabel(event: SubmitEvent) {
     event.preventDefault();
     if (busy) return;
     saving = true;
@@ -265,12 +263,12 @@
         </span>
         <!-- Content column: title, preview, metadata -->
         <span class="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
-          {#if trimmedLabel}
-            <span class="truncate text-sm font-semibold text-foreground">{trimmedLabel}</span>
+          {#if item.label}
+            <span class="truncate text-sm font-semibold text-foreground">{item.label}</span>
           {/if}
           {#if item.contentType === 'text'}
             <span
-              class={trimmedLabel
+              class={item.label
                 ? 'block truncate font-mono text-[13px] leading-5 text-foreground'
                 : 'block break-all font-mono text-[13px] leading-5 text-foreground line-clamp-2'}
               >{text}</span
@@ -284,7 +282,7 @@
                   >
                   <span
                     class="w-fit flex-none rounded border border-border/50 bg-muted/50 px-1.5 text-[10px] font-semibold leading-4 text-muted-foreground/70"
-                    title={i18n.format(t.fileCount, { n: fileCount })}
+                    title={i18n.format(t.fileCount, { n: item.fileCount })}
                   >
                     +{paths.length - visiblePaths.length}
                   </span>
@@ -304,8 +302,8 @@
             <!-- Inline image thumbnail; shrinks when a label title shares the row. -->
             <img
               src={item.content}
-              alt={trimmedLabel || t.image}
-              class={trimmedLabel
+              alt={item.label || t.image}
+              class={item.label
                 ? 'max-h-8 w-fit rounded-md border border-border object-contain'
                 : 'max-h-[52px] w-fit rounded-md border border-border object-contain'}
               loading="lazy"
@@ -315,7 +313,7 @@
             <span class="truncate text-[11px] font-medium text-muted-foreground/70">
               {time}{#if item.sourceApp}&nbsp;·&nbsp;{item.sourceApp}{/if}
               {#if item.contentType === 'files'}&nbsp;·&nbsp;{i18n.format(t.fileCount, {
-                  n: fileCount,
+                  n: item.fileCount,
                 })}{/if}
             </span>
             {#if item.hasHtml}

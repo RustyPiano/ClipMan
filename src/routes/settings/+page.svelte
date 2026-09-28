@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import type { Attachment } from 'svelte/attachments';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { i18n } from '$lib/i18n';
   import { toastStore } from '$lib/stores/toast.svelte';
@@ -39,6 +38,7 @@
   let showMigrationDialog = $state(false);
   let newDataPath = $state('');
   let deleteOldData = $state(false);
+  let migrationDialog: HTMLDialogElement;
 
   const MIGRATION_DIALOG_TITLE_ID = 'migration-dialog-title';
   const MIGRATION_DIALOG_DESCRIPTION_ID = 'migration-dialog-description';
@@ -179,8 +179,7 @@
       const errorMsg = err instanceof Error ? err.message : String(err);
       toastStore.add(`${t.migrationFailed}: ${errorMsg}`, 'error');
     } finally {
-      // Migration only owns the data path. Reloading every setting here used to
-      // discard unrelated edits that the user had not saved yet.
+      // 迁移只改变数据路径；不重新读取其他设置，保留用户尚未保存的修改。
       await loadDataPath();
       changingDataPath = false;
     }
@@ -190,45 +189,15 @@
     showMigrationDialog = false;
   }
 
-  function handleWindowKeydown(event: KeyboardEvent) {
-    if (!showMigrationDialog || event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeMigrationDialog();
-  }
-
-  // Keep focus inside the migration prompt while it is open. This mirrors the
-  // shared confirmation dialog, but includes the checkbox as a focus target.
-  const trapMigrationFocus: Attachment = (element) => {
-    const previousFocus =
-      document.activeElement instanceof globalThis.HTMLElement ? document.activeElement : null;
-    const handler = (event: Event) => {
-      const keyboardEvent = event as KeyboardEvent;
-      if (keyboardEvent.key !== 'Tab') return;
-
-      const focusable = element.querySelectorAll<globalThis.HTMLElement>('input, button');
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (keyboardEvent.shiftKey && active === first) {
-        keyboardEvent.preventDefault();
-        last.focus();
-      } else if (!keyboardEvent.shiftKey && active === last) {
-        keyboardEvent.preventDefault();
-        first.focus();
-      }
-    };
-
-    element.addEventListener('keydown', handler);
-    document.getElementById(MIGRATION_CANCEL_ID)?.focus();
-
-    return () => {
-      element.removeEventListener('keydown', handler);
-      previousFocus?.focus();
-    };
-  };
+  // showModal 让背景不可交互、支持 Esc 取消；打开时把焦点放到取消按钮上。
+  $effect(() => {
+    if (showMigrationDialog) {
+      migrationDialog.showModal();
+      document.getElementById(MIGRATION_CANCEL_ID)!.focus();
+    } else if (migrationDialog.open) {
+      migrationDialog.close();
+    }
+  });
 
   async function handleBack() {
     try {
@@ -242,8 +211,6 @@
     }
   }
 </script>
-
-<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
   <!-- 顶部标题栏 -->
@@ -333,40 +300,33 @@
 </div>
 
 <!-- 数据迁移确认对话框 -->
-{#if showMigrationDialog}
-  <div
-    class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-  >
-    <div
-      {@attach trapMigrationFocus}
-      class="bg-card text-card-foreground rounded-lg shadow-lg max-w-md w-full border border-border p-6 space-y-4 animate-in zoom-in-95 duration-200"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={MIGRATION_DIALOG_TITLE_ID}
-      aria-describedby={MIGRATION_DIALOG_DESCRIPTION_ID}
-    >
-      <h3 id={MIGRATION_DIALOG_TITLE_ID} class="text-lg font-semibold">{t.confirmMigration}</h3>
-      <p id={MIGRATION_DIALOG_DESCRIPTION_ID} class="text-sm text-muted-foreground">
-        {t.migratingTo} <br />
-        <span class="font-mono bg-muted px-1 rounded">{newDataPath}</span>
-      </p>
+<dialog
+  bind:this={migrationDialog}
+  aria-labelledby={MIGRATION_DIALOG_TITLE_ID}
+  aria-describedby={MIGRATION_DIALOG_DESCRIPTION_ID}
+  oncancel={closeMigrationDialog}
+  class="m-auto w-[calc(100%-2rem)] max-w-md space-y-4 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg backdrop:bg-background/80 backdrop:backdrop-blur-sm"
+>
+  <h3 id={MIGRATION_DIALOG_TITLE_ID} class="text-lg font-semibold">{t.confirmMigration}</h3>
+  <p id={MIGRATION_DIALOG_DESCRIPTION_ID} class="text-sm text-muted-foreground">
+    {t.migratingTo} <br />
+    <span class="font-mono bg-muted px-1 rounded">{newDataPath}</span>
+  </p>
 
-      <div class="flex items-center space-x-2">
-        <input
-          type="checkbox"
-          id="delete-old"
-          bind:checked={deleteOldData}
-          class="rounded border-input"
-        />
-        <label for="delete-old" class="text-sm font-medium">{t.deleteOldData}</label>
-      </div>
-
-      <div class="flex justify-end gap-3 pt-2">
-        <Button id={MIGRATION_CANCEL_ID} variant="outline" onclick={closeMigrationDialog}>
-          {t.cancel}
-        </Button>
-        <Button onclick={confirmMigration} disabled={changingDataPath}>{t.startMigration}</Button>
-      </div>
-    </div>
+  <div class="flex items-center space-x-2">
+    <input
+      type="checkbox"
+      id="delete-old"
+      bind:checked={deleteOldData}
+      class="rounded border-input"
+    />
+    <label for="delete-old" class="text-sm font-medium">{t.deleteOldData}</label>
   </div>
-{/if}
+
+  <div class="flex justify-end gap-3 pt-2">
+    <Button id={MIGRATION_CANCEL_ID} variant="outline" onclick={closeMigrationDialog}>
+      {t.cancel}
+    </Button>
+    <Button onclick={confirmMigration} disabled={changingDataPath}>{t.startMigration}</Button>
+  </div>
+</dialog>

@@ -84,34 +84,19 @@ export function looksLikeDirectory(path: string): boolean {
   return !fileBasename(path).includes('.');
 }
 
-/**
- * Decode the backend's JSON path list, with newline-separated legacy support.
- * Returns [] for non-files clips or when decoding fails.
- */
+/** 后端的文件列表内容是 base64 编码的 JSON 字符串数组。 */
 export function decodeFilePaths(item: ClipItem): string[] {
   if (item.contentType !== 'files') return [];
-  if (!item.content) return [];
+  return JSON.parse(new TextDecoder().decode(base64Bytes(item.content))) as string[];
+}
 
-  const text = decodeBase64Text(item.content);
-  if (text === null) return [];
-
-  try {
-    const paths: unknown = JSON.parse(text);
-    if (Array.isArray(paths) && paths.every((path) => typeof path === 'string')) return paths;
-  } catch {
-    /* Legacy records used newline-separated paths. */
-  }
-  return text.split('\n').filter((line) => line.length > 0);
+function base64Bytes(content: string) {
+  return Uint8Array.from(atob(content), (char) => char.charCodeAt(0));
 }
 
 function decodeBase64Text(content: string) {
   try {
-    const binaryString = atob(content);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return new TextDecoder().decode(bytes);
+    return new TextDecoder().decode(base64Bytes(content));
   } catch (error) {
     console.error('Failed to decode text content:', error);
     return null;

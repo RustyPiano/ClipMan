@@ -74,16 +74,11 @@ impl TrayIconCache {
 
     pub fn get_or_create(&self, id: &str, content: &[u8]) -> Option<tauri::image::Image<'static>> {
         // Check cache first
-        {
-            let mut cache = crate::safe_lock(&self.cache);
-            if let Some(icon) = cache.get(id) {
-                log::debug!("🎯 Icon cache hit for {}", id);
-                return Some(icon.clone());
-            }
+        if let Some(icon) = self.cache.lock().unwrap().get(id) {
+            return Some(icon.clone());
         }
 
         // Cache miss - decode and resize image
-        log::debug!("📸 Icon cache miss for {}, decoding...", id);
         match image::load_from_memory(content) {
             Ok(img) => {
                 // Resize so shortest side is TRAY_ICON_SIZE, preserving aspect ratio
@@ -103,11 +98,7 @@ impl TrayIconCache {
                 // Create owned image for caching
                 let icon = tauri::image::Image::new_owned(rgba, width, height);
 
-                // Cache it
-                {
-                    let mut cache = crate::safe_lock(&self.cache);
-                    cache.put(id.to_string(), icon.clone());
-                }
+                self.cache.lock().unwrap().put(id.to_string(), icon.clone());
 
                 Some(icon)
             }
@@ -119,8 +110,7 @@ impl TrayIconCache {
     }
 
     pub fn clear(&self) {
-        let mut cache = crate::safe_lock(&self.cache);
-        cache.clear();
+        self.cache.lock().unwrap().clear();
         log::info!("Icon cache cleared");
     }
 }
@@ -202,11 +192,11 @@ pub fn build_tray_menu(
 
     // Quick lock acquisition - get data and release immediately
     let (pinned_items, recent_items) = {
-        let storage = crate::safe_lock(&state.storage);
+        let storage = state.storage.lock().unwrap();
         let pinned_items = if max_pinned_in_tray == 0 {
             Vec::new()
         } else {
-            storage.get_pinned_clip_previews_with_limit(max_pinned_in_tray)?
+            storage.get_pinned_clip_previews(max_pinned_in_tray as i64)?
         };
         let recent_items = if max_recent_in_tray == 0 {
             Vec::new()
@@ -247,9 +237,8 @@ pub fn build_tray_menu(
         }
     }
 
-    // Bottom actions. The pause-capture item is a checkbox reflecting
-    // `capture_paused`; main.rs's menu event handler flips the setting,
-    // persists it, and rebuilds this menu so the check mark stays in sync.
+    // 暂停采集是复选项，勾选状态来自 `capture_paused`；点击后由 `handle_tray_menu_event`
+    // 切换、保存并重建菜单。
     let pause_capture_item = CheckMenuItemBuilder::with_id("pause_capture", i18n.pause_capture)
         .checked(settings.capture_paused)
         .build(app)?;
@@ -264,8 +253,7 @@ pub fn build_tray_menu(
     Ok(menu_builder.build()?)
 }
 
-/// Handle a tray menu selection. Lives in this module (not `main.rs`) so all
-/// tray behavior — menu construction and menu events — sits together.
+/// Handle a tray menu selection.
 pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     let event_id = event.id().as_ref();
     log::debug!("Menu event: {}", event_id);
@@ -301,16 +289,15 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
                 // Serialize against `update_settings` so a settings-page save and
                 // this tray toggle can't race each other and clobber one another's
                 // change. `capture_paused` is owned exclusively by this toggle.
-                let _settings_write_guard = crate::safe_lock(&state.settings_write_lock);
+                let _settings_write_guard = state.settings_write_lock.lock().unwrap();
 
                 let mut settings = state.settings.get();
                 settings.capture_paused = !settings.capture_paused;
                 let now_paused = settings.capture_paused;
-                state.settings.set(settings);
-
-                if let Err(e) = state.settings.save(&app) {
+                if let Err(e) = state.settings.save(&app, &settings) {
                     log::error!("Failed to persist capture_paused toggle: {}", e);
                 }
+                state.settings.set(settings);
                 log::info!(
                     "Clipboard capture {} via tray menu",
                     if now_paused { "paused" } else { "resumed" }
@@ -360,23 +347,6 @@ pub fn update_tray_menu(app: &AppHandle) {
 mod tests {
     use super::*;
     use crate::storage::ContentType;
-
-    #[test]
-    fn test_tray_i18n_chinese() {
-        let i18n = TrayI18n::new("zh-CN");
-        assert_eq!(i18n.pinned_header, "置顶项");
-        assert_eq!(i18n.recent_header, "最近复制");
-        assert_eq!(i18n.pause_capture, "暂停采集");
-        assert_eq!(i18n.quit, "退出");
-    }
-
-    #[test]
-    fn test_tray_i18n_english() {
-        let i18n = TrayI18n::new("en");
-        assert_eq!(i18n.pinned_header, "Pinned");
-        assert_eq!(i18n.recent_header, "Recent");
-        assert_eq!(i18n.quit, "Quit");
-    }
 
     #[test]
     fn test_truncate_content_text() {

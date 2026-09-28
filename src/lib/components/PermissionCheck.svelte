@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { hasTauriRuntime } from '$lib/utils/tauri';
   import { i18n } from '$lib/i18n';
   import { isMac } from '$lib/utils/platform';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import Button from './ui/Button.svelte';
   import { AlertTriangle, RefreshCw, Settings } from 'lucide-svelte';
 
@@ -19,20 +19,16 @@
   let hasAccessibility = $state(true);
   let isCheckingAccessibility = $state(false);
 
+  // 读取失败时命令抛出错误，横幅显示错误信息。
   async function checkPermission() {
     isChecking = true;
     errorMessage = '';
     try {
-      const res = await invoke<string>('check_clipboard_permission');
-      hasPermission = res === 'granted';
-      if (!hasPermission) {
-        errorMessage = res;
-      }
-    } catch (e) {
-      console.error('Failed to check permission:', e);
-      // The command only throws when the clipboard can't be created (not a permission
-      // denial), so don't block the UI — assume granted.
+      await invoke('check_clipboard_permission');
       hasPermission = true;
+    } catch (e) {
+      hasPermission = false;
+      errorMessage = String(e);
     } finally {
       isChecking = false;
     }
@@ -43,10 +39,6 @@
     isCheckingAccessibility = true;
     try {
       hasAccessibility = await invoke<boolean>('check_accessibility_permission');
-    } catch (e) {
-      console.error('Failed to check accessibility permission:', e);
-      // Don't block the UI if the check itself fails.
-      hasAccessibility = true;
     } finally {
       isCheckingAccessibility = false;
     }
@@ -56,16 +48,11 @@
     try {
       await invoke('open_accessibility_settings');
     } catch (e) {
-      console.error('Failed to open accessibility settings:', e);
+      toastStore.add(String(e), 'error');
     }
   }
 
   onMount(() => {
-    if (!hasTauriRuntime()) {
-      isChecking = false;
-      return;
-    }
-
     checkPermission();
     checkAccessibility();
 
@@ -113,7 +100,9 @@
             <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
               {t.details}
             </summary>
-            <p class="mt-1.5 rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all text-destructive">
+            <p
+              class="mt-1.5 rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all text-destructive"
+            >
               {t.errorLabel}: {errorMessage}
             </p>
           </details>

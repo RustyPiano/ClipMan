@@ -1,11 +1,11 @@
 <script lang="ts">
   import Card from '$lib/components/ui/Card.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import MarkdownContent from '$lib/components/ui/MarkdownContent.svelte';
   import { Loader2, Info, RefreshCw, Download } from 'lucide-svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { onMount } from 'svelte';
   import { i18n } from '$lib/i18n';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import type { UpdateInfo } from '$lib/types';
 
   let {
@@ -32,13 +32,12 @@
     try {
       currentVersion = await getVersion();
     } catch (err) {
-      console.error('Failed to get version:', err);
-      currentVersion = '?';
+      toastStore.add(String(err), 'error');
     }
   });
 </script>
 
-<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+<div class="space-y-6 duration-300">
   <div>
     <h2 class="text-lg font-semibold mb-1">{t.settingsAbout}</h2>
     <p class="text-sm text-muted-foreground">{t.version}</p>
@@ -89,7 +88,7 @@
               <strong class="block mb-2 text-xs uppercase tracking-wider text-muted-foreground"
                 >{t.releaseNotes}</strong
               >
-              <MarkdownContent content={updateInfo.body} />
+              <p class="whitespace-pre-wrap text-sm">{updateInfo.body}</p>
             </div>
           {/if}
         {:else if !updateInfo}

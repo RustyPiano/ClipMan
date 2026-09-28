@@ -63,19 +63,13 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
       "minimumWebview2Version": "111.0.0.0"
     },
     "macOS": {
-      "entitlements": null,
-      "exceptionDomain": null,
       "frameworks": [],
-      "providerShortName": null,
-      "signingIdentity": null,
-      "minimumSystemVersion": "13.3",
-      "files": {}
+      "minimumSystemVersion": "13.3"
     }
   },
   "plugins": {

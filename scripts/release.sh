@@ -3,15 +3,16 @@
 #
 # Usage:  scripts/release.sh <X.Y.Z>      (semver, no leading 'v')
 #
-# Edits files ONLY — it does not commit, tag, or push. This keeps the change
-# reviewable and needs no Rust/Node toolchain (pure sed/grep). After it runs:
+# 只修改文件，不提交、创建标签或推送。依赖 Git 和系统文本工具，无需 Rust/Node。
+# 后续操作：
 #
 #   1. edit release_notes_<X.Y.Z>.md
 #   2. git add package.json src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock} \
 #        README.md README_EN.md release_notes_<X.Y.Z>.md
-#      git commit -m "release: vX.Y.Z" && git push origin main
-#   3. wait for CI, then: git tag vX.Y.Z && git push origin vX.Y.Z
-#      (the tag fires .github/workflows/release.yml)
+#      git commit -m "release: vX.Y.Z"
+#   3. git tag vX.Y.Z
+#      git push --atomic origin HEAD:main refs/tags/vX.Y.Z
+#      标签触发 Release，并检查该提交后构建草稿。
 #
 # The "Prepare Release" GitHub workflow calls this script and does steps 1-3 for
 # you (see .github/RELEASE_GUIDE.md).
@@ -19,17 +20,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/version-utils.sh"
 
 VERSION="${1:-}"
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [ "$#" -ne 1 ]; then
   echo "Usage: scripts/release.sh <X.Y.Z>  (semver, no leading 'v')" >&2
   exit 1
 fi
+validate_version "$VERSION"
+require_unused_release_tag "$VERSION"
 
 # In-place sed that works on both GNU (Linux) and BSD (macOS) sed.
 sedi() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
 CUR=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
+require_version_not_older "$VERSION" "$CUR"
 echo "Bumping $CUR -> $VERSION"
 
 # --- version manifests -------------------------------------------------------
@@ -82,5 +87,6 @@ echo ""
 echo "Done. Next:"
 echo "  1. edit $NOTES"
 echo "  2. git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock README.md README_EN.md $NOTES"
-echo "     git commit -m \"release: v${VERSION}\" && git push origin main"
-echo "  3. wait for CI to pass, then: git tag v${VERSION} && git push origin v${VERSION}"
+echo "     git commit -m \"release: v${VERSION}\""
+echo "  3. git tag v${VERSION}"
+echo "     git push --atomic origin HEAD:main refs/tags/v${VERSION}"

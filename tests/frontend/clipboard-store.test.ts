@@ -17,37 +17,6 @@ Object.defineProperty(globalThis, '$derived', {
   value: <T>(value: T) => value,
 });
 
-Object.defineProperty(globalThis, 'navigator', {
-  configurable: true,
-  value: {
-    language: 'en-US',
-    platform: 'MacIntel',
-  },
-});
-
-const storage = new Map<string, string>();
-
-(globalThis as typeof globalThis & { localStorage: Storage }).localStorage = {
-  get length() {
-    return storage.size;
-  },
-  clear() {
-    storage.clear();
-  },
-  getItem(key: string) {
-    return storage.get(key) ?? null;
-  },
-  key(index: number) {
-    return [...storage.keys()][index] ?? null;
-  },
-  removeItem(key: string) {
-    storage.delete(key);
-  },
-  setItem(key: string, value: string) {
-    storage.set(key, value);
-  },
-};
-
 Object.defineProperty(globalThis, 'window', {
   configurable: true,
   value: {
@@ -70,9 +39,10 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     isPinned: false,
     pinOrder: null,
     label: null,
-    groupName: null,
     sourceApp: null,
     hasHtml: false,
+    contentBytes: 5,
+    fileCount: 0,
     ...overrides,
   };
 }
@@ -135,8 +105,7 @@ describe('clipboard store races', () => {
     });
 
     clipboardStore.setSearchQuery('abc');
-    // setSearchQuery flags a pending search (not a full-screen load) when a Tauri
-    // runtime is present, which installTauriInvoke provides.
+    // setSearchQuery flags a pending search, not a full-screen load.
     expect(clipboardStore.isSearchPending).toBe(true);
 
     await clipboardStore.clearSearch();
@@ -379,7 +348,7 @@ describe('clipboard store races', () => {
     resolveRecent([clip({ id: 'r1' })]);
     await load;
 
-    // Regression (#16): the spinner must clear even though a search is now active.
+    // The spinner must clear even though a search is now active.
     expect(clipboardStore.isLoading).toBe(false);
   });
 
@@ -430,13 +399,9 @@ describe('clipboard store races', () => {
 
     const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
     expect(pastes).toHaveLength(1);
-    // Ids preserve selection order; separator is a newline; default mode.
-    expect(pastes[0].args).toEqual({
-      ids: ['first', 'second', 'third'],
-      mode: 'default',
-      separator: '\n',
-    });
-    // Paste clears the selection (task #13).
+    // Ids preserve selection order; default mode.
+    expect(pastes[0].args).toEqual({ ids: ['first', 'second', 'third'], mode: 'default' });
+    // Paste clears the selection.
     expect(selectionStore.selectedIds.size).toBe(0);
   });
 
@@ -456,7 +421,7 @@ describe('clipboard store races', () => {
     await clipboardStore.useSelectedClips('opposite');
     const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
     expect(pastes).toHaveLength(1);
-    expect(pastes[0].args).toEqual({ ids: ['x'], mode: 'opposite', separator: '\n' });
+    expect(pastes[0].args).toEqual({ ids: ['x'], mode: 'opposite' });
   });
 
   test('deleting a clip drops it from the multi-selection', async () => {
@@ -640,7 +605,14 @@ describe('clipboard store races', () => {
         return calls.length;
       }
       calls.push(cmd);
-      if (cmd === 'get_settings') return { autoPaste: true, maxHistoryItems: 100 };
+      if (cmd === 'get_settings')
+        return {
+          autoPaste: true,
+          maxHistoryItems: 100,
+          capturePaused: false,
+          pasteFormat: 'original',
+          locale: 'en',
+        };
       if (cmd === 'get_recent_clips' || cmd === 'get_pinned_clips') return [];
       return null;
     });

@@ -3,32 +3,7 @@ import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 import svelte from 'eslint-plugin-svelte';
 import prettier from 'eslint-config-prettier';
-
-const browserGlobals = {
-  alert: 'readonly',
-  atob: 'readonly',
-  cancelAnimationFrame: 'readonly',
-  clearInterval: 'readonly',
-  clearTimeout: 'readonly',
-  confirm: 'readonly',
-  console: 'readonly',
-  document: 'readonly',
-  Element: 'readonly',
-  Event: 'readonly',
-  HTMLDivElement: 'readonly',
-  HTMLInputElement: 'readonly',
-  HTMLSelectElement: 'readonly',
-  HTMLTextAreaElement: 'readonly',
-  KeyboardEvent: 'readonly',
-  localStorage: 'readonly',
-  MouseEvent: 'readonly',
-  navigator: 'readonly',
-  requestAnimationFrame: 'readonly',
-  setInterval: 'readonly',
-  setTimeout: 'readonly',
-  TextDecoder: 'readonly',
-  window: 'readonly',
-};
+import globals from 'globals';
 
 const svelteRuneGlobals = {
   $bindable: 'readonly',
@@ -48,7 +23,7 @@ export default [
   {
     languageOptions: {
       globals: {
-        ...browserGlobals,
+        ...globals.browser,
         ...svelteRuneGlobals,
       },
     },
@@ -63,16 +38,6 @@ export default [
         sourceType: 'module',
       },
     },
-    plugins: {
-      '@typescript-eslint': tseslint,
-    },
-    rules: {
-      '@typescript-eslint/no-unused-vars': [
-        'warn',
-        { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
-      ],
-      'no-unused-vars': 'off',
-    },
   },
   {
     files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
@@ -82,6 +47,9 @@ export default [
         extraFileExtensions: ['.svelte'],
       },
     },
+  },
+  {
+    files: ['**/*.ts', '**/*.svelte', '**/*.svelte.js'],
     plugins: {
       '@typescript-eslint': tseslint,
     },

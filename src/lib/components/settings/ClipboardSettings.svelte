@@ -55,7 +55,7 @@
     }
   }
 
-  // --- Ignored apps (SPEC-4 §3) ---
+  // --- Ignored apps ---
   const ignoredApps = $derived(settings.ignoredApps);
 
   let newIgnoredApp = $state('');
@@ -85,7 +85,7 @@
     }
   }
 
-  // --- Capture size limits (SPEC-3 §5 UI) ---
+  // --- Capture size limits ---
   const BYTES_PER_MB = 1_000_000;
   const MIN_TEXT_BYTES = 4096;
   const MAX_TEXT_BYTES = 50_000_000;
@@ -115,7 +115,7 @@
   }
 </script>
 
-<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+<div class="space-y-6 duration-300">
   <div>
     <h2 class="text-lg font-semibold mb-1">{t.settingsClipboard}</h2>
     <p class="text-sm text-muted-foreground">

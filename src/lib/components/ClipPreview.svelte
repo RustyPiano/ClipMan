@@ -31,7 +31,7 @@
       detail = current ? (clipboardStore.getCachedFullClip(current.id) ?? null) : null;
       loading = false;
       if (body) body.scrollTop = 0;
-      if (current && current.contentType !== 'image' && (current.contentBytes ?? 0) <= 256 * 1024) {
+      if (current && current.contentType !== 'image' && current.contentBytes <= 256 * 1024) {
         void load(current, revision);
       }
     }, 70);

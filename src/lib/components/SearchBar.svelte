@@ -5,7 +5,6 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { Loader2, Search, X } from 'lucide-svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { hasTauriRuntime } from '$lib/utils/tauri';
   import { SEARCH_INPUT_ID } from '$lib/constants';
 
   let { activeId, expanded }: { activeId?: string; expanded: boolean } = $props();
@@ -45,7 +44,7 @@
     const target = event.target as HTMLInputElement;
     if (isComposing) {
       clearTimeout(debounceTimer);
-      clipboardStore.setSearchDraft(target.value);
+      clipboardStore.setSearchQuery(target.value, false);
       return;
     }
 
@@ -82,27 +81,25 @@
       input.focus();
     }
 
-    if (hasTauriRuntime()) {
-      const uHidden = await listen('quickbar-hidden', () => {
-        const wasComposing = isComposing;
-        isComposing = false;
-        discardComposition = wasComposing;
-        clearTimeout(debounceTimer);
-      });
-      if (isDestroyed) {
-        uHidden();
-      } else {
-        unlistenHidden = uHidden;
-      }
+    const uHidden = await listen('quickbar-hidden', () => {
+      const wasComposing = isComposing;
+      isComposing = false;
+      discardComposition = wasComposing;
+      clearTimeout(debounceTimer);
+    });
+    if (isDestroyed) {
+      uHidden();
+    } else {
+      unlistenHidden = uHidden;
+    }
 
-      const uOpened = await listen('quickbar-opened', () => {
-        discardComposition = false;
-      });
-      if (isDestroyed) {
-        uOpened();
-      } else {
-        unlistenOpened = uOpened;
-      }
+    const uOpened = await listen('quickbar-opened', () => {
+      discardComposition = false;
+    });
+    if (isDestroyed) {
+      uOpened();
+    } else {
+      unlistenOpened = uOpened;
     }
   });
 
@@ -151,7 +148,7 @@
       onclick={clearSearch}
       title={t.clear}
     >
-      <X class="h-3.5 w-3.5 animate-in zoom-in-50 duration-150" />
+      <X class="h-3.5 w-3.5 duration-150" />
     </Button>
   {/if}
 </div>

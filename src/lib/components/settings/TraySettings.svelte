@@ -10,7 +10,7 @@
   const t = $derived(i18n.t);
 </script>
 
-<div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+<div class="space-y-6 duration-300">
   <div>
     <h2 class="text-lg font-semibold mb-1">{t.settingsTray}</h2>
     <p class="text-sm text-muted-foreground">

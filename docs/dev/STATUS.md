@@ -1,68 +1,49 @@
 # 项目状态（活文档）
 
 > **这是 Agent 每个工作会话结束前必须更新的文件**（规则见 AGENTS.md「文档维护协议」）。
-> 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 PLAN.md / release notes / git 历史，不要在这里堆积。
+> 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 docs/archive / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-09-23**
+**最后更新：2026-09-29**
 
 ## 当前状态一句话
 
-**最新发布版本为 v2.3.0**；当前代码包含三种粘贴格式及富文本保存、锁保护和延迟清理修复，本机自动检查全部通过。
+**最新发布版本为 v2.3.0**；main 上有两个未推送的提交，包含发布流程加固和过度设计与防御性代码清理，2026-09-29 本机全部质量关卡通过，远端 CI 和新发布流程尚未运行。
 
-## 工作区
+## 最近提交（未推送）
 
-- 「粘贴格式」：`paste_format = original | takePlain | globalPlain`，默认 original。takePlain 经 ClipMan 取用和复制时使用纯文本，⌥回车临时反转富文本；globalPlain 还会在捕获并保存成功后清除系统剪贴板的富文本格式。同文富文本也经过过滤和保存；清理全程持锁，复核完整文本、HTML 和可用的系统序号。⌥回车约 2.3 秒后的清理按唯一写入 ID 核对，暂停捕获时跳过。自身复制标记通过写入时间判断有效期。设置经 `settings-changed` 实时刷新。
-- QuickBar 方案 B 与三路审核修复已提交（`ba411d6`），构建瘦身已提交（`816abdd`），布尔版纯文本开关（`7b8a8e4`）被三模式取代（`e67c27a`）。
-- 磁盘瘦身：`[profile.dev.package."*"] debug = false` 后 `src-tauri/target` 12 GB→1.9 GB；Playwright 浏览器缓存**保留**（用户决定不再反复装卸，避免重复写盘）。
-- v2.3.0 已公开发布（17 个附件，Windows / Linux / Intel Mac / Apple Silicon），GitHub Release 与 updater 最新入口均指向 2.3.0；签名私钥目录 `ClipMan-signing/` 保持忽略。
-
-## 质量基线（改动必须保持全绿；本机已有 cargo+bun，可本地跑，CI 复核）
-
-```
-cd src-tauri && cargo test               # 139 通过，1 个手动性能基准 ignored
-cd src-tauri && cargo clippy --all-targets -- -D warnings
-cd src-tauri && cargo fmt --check
-cd src-tauri && cargo build
-bun run lint && bun run check            # 0 错误
-bun run test:types
-bun test tests/                          # 60 通过
-bun run build
-bun run test:ui                          # Chromium + WebKit，44 项
-```
+- 发布流程：版本预检查、共用 CI、`verify-release.py` 下载附件并用 minisign 校验更新签名和历史公钥；无用代码、`serde_bytes` 依赖和 47 个生成图标已删除。
+- 2026-09-29 清理（按全仓审查逐项修改）：
+  - 删除：剪贴板监听的停止/重启和轮询 fallback、迁移目标的替换逻辑、从未发布过的旧设置键、`group_name`、⌥回车后的延迟富文本清理、文件写回失败时改写路径文本、自定义目录不可用时退回默认目录、`safe_lock`、Markdown 渲染（更新说明改为原文显示，移除 marked）、`hasTauriRuntime` 及同类判断、手写焦点陷阱（改用原生 `<dialog>`）。
+  - IPC：`paste_clip` 的 plain 必填；`paste_clips` 不再传 separator；`check_clipboard_permission` 失败时抛出错误；列表项不再有 `groupName`。
+  - 数据库每次打开时把换行格式的文件记录转为 JSON；界面语言以后端 `settings.locale` 为准。
+  - 剪贴板监听启动失败时与数据存储初始化失败一样，弹出错误对话框后退出；读取版本号、打开辅助功能设置失败时以提示显示错误；`vite.config.js` 改读 Tauri v2 的 `TAURI_ENV_DEBUG`，debug 构建不再压缩并生成 sourcemap。
+  - capabilities 只保留 `core:default`、`core:window:allow-hide`、`dialog:default`；CI 和发布工作流去掉 `dtolnay/rust-toolchain`，由 rustup 按 `rust-toolchain.toml` 安装 1.96.0。
+  - 8 份已完成的开发文档移入 `docs/archive/`；README、发布指南、AGENTS.md 同步修改。
+- 本机验证：cargo fmt / clippy `-D warnings` / test（103 项，1 个手动基准忽略）/ build；lint、check、test:types、`bun test tests/`（59 项）、build、prettier；`bun run test:ui`（Chromium + WebKit 48 项）；发布校验测试 6 项。命令见 AGENTS.md「Testing & quality gates」。
+- Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。
 
 ## 待办（按优先级）
 
-1. 用 v2.3.0 正式包实机验证 Linux，并回归 v2.2.1→v2.3.0 updater 路径。
-2. 发布前用正式签名包复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-3. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
-
-## 代码审核记录
-
-- **全仓审查与修复（2026-09-07）**：B1–B9、O1、T1–T4、K1、较小交互问题与精简项全部落实；依赖全量审计为 0。见 `AUDIT-2026-09-07.md`。
-
-- **双模型审核（2026-07-07）**：约 55 条、49 fixed（规格 `docs/dev/REVIEW-2026-07-07.md`）。遗留决策：`group_name` 去留、#47 Windows FFI（CI `rust-windows` 守护）。
-- **清晰度精简（2026-07-08）**：三路审查"能跑但不够清晰"，17 项确认全部落地（删 ~230 行：死 RAII 守卫、快捷键三标志状态机→直线流、搜索路径双保险、migration 重复列添加、测试驱动抽象等）。快捷键切换从 make-before-break 改为 break-before-make（毫秒级窗口，已接受）。审毕保留项（勿再"清理"）：`run_returned` 标志（护 250ms 竞态，有注释）、`StagedSqliteReplacement`（护目标目录已有库的数据丢失窗口）。
-- **可靠性审核（2026-08-30）**：修复非损坏 DB 被误重置、quarantine 非原子、迁移覆盖目标库/清理误报成功、快捷键回滚、前端启动监听/错误状态/迁移交互，并加固发布标签输入与跨平台 CI；删除与 Bun 漂移的 npm 锁文件。
+1. 推送后确认 CI：去掉 dtolnay 后 1.96.0 能自动安装，`rust-windows`、`rust-linux` 能编译本机未编译的 Windows/Linux 分支。
+2. 在真实应用里回归本轮行为变化：精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+3. 用 v2.3.0 正式包实机验证 Linux，并回归 v2.2.1→v2.3.0 updater 路径。
+4. 发布前用正式签名包复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+5. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
 
-- 本次富文本修复已通过单元测试和构建，未运行原生剪贴板交互验证；Windows/Linux 分支未在本机编译。Linux 的 arboard 接口未公开写入序号，无法区分外部应用再次复制完全相同的文本及 HTML；延迟清理使用最新写入 ID 和完整内容核对。
+- Linux 没有 X11（纯 Wayland、无 XWayland）时，剪贴板监听的 `run()` 返回错误，线程按 fast-fail 直接 panic，应用退出。
+- Linux 的 arboard 不提供剪贴板序号，globalPlain 无法区分外部应用再次复制完全相同的文本及 HTML。
+- Windows 剪贴板隐私标记检查仍手写 kernel32 FFI（`GlobalLock` 等），可改用 windows crate 的 `Win32_System_Memory`（`docs/archive/REVIEW-2026-07-07.md` #47）；由 CI `rust-windows` 保证能编译。
 - 搜索最多展示 1000 条，已提示缩小范围；没有追加搜索分页。
 - 应用排除仅 macOS 可用（支持 bundle ID / 兼容本地化名称）；Windows/Linux 已提示。
-- 合并仍跳过图片，执行前显示跳过数量。
+- 合并跳过图片，执行前显示跳过数量。
 - 原图详情上限 16 MiB；文本/文件预览上限 1 MiB，均在 SQL 限制读取；复制/粘贴仍使用完整内容。
-- macOS 27 单屏 release QA 包实测通过：启动/单实例/快捷键/中文采集/Esc/无权限降级、授权后 8 轮真实粘贴（含搜索立即回车）、仅复制、大文本预览、图片恢复、Finder 文件粘贴；后续发现并修复同秒排序，最终脚本 8 轮取用/小图复用/托盘故障保留均通过。已恢复剪贴板并退出 QA；正式签名更新、多屏/Spaces、其他系统及受保护目录 TCC 未测。
-- 本轮重建的最终 QA 包通过完整原生回归：8 轮真实自动粘贴（4 轮含干扰项后搜索立即回车）、小图 PNG 复用、托盘读失败保留、剪贴板恢复与 QA 退出；证据 `/var/folders/tv/6cy46rxx6tq18h17n9wh7qhh0000gn/T/clipman-native-qa-gg_n9s_p/`。首次授权后复跑曾丢失 1 次合成全局热键事件，未改代码或放宽断言，原样重跑连续 8 轮通过；日常 ClipMan 已重新启动。
-
-## 文档与自动化
-
-- 发布自动化：`scripts/release.sh`（一键升级四清单+README）、`scripts/check-versions.sh`（一致性守护，CI+preflight 复用）、`prepare-release.yml`（Actions 一键，需 `RELEASE_PAT`）。指南见 `.github/RELEASE_GUIDE.md`。
-- 文档体系与维护协议：见 `AGENTS.md`「Documentation map & maintenance protocol」（2026-07-07 建立）
-- Hooks（`.claude/settings.json` + `.claude/hooks/`）：SessionStart 自动注入本文件；Stop 时若源码比本文件新则提醒更新（首次生效可能需要运行一次 `/hooks` 或重启会话）
+- 自定义目录里的数据库被 SQLite 判定损坏时，与默认目录一样隔离旧文件后新建空库。
 
 ## 背景资料指路
 
-- 竞品分析与长期路线图：claude.ai artifact「ClipMan 盲点报告与路线图」（2026-07-07）
-- v2.2 执行记录（波次、验收、偏差裁决）：`docs/dev/PLAN.md` + `SPEC-1..4`
-- 6 月 v2.0 重设计的历史文档已归档：`docs/archive/`（带过期横幅，勿作当前指导）
+- 竞品分析与长期路线图：claude.ai artifact「ClipMan 盲点报告与路线图」（2026-07-07）。
+- 已完成的开发记录（v2.2 波次规格与验收、审核记录、QuickBar 改版记录）和 v2.0 重设计文档：`docs/archive/`，均带归档横幅，不作为当前指导。
+- 发布流程：`.github/RELEASE_GUIDE.md`。

@@ -10,7 +10,7 @@
 [![Version](https://img.shields.io/github/v/release/RustyPiano/ClipMan?label=Version&color=blue)](https://github.com/RustyPiano/ClipMan/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
 
-[下载使用](#-安装) · [功能特性](#-功能) · [开发文档](#-开发)
+[下载使用](#安装) · [功能特性](#功能) · [开发文档](#开发)
 
 [English](README_EN.md)
 
@@ -22,35 +22,35 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 **为什么选择 ClipMan？**
 
-- ✅ **永久保存** - 重启系统后历史依然可用
-- ✅ **置顶功能** - 常用内容一键置顶，随时调用
-- ✅ **轻量快速** - 安装包体积小，启动迅速
-- ✅ **现代界面** - 简洁美观，支持多主题
-- ✅ **开源免费** - MIT 协议，完全开源
+- **永久保存** - 重启系统后历史依然可用
+- **置顶功能** - 常用内容一键置顶，随时调用
+- **轻量快速** - 安装包体积小，启动迅速
+- **现代界面** - 简洁美观，支持多主题
+- **开源免费** - MIT 协议，完全开源
 
-## ✨ 功能
+## 功能
 
 ### 核心特性
 
-- **📌 置顶常用内容** - 一键置顶代码片段、命令、链接等，永久保存
-- **💾 持久化存储** - SQLite 本地数据库，重启不丢失，智能去重
-- **🔍 全文搜索** - SQLite FTS5 + trigram 索引，支持中英文实时搜索
-- **📋 多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览
-- **⌨️ QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`），键盘选择并按设置自动粘贴或仅复制
-- **🖱️ 键鼠操作** - 每行可直接复制、置顶、编辑标签、删除或多选合并
-- **🎯 托盘菜单** - 快速访问最近和置顶内容
-- **🎨 多主题** - 浅色/深色/淡粉色主题，跟随系统
-- **🌐 多语言** - 支持中文和英文，自动检测系统语言
+- **置顶常用内容** - 一键置顶代码片段、命令、链接等，永久保存
+- **持久化存储** - SQLite 本地数据库，重启不丢失，智能去重
+- **全文搜索** - SQLite FTS5 + trigram 索引，支持中英文实时搜索
+- **多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览
+- **QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`），键盘选择并按设置自动粘贴或仅复制
+- **键鼠操作** - 每行可直接复制、置顶、编辑标签、删除或多选合并
+- **托盘菜单** - 快速访问最近和置顶内容
+- **多主题** - 浅色/深色/淡粉色主题，跟随系统
+- **多语言** - 支持中文和英文，自动检测系统语言
 
 ### 其他功能
 
-- 🛡️ 跳过密码类剪切板内容（可选）
-- 🔄 自动更新
-- 🚀 开机自启动
-- 📁 自定义存储位置
-- 🧹 数据管理
+- 跳过密码类剪切板内容（可选）
+- 自动更新
+- 开机自启动
+- 自定义存储位置
+- 数据管理
 
-## 📥 安装
+## 安装
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
@@ -69,16 +69,16 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 > 若某次更新后自动粘贴失效，通常是该权限失效了。ClipMan 会弹窗引导你重新授权——在上面的列表里把 ClipMan 重新勾选一次即可（其间复制照常，内容仍会进入剪贴板，可手动粘贴）。
 
-## 🚀 使用
+## 使用
 
 1. 使用快捷键 `Cmd+Shift+V` (macOS) / `Ctrl+Shift+V` (Windows) 打开
 2. 所有复制内容自动保存在历史列表中
-3. 点击 📌 图标置顶常用内容
+3. 点击置顶图标置顶常用内容
 4. 搜索框快速查找历史记录
 5. 点击条目执行 QuickBar 默认取用行为：默认自动粘回当前应用；关闭自动粘贴后仅复制
 6. 点击托盘图标快速访问（托盘菜单始终仅复制）
 
-## 🛠️ 技术
+## 技术
 
 **后端**
 
@@ -94,16 +94,15 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 **性能定位**
 
-- ⚡ 轻量弹窗：QuickBar 使用隐藏小窗口，按需唤起
-- 💾 本地优先：SQLite 持久化，无后台网络服务
-- 🔍 索引搜索：FTS5 + trigram 索引用于降低搜索延迟
-- 📦 小体积分发：具体安装包大小以当前 Release 构建产物为准
+- 轻量弹窗：QuickBar 使用隐藏小窗口，按需唤起
+- 本地优先：SQLite 持久化，无后台网络服务
+- 索引搜索：FTS5 + trigram 索引用于降低搜索延迟
 
-## 🔧 开发
+## 开发
 
 ### 环境要求
 
-- Bun 1.3+（推荐）或 Node.js 20.19+
+- Bun 1.3+
 - Rust 1.96.0（项目通过 `rust-toolchain.toml` 固定）
 - 系统: Windows 10+（WebView2 111+） / macOS 13.3+ / Linux（WebKitGTK 4.1，支持现代 CSS）
 
@@ -124,28 +123,9 @@ bun tauri dev
 bun tauri build
 ```
 
-### 项目结构
+各模块所在位置见 [AGENTS.md](AGENTS.md) 的 “Where Things Live”。
 
-```
-ClipMan/
-├── src/              # Svelte 前端
-│   ├── lib/
-│   │   ├── components/   # UI 组件
-│   │   ├── stores/       # 状态管理
-│   │   └── i18n/         # 多语言
-│   └── routes/           # 页面路由
-├── src-tauri/        # Rust 后端
-│   └── src/
-│       ├── main.rs       # 入口、托盘
-│       ├── clipboard.rs  # 剪切板监控
-│       ├── storage.rs    # 数据库
-│       ├── paste.rs      # 复制/自动粘贴
-│       ├── window.rs     # QuickBar / 设置窗口
-│       └── settings.rs   # 设置管理
-└── package.json
-```
-
-## 🗺️ 路线图
+## 路线图
 
 **已完成**
 
@@ -164,25 +144,23 @@ ClipMan/
 **计划中**
 
 - [ ] 智能图片压缩（AVIF/WebP/MozJPEG，可配置）
-- [ ] 多设备同步
-- [ ] 分组管理
 - [ ] 规则过滤
 - [ ] 插件系统
 - [ ] 命令行工具
 
-## 🤝 贡献
+## 贡献
 
 欢迎通过 Issue 或 Pull Request 贡献。
 
-- 🐛 [报告 Bug](https://github.com/RustyPiano/ClipMan/issues)
-- ✨ [功能建议](https://github.com/RustyPiano/ClipMan/issues)
-- 💬 [讨论区](https://github.com/RustyPiano/ClipMan/discussions)
+- [报告 Bug](https://github.com/RustyPiano/ClipMan/issues)
+- [功能建议](https://github.com/RustyPiano/ClipMan/issues)
+- [讨论区](https://github.com/RustyPiano/ClipMan/discussions)
 
-## 📄 许可证
+## 许可证
 
 [MIT License](LICENSE)
 
-## 🙏 致谢
+## 致谢
 
 - [Tauri](https://tauri.app/) - 桌面应用框架
 - [Svelte](https://svelte.dev/) - 前端框架
@@ -193,8 +171,8 @@ ClipMan/
 
 <div align="center">
 
-**如果觉得有帮助，请给个 ⭐️ Star！**
+**如果觉得有帮助，请给个 Star！**
 
-Made with ❤️ by [RustyPiano](https://github.com/RustyPiano)
+Made by [RustyPiano](https://github.com/RustyPiano)
 
 </div>

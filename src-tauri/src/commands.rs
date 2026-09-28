@@ -10,33 +10,18 @@ use tauri_plugin_notification::NotificationExt;
 use crate::settings::Settings;
 use crate::storage::{ClipStorage, FrontendClipItem};
 use crate::tray::update_tray_menu;
-use crate::{migration, safe_lock, AppState};
+use crate::{migration, AppState};
 
 /// Run a blocking storage operation on the blocking thread pool, locking the
-/// shared `ClipStorage` for the duration. Collapses the nine near-identical
-/// `spawn_blocking` + `safe_lock` + error-flatten blocks the read/write
-/// commands used to repeat.
+/// shared `ClipStorage` for the duration.
 async fn with_storage<T, F>(storage: Arc<Mutex<ClipStorage>>, op: F) -> Result<T, String>
 where
     F: FnOnce(&ClipStorage) -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
-    let queued = std::time::Instant::now();
-    tauri::async_runtime::spawn_blocking(move || {
-        let lock_started = std::time::Instant::now();
-        let storage = safe_lock(&storage);
-        let operation_started = std::time::Instant::now();
-        let result = op(&storage);
-        log::debug!(
-            "storage: queue {:?}, lock {:?}, operation {:?}",
-            lock_started.duration_since(queued),
-            operation_started.duration_since(lock_started),
-            operation_started.elapsed()
-        );
-        result
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || op(&storage.lock().unwrap()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 type MainThreadAction = Box<dyn FnOnce() -> Result<(), String> + Send>;
@@ -72,25 +57,6 @@ where
     run_action_on_main_thread(app, command_name, Box::new(move || action(app_for_action)))
 }
 
-fn restart_clipboard_monitor(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let mut monitor =
-        crate::clipboard::ClipboardMonitor::new(app.clone(), state.last_copied_by_us.clone());
-    match monitor.start() {
-        Ok(()) => {
-            *safe_lock(&state.monitor) = Some(monitor);
-            log::info!("Clipboard monitoring restarted after migration");
-            Ok(())
-        }
-        Err(e) => {
-            log::error!(
-                "Failed to restart clipboard monitoring after migration: {}",
-                e
-            );
-            Err(e)
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
@@ -101,8 +67,7 @@ pub async fn get_recent_clips(
     let limit = limit.unwrap_or(100);
 
     with_storage(state.storage.clone(), move |storage| {
-        // Both cursor parts must be present to page; a missing pair (the old
-        // signature, or a first-page request) falls back to the first page.
+        // 游标的两个字段同时存在才翻页；首页请求两个都不传。
         let before = match (before_timestamp, before_id.as_deref()) {
             (Some(timestamp), Some(id)) => Some((timestamp, id)),
             _ => None,
@@ -122,7 +87,7 @@ pub async fn get_recent_clips(
 pub async fn get_pinned_clips(state: State<'_, AppState>) -> Result<Vec<FrontendClipItem>, String> {
     with_storage(state.storage.clone(), |storage| {
         let items = storage
-            .get_pinned_clip_previews()
+            .get_pinned_clip_previews(-1)
             .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
@@ -199,17 +164,16 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
     Ok(state.settings.get())
 }
 
+/// 能读取剪贴板（包括剪贴板里没有文本）时返回 Ok，其他读取错误原样返回。
 #[tauri::command]
-pub async fn check_clipboard_permission() -> Result<String, String> {
+pub async fn check_clipboard_permission() -> Result<(), String> {
     use arboard::{Clipboard, Error};
 
-    match Clipboard::new() {
-        Ok(mut clipboard) => match clipboard.get_text() {
-            Ok(_) => Ok("granted".to_string()),
-            Err(Error::ContentNotAvailable) => Ok("granted".to_string()),
-            Err(e) => Ok(format!("denied: {}", e)),
-        },
-        Err(e) => Err(format!("Failed to create clipboard: {}", e)),
+    let mut clipboard =
+        Clipboard::new().map_err(|e| format!("Failed to create clipboard: {}", e))?;
+    match clipboard.get_text() {
+        Ok(_) | Err(Error::ContentNotAvailable) => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -268,7 +232,7 @@ pub async fn copy_clip_to_clipboard_internal(
             ids: vec![clip_id.to_string()],
             mode: "copy".into(),
             plain,
-            separator: None,
+            merge: false,
             hide: false,
         },
     )
@@ -308,45 +272,36 @@ pub async fn copy_to_system_clipboard(
     copy_clip_to_clipboard_internal(&app, &clip_id, false).await
 }
 
-// CopyMarker contract:
-// - WP-1.B sets hash=SHA256(normalized_clipboard_payload) and content_type when writing clipboard.
-// - WP-1.D computes the same normalized hash on clipboard changes and skips matching payloads.
-// - The marker is cleared after the existing short self-copy window.
+/// `plain` 由前端决定：回车按粘贴格式模式，⌥回车对这一次取反。
 #[tauri::command]
 pub async fn paste_clip(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     mode: String,
-    plain: Option<bool>,
+    plain: bool,
 ) -> Result<crate::paste::UseOutcome, String> {
-    // `plain` is optional: absent => the paste-format mode decides (takePlain
-    // and globalPlain take text as plain); the frontend sends an explicit flag
-    // (Enter follows the mode, ⌥Enter inverts it for one paste).
     crate::paste::use_clips(
         &app,
         state.inner(),
         crate::paste::UseRequest {
             ids: vec![id],
             mode,
-            plain: plain.unwrap_or_else(|| state.settings.get().takes_plain_text()),
-            separator: None,
+            plain,
+            merge: false,
             hide: true,
         },
     )
     .await
 }
 
-/// Merge several clips (in `ids` order) into a single `separator`-joined text
-/// write, then paste per `mode` (task #13 multi-select). Image clips are skipped
-/// (v1). The frontend only sends `"\n"` today; the separator is honored verbatim.
+/// 按 `ids` 顺序把多条合并为一段换行分隔的纯文本写入，再按 `mode` 粘贴；图片会被跳过。
 #[tauri::command]
 pub async fn paste_clips(
     app: AppHandle,
     state: State<'_, AppState>,
     ids: Vec<String>,
     mode: String,
-    separator: String,
 ) -> Result<crate::paste::UseOutcome, String> {
     crate::paste::use_clips(
         &app,
@@ -355,7 +310,7 @@ pub async fn paste_clips(
             ids,
             mode,
             plain: true,
-            separator: Some(separator),
+            merge: true,
             hide: true,
         },
     )
@@ -373,47 +328,28 @@ pub fn register_quickbar_shortcut(
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if !matches!(event.state, ShortcutState::Pressed) {
+                return;
+            }
+            log::info!("Global shortcut triggered: {}", shortcut_display);
+
             let app_for_action = app_clone.clone();
             let foreground_store = foreground_store.clone();
-            let result = handle_quickbar_shortcut_event(
-                event.state,
-                &shortcut_display,
-                |command_name, action| run_action_on_main_thread(&app_clone, command_name, action),
-                move || {
+            if let Err(e) = run_action_on_main_thread(
+                &app_clone,
+                "show_quickbar_from_shortcut",
+                Box::new(move || {
                     crate::window::show_quickbar_with_panel(
                         &app_for_action,
                         &foreground_store,
                         panel,
                     )
-                },
-            );
-
-            if let Some(Err(e)) = result {
+                }),
+            ) {
                 log::error!("Failed to show QuickBar: {}", e);
             }
         })
         .map_err(|e| format!("Failed to register shortcut '{}': {}", shortcut, e))
-}
-
-fn handle_quickbar_shortcut_event<S, A>(
-    state: ShortcutState,
-    shortcut_display: &str,
-    schedule_on_main_thread: S,
-    action: A,
-) -> Option<Result<(), String>>
-where
-    S: FnOnce(&'static str, MainThreadAction) -> Result<(), String>,
-    A: FnOnce() -> Result<(), String> + Send + 'static,
-{
-    if !matches!(state, ShortcutState::Pressed) {
-        return None;
-    }
-
-    log::info!("Global shortcut triggered: {}", shortcut_display);
-    Some(schedule_on_main_thread(
-        "show_quickbar_from_shortcut",
-        Box::new(action),
-    ))
 }
 
 #[tauri::command]
@@ -479,15 +415,14 @@ pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result
 async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
 
-    let updater = app.updater().map_err(|e| {
-        log::error!("Failed to get updater: {}", e);
-        format!("Failed to get updater: {}", e)
-    })?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Failed to get updater: {}", e))?;
 
-    updater.check().await.map_err(|e| {
-        log::error!("Failed to check for updates: {}", e);
-        format!("Failed to check for updates: {}", e)
-    })
+    updater
+        .check()
+        .await
+        .map_err(|e| format!("Failed to check for updates: {}", e))
 }
 
 #[tauri::command]
@@ -533,22 +468,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     log::info!("Downloading and installing update: {}", update_info.version);
 
     update_info
-        .download_and_install(
-            |chunk_length, content_length| {
-                if let Some(total) = content_length {
-                    let progress = (chunk_length as f64 / total as f64) * 100.0;
-                    log::debug!("Download progress: {:.2}%", progress);
-                }
-            },
-            || {
-                log::info!("Download complete, installing...");
-            },
-        )
+        .download_and_install(|_, _| {}, || {})
         .await
-        .map_err(|e| {
-            log::error!("Failed to download/install update: {}", e);
-            format!("Failed to download/install update: {}", e)
-        })?;
+        .map_err(|e| format!("Failed to download/install update: {}", e))?;
 
     log::info!("Update installed successfully. Restarting app...");
     app.restart();
@@ -574,22 +496,6 @@ fn restore_shortcut(
     if let Err(e) = register_quickbar_shortcut(app, shortcut, foreground_store, panel) {
         log::warn!("Failed to restore {label} shortcut '{}': {}", shortcut, e);
     }
-}
-
-fn shortcut_cleanup_targets<'a>(
-    main_changed: bool,
-    pinned_changed: bool,
-    new_shortcut: &'a str,
-    new_pinned_shortcut: Option<&'a str>,
-) -> [Option<&'a str>; 2] {
-    [
-        main_changed.then_some(new_shortcut),
-        if pinned_changed {
-            new_pinned_shortcut
-        } else {
-            None
-        },
-    ]
 }
 
 fn apply_shortcut_changes(
@@ -641,18 +547,15 @@ fn apply_shortcut_changes(
     })();
 
     if result.is_err() {
-        // Best effort: drop whatever new bindings landed, restore the old
-        // ones. `restore_shortcut` only logs on failure.
-        for shortcut in shortcut_cleanup_targets(
-            main_changed,
-            pinned_changed,
-            new_shortcut,
-            new_pinned_shortcut,
-        )
-        .into_iter()
-        .flatten()
-        {
-            let _ = app.global_shortcut().unregister(shortcut);
+        // 先注销已注册的新快捷键（对调主/置顶快捷键时它们占用彼此的旧按键），再恢复旧的。
+        // 这里的失败只记录日志，调用方收到原始错误。
+        if main_changed {
+            let _ = app.global_shortcut().unregister(new_shortcut);
+        }
+        if pinned_changed {
+            if let Some(new_pinned) = new_pinned_shortcut {
+                let _ = app.global_shortcut().unregister(new_pinned);
+            }
         }
         if main_changed {
             restore_shortcut(
@@ -717,11 +620,10 @@ fn update_settings_blocking(
 ) -> Result<SettingsUpdateResult, String> {
     // An explicit null resets through the same validation and rollback path.
     let mut settings = settings.unwrap_or_default().validate_and_normalize()?;
-    let _settings_write_guard = safe_lock(&state.settings_write_lock);
+    let _settings_write_guard = state.settings_write_lock.lock().unwrap();
     log::info!("Updating settings: {:?}", settings);
 
-    let old_settings = state.settings.get();
-    let history_limit_changed = old_settings.max_history_items != settings.max_history_items;
+    let old = state.settings.get();
 
     // Two fields are owned by other subsystems, not the settings page, so a
     // stale/reset settings object must never write over them here:
@@ -733,34 +635,14 @@ fn update_settings_blocking(
     //   * `capture_paused` is owned exclusively by the tray "Pause Capture"
     //     toggle. A stale settings window saving would otherwise clobber the
     //     tray's current pause state.
-    settings.custom_data_path = old_settings.custom_data_path.clone();
-    settings.capture_paused = old_settings.capture_paused;
-    let old_shortcut = old_settings.global_shortcut;
-    let old_pinned_shortcut = old_settings.pinned_shortcut;
-    let old_tray_text_length = old_settings.tray_text_length;
-    let old_max_pinned_in_tray = old_settings.max_pinned_in_tray;
-    let old_max_recent_in_tray = old_settings.max_recent_in_tray;
-    let old_autostart = old_settings.enable_autostart;
-    let old_locale = old_settings.locale;
-    let new_shortcut = settings.global_shortcut.clone();
-    let new_pinned_shortcut = settings.pinned_shortcut.clone();
+    settings.custom_data_path = old.custom_data_path.clone();
+    settings.capture_paused = old.capture_paused;
 
-    let shortcut_changed = old_shortcut != new_shortcut;
-    let pinned_shortcut_changed = old_pinned_shortcut != new_pinned_shortcut;
-    let tray_text_changed = old_tray_text_length != settings.tray_text_length;
-    let tray_limits_changed = old_max_pinned_in_tray != settings.max_pinned_in_tray
-        || old_max_recent_in_tray != settings.max_recent_in_tray;
-    let autostart_changed = old_autostart != settings.enable_autostart;
-    let locale_changed = old_locale != settings.locale;
-    let quickbar_foreground_window = state.quickbar_foreground_window.clone();
+    let autostart_changed = old.enable_autostart != settings.enable_autostart;
+    let foreground_store = state.quickbar_foreground_window.clone();
 
-    // Update autostart if changed
     if autostart_changed {
-        if let Err(e) = apply_autostart_setting(app, settings.enable_autostart) {
-            log::error!("{}", e);
-            return Err(e);
-        }
-
+        apply_autostart_setting(app, settings.enable_autostart)?;
         log::info!(
             "Autostart {} successfully",
             if settings.enable_autostart {
@@ -771,45 +653,41 @@ fn update_settings_blocking(
         );
     }
 
-    if shortcut_changed || pinned_shortcut_changed {
-        if let Err(e) = apply_shortcut_changes(
-            app,
-            quickbar_foreground_window.clone(),
-            old_shortcut.as_str(),
-            old_pinned_shortcut.as_deref(),
-            new_shortcut.as_str(),
-            new_pinned_shortcut.as_deref(),
-        ) {
-            if autostart_changed {
-                if let Err(rollback_error) = apply_autostart_setting(app, old_autostart) {
-                    log::warn!(
-                        "Failed to roll back autostart after shortcut update failed: {}",
-                        rollback_error
-                    );
-                }
-            }
-            return Err(e);
-        }
-    }
-
-    if let Err(e) = state.settings.save_candidate(app, &settings) {
-        if shortcut_changed || pinned_shortcut_changed {
-            if let Err(rollback_error) = apply_shortcut_changes(
-                app,
-                quickbar_foreground_window,
-                new_shortcut.as_str(),
-                new_pinned_shortcut.as_deref(),
-                old_shortcut.as_str(),
-                old_pinned_shortcut.as_deref(),
-            ) {
+    if let Err(e) = apply_shortcut_changes(
+        app,
+        foreground_store.clone(),
+        &old.global_shortcut,
+        old.pinned_shortcut.as_deref(),
+        &settings.global_shortcut,
+        settings.pinned_shortcut.as_deref(),
+    ) {
+        if autostart_changed {
+            if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
                 log::warn!(
-                    "Failed to roll back shortcuts after settings save failed: {}",
+                    "Failed to roll back autostart after shortcut update failed: {}",
                     rollback_error
                 );
             }
         }
+        return Err(e);
+    }
+
+    if let Err(e) = state.settings.save(app, &settings) {
+        if let Err(rollback_error) = apply_shortcut_changes(
+            app,
+            foreground_store,
+            &settings.global_shortcut,
+            settings.pinned_shortcut.as_deref(),
+            &old.global_shortcut,
+            old.pinned_shortcut.as_deref(),
+        ) {
+            log::warn!(
+                "Failed to roll back shortcuts after settings save failed: {}",
+                rollback_error
+            );
+        }
         if autostart_changed {
-            if let Err(rollback_error) = apply_autostart_setting(app, old_autostart) {
+            if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
                 log::warn!(
                     "Failed to roll back autostart after settings save failed: {}",
                     rollback_error
@@ -823,13 +701,22 @@ fn update_settings_blocking(
     let _ = app.emit("settings-changed", ());
 
     // Rebuild tray menu if visible tray settings changed.
-    if tray_text_changed || tray_limits_changed || locale_changed {
+    if old.tray_text_length != settings.tray_text_length
+        || old.max_pinned_in_tray != settings.max_pinned_in_tray
+        || old.max_recent_in_tray != settings.max_recent_in_tray
+        || old.locale != settings.locale
+    {
         log::info!("Tray settings changed, rebuilding menu...");
         update_tray_menu(app);
     }
 
-    let warning = if history_limit_changed {
-        match safe_lock(&state.storage).enforce_history_limit(settings.max_history_items) {
+    let warning = if old.max_history_items != settings.max_history_items {
+        match state
+            .storage
+            .lock()
+            .unwrap()
+            .enforce_history_limit(settings.max_history_items)
+        {
             Ok(removed) => {
                 if removed > 0 {
                     let _ = app.emit("history-cleared", ());
@@ -866,14 +753,9 @@ pub async fn disable_global_shortcut(
     let settings = state.settings.get();
     let current_shortcut = settings.global_shortcut;
 
-    if let Err(e) = app.global_shortcut().unregister(current_shortcut.as_str()) {
-        log::warn!(
-            "Failed to disable global shortcut '{}': {}",
-            current_shortcut,
-            e
-        );
-        return Err(format!("Failed to disable shortcut: {}", e));
-    }
+    app.global_shortcut()
+        .unregister(current_shortcut.as_str())
+        .map_err(|e| format!("Failed to disable shortcut: {}", e))?;
 
     log::info!(
         "Global shortcut '{}' temporarily disabled",
@@ -941,32 +823,17 @@ pub async fn enable_global_shortcut(
 
 #[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
-    use std::process::Command;
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open folder: {}", e))?;
     Ok(())
 }
 
@@ -989,151 +856,50 @@ fn migrate_data_location_blocking(
     new_path: String,
     delete_old: bool,
 ) -> Result<Option<String>, String> {
-    use crate::storage::ClipStorage;
-
     log::info!(
         "Starting data migration to: {}, delete_old: {}",
         new_path,
         delete_old
     );
 
-    let _settings_write_guard = safe_lock(&state.settings_write_lock);
-    let settings = state.settings.get();
-    let old_path = safe_lock(&state.storage).data_directory().to_path_buf();
+    let _settings_write_guard = state.settings_write_lock.lock().unwrap();
+    let old_path = state.storage.lock().unwrap().data_directory().to_path_buf();
     let new_path_buf = std::path::PathBuf::from(&new_path);
     let new_db_path = new_path_buf.join("clipman.db");
 
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
-    let was_running = safe_lock(&state.monitor).take().map(|m| m.stop()).is_some();
-    if was_running {
-        log::info!("Clipboard monitoring stopped for migration");
-    }
-    let migration_result = (|| -> Result<Option<String>, String> {
-        let mut storage_guard = safe_lock(&state.storage);
-        storage_guard
+    {
+        // 备份和替换期间一直持有存储锁：这段时间的采集会等待这把锁，拿到锁时写入的
+        // 已经是新数据库，不会丢记录，也不会写进旧库。
+        let mut storage = state.storage.lock().unwrap();
+        storage
             .backup_to_path(&new_db_path)
             .map_err(|e| format!("Failed to back up database: {}", e))?;
         let new_storage = ClipStorage::new(&new_db_path).map_err(|e| e.to_string())?;
 
-        let mut new_settings = settings.clone();
+        let mut new_settings = state.settings.get();
         new_settings.custom_data_path = Some(new_path.clone());
         state
             .settings
-            .save_candidate(app, &new_settings)
+            .save(app, &new_settings)
             .map_err(|e| format!("Failed to save settings: {}", e))?;
 
-        *storage_guard = new_storage;
+        *storage = new_storage;
         state.settings.set(new_settings);
-        drop(storage_guard);
+    }
 
-        // Now it is safe to delete the old files; Windows refuses deleting open DBs.
-        let cleanup_warning = delete_old
-            .then(|| migration::remove_data_files(&old_path).err())
-            .flatten()
-            .map(|e| format!("Data migration completed, but failed to remove old data: {e}"));
+    // 旧连接已经关闭，Windows 这时才允许删除旧数据库文件。
+    let warning = delete_old
+        .then(|| migration::remove_data_files(&old_path).err())
+        .flatten()
+        .map(|e| format!("Data migration completed, but failed to remove old data: {e}"));
 
-        if let Some(warning) = &cleanup_warning {
-            log::warn!("{warning}");
-        } else {
-            log::info!("Data migration completed successfully");
-        }
-        Ok(cleanup_warning)
-    })();
-
-    let restart_result = if was_running {
-        restart_clipboard_monitor(app, state)
+    if let Some(warning) = &warning {
+        log::warn!("{warning}");
     } else {
-        Ok(())
-    };
-    crate::tray::update_tray_menu(app);
-
-    match (migration_result, restart_result) {
-        (Ok(warning), Ok(())) => Ok(warning),
-        (Ok(cleanup_warning), Err(e)) => {
-            let restart_warning = format!(
-                "Data migration completed, but clipboard monitoring failed to restart: {}",
-                e
-            );
-            Ok(Some(
-                cleanup_warning
-                    .map(|warning| format!("{warning}; additionally: {restart_warning}"))
-                    .unwrap_or(restart_warning),
-            ))
-        }
-        (Err(e), Ok(())) => Err(e),
-        (Err(migration_error), Err(restart_error)) => Err(format!(
-            "{}; additionally clipboard monitoring failed to restart: {}",
-            migration_error, restart_error
-        )),
+        log::info!("Data migration completed successfully");
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use tauri_plugin_global_shortcut::ShortcutState;
-
-    #[test]
-    fn shortcut_cleanup_only_targets_changed_bindings() {
-        assert_eq!(
-            super::shortcut_cleanup_targets(true, false, "new-main", Some("unchanged-pinned")),
-            [Some("new-main"), None]
-        );
-        assert_eq!(
-            super::shortcut_cleanup_targets(false, true, "unchanged-main", Some("new-pinned")),
-            [None, Some("new-pinned")]
-        );
-        assert_eq!(
-            super::shortcut_cleanup_targets(true, true, "new-main", Some("new-pinned")),
-            [Some("new-main"), Some("new-pinned")]
-        );
-    }
-
-    #[test]
-    fn pressed_quickbar_shortcut_uses_main_thread_scheduler() {
-        let scheduled_commands = Arc::new(Mutex::new(Vec::new()));
-        let action_ran = Arc::new(Mutex::new(false));
-
-        let scheduled_commands_for_scheduler = scheduled_commands.clone();
-        let action_ran_for_action = action_ran.clone();
-
-        let result = super::handle_quickbar_shortcut_event(
-            ShortcutState::Pressed,
-            "CommandOrControl+Shift+V",
-            move |command_name, action| {
-                scheduled_commands_for_scheduler
-                    .lock()
-                    .unwrap()
-                    .push(command_name);
-                action()
-            },
-            move || {
-                *action_ran_for_action.lock().unwrap() = true;
-                Ok(())
-            },
-        );
-
-        assert!(matches!(result, Some(Ok(()))));
-        assert_eq!(
-            &*scheduled_commands.lock().unwrap(),
-            &["show_quickbar_from_shortcut"]
-        );
-        assert!(*action_ran.lock().unwrap());
-    }
-
-    #[test]
-    fn released_quickbar_shortcut_does_not_schedule() {
-        let result = super::handle_quickbar_shortcut_event(
-            ShortcutState::Released,
-            "CommandOrControl+Shift+V",
-            |_command_name, _action| panic!("released shortcut should not schedule QuickBar"),
-            || {
-                panic!("released shortcut should not run QuickBar action");
-            },
-        );
-
-        assert!(result.is_none());
-    }
+    update_tray_menu(app);
+    Ok(warning)
 }

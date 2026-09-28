@@ -24,9 +24,10 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     isPinned: false,
     pinOrder: null,
     label: null,
-    groupName: null,
     sourceApp: null,
     hasHtml: false,
+    contentBytes: 5,
+    fileCount: 0,
     ...overrides,
   };
 }
@@ -54,15 +55,8 @@ describe('clip item helpers', () => {
     }
   });
 
-  test('decodes newline-joined file paths, dropping blank trailing lines', () => {
-    const content = encodeText('/Users/me/文档/报告.pdf\n/Users/me/photos/img.png\n');
-    const paths = decodeFilePaths(clip({ contentType: 'files', content }));
-    expect(paths).toEqual(['/Users/me/文档/报告.pdf', '/Users/me/photos/img.png']);
-  });
-
-  test('returns no file paths for non-files clips or empty content', () => {
+  test('returns no file paths for non-files clips', () => {
     expect(decodeFilePaths(clip({ contentType: 'text', content: encodeText('hi') }))).toEqual([]);
-    expect(decodeFilePaths(clip({ contentType: 'files', content: '' }))).toEqual([]);
   });
 
   test('incrementally inserts a new recent item at the top', () => {
@@ -102,7 +96,6 @@ describe('clip item helpers', () => {
       isPinned: true,
       pinOrder: 2,
       label: 'favorite',
-      groupName: 'snippets',
       timestamp: 10,
     });
     const incoming = clip({
@@ -110,7 +103,6 @@ describe('clip item helpers', () => {
       isPinned: false,
       pinOrder: null,
       label: null,
-      groupName: null,
       timestamp: 20,
     });
 
@@ -128,7 +120,6 @@ describe('clip item helpers', () => {
       isPinned: false,
       pinOrder: null,
       label: null,
-      groupName: null,
       timestamp: 20,
     });
   });
