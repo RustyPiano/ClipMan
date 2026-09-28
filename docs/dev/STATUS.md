@@ -8,9 +8,9 @@
 
 ## 当前状态一句话
 
-**最新发布版本为 v2.3.0**；main 上有两个未推送的提交，包含发布流程加固和过度设计与防御性代码清理，2026-09-29 本机全部质量关卡通过，远端 CI 和新发布流程尚未运行。
+**最新发布版本为 v2.3.0**；main 上发布流程加固和过度设计与防御性代码清理两个提交已推送（`cfd1234`），CI 全部通过（Windows/Linux 编译通过，rustup 按 `rust-toolchain.toml` 装上 1.96.0），尚未发布，新发布流程尚未实际运行。
 
-## 最近提交（未推送）
+## 最近提交（已推送，未发布）
 
 - 发布流程：版本预检查、共用 CI、`verify-release.py` 下载附件并用 minisign 校验更新签名和历史公钥；无用代码、`serde_bytes` 依赖和 47 个生成图标已删除。
 - 2026-09-29 清理（按全仓审查逐项修改）：
@@ -25,8 +25,12 @@
 
 ## 待办（按优先级）
 
-1. 推送后确认 CI：去掉 dtolnay 后 1.96.0 能自动安装，`rust-windows`、`rust-linux` 能编译本机未编译的 Windows/Linux 分支。
-2. 在真实应用里回归本轮行为变化：精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+1. 在真实应用里回归本轮行为变化：精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+2. QuickBar 行在 WebKit（macOS 应用实际使用的引擎）下的显示问题，生成产品页截图时发现，均在 `ClipboardItem.svelte`：
+   - 图片缩略图的 `w-fit` 不生效，边框撑满整行、图片居中（已用系统 WKWebView 核实）；改为 `self-start` 之类让图片按自身宽度显示。
+   - 文件条目元信息里模板换行多出一个空格（“访达  · 2 个文件”）。
+   - 多选勾选标记盖住较长的第一行文字。
+   - 搜索框占位符写“剪切板”，其余界面写“剪贴板”。
 3. 用 v2.3.0 正式包实机验证 Linux，并回归 v2.2.1→v2.3.0 updater 路径。
 4. 发布前用正式签名包复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 5. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
@@ -47,3 +51,4 @@
 - 竞品分析与长期路线图：claude.ai artifact「ClipMan 盲点报告与路线图」（2026-07-07）。
 - 已完成的开发记录（v2.2 波次规格与验收、审核记录、QuickBar 改版记录）和 v2.0 重设计文档：`docs/archive/`，均带归档横幅，不作为当前指导。
 - 发布流程：`.github/RELEASE_GUIDE.md`。
+- 产品页（https://www.clipman.top）在 `RustyPiano/ClipMan-Page` 仓库，推送 main 后由 Vercel 部署。版本和下载链接在构建时读取最新发布，发版后需在 Vercel 重新部署；QuickBar 界面变化后在该仓库运行 `npm run screenshots`，用本仓库前端和 WebKit 重新截图。
