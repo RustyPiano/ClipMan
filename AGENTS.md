@@ -13,11 +13,11 @@ ClipMan is a **local-first desktop clipboard manager** (Windows / macOS / Linux)
 
 ## Documentation map & maintenance protocol (read this first)
 
-**Start every session by reading [`docs/dev/STATUS.md`](docs/dev/STATUS.md)** — the living "where the project is right now" doc (a SessionStart hook also injects it automatically). Doc roles:
+**Start every session by reading [`docs/dev/STATUS.md`](docs/dev/STATUS.md)** — the living "where the project is right now" doc. Doc roles:
 
 | Doc | Role | Update policy |
 | --- | --- | --- |
-| `docs/dev/STATUS.md` | Current state, uncommitted work, TODO queue, known issues | **Update before ending any session that changes `src/` or `src-tauri/`** (a Stop hook reminds you). Keep ≤100 lines; delete stale entries instead of appending forever. |
+| `docs/dev/STATUS.md` | Current state, uncommitted work, TODO queue, known issues | **Update it as soon as `src/` or `src-tauri/` changes or a release/CI state changes, without waiting for a reminder.** Keep ≤100 lines; delete stale entries instead of appending forever. |
 | `AGENTS.md` (this file) | Stable knowledge: architecture, conventions, commands, gotchas | Update in the same session whenever conventions/architecture/commands change. Never let it describe a past state as present. |
 | Other `docs/dev/*.md` | Docs for in-progress work (plans, specs) | Move to `docs/archive/` with a dated banner once the work is finished or superseded. |
 | `docs/archive/` | Finished or superseded docs (plans, specs, review records), each with a banner | Read-only. **Never treat archived docs as current guidance.** |
