@@ -37,6 +37,7 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪贴板管理器。采�
 - **全文搜索** - SQLite FTS5 + trigram 索引，支持中英文实时搜索
 - **多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览
 - **QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`），键盘选择并按设置自动粘贴或仅复制
+- **粘贴格式** - 保留原始格式、仅经 ClipMan 取用时去除格式，或复制富文本后直接改为纯文本；`⌥Enter` 临时切换一次
 - **键鼠操作** - 每行可直接复制、置顶、编辑标签、删除或多选合并
 - **托盘菜单** - 快速访问最近和置顶内容
 - **多主题** - 浅色/深色/淡粉色主题，跟随系统
@@ -54,10 +55,10 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪贴板管理器。采�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.3.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.3.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.3.0_x64.dmg`
-- **Linux**: `ClipMan_2.3.0_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.0_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.0_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.0_x64.dmg`
+- **Linux**: `ClipMan_2.4.0_amd64.AppImage`
 
 ### macOS 安装与权限
 
