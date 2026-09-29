@@ -220,8 +220,11 @@ test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page
 
 test('closing the session cancels Enter while a search is running', async ({ page }) => {
   await page.getByRole('combobox').fill('cancelled');
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Escape');
+  // 两个按键在同一个任务里派发，保证 Escape 一定早于搜索返回，不受 CI 速度影响
+  await page.getByRole('combobox').evaluate((input) => {
+    for (const key of ['Enter', 'Escape'])
+      input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  });
   await page.waitForTimeout(150);
   expect(
     await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
