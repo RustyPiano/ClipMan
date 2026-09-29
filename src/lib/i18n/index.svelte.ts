@@ -256,15 +256,15 @@ const zh: Translations = {
 
   // Empty states
   noPinnedItems: '暂无置顶项目',
-  noClipboardHistory: '暂无剪切板历史',
+  noClipboardHistory: '暂无剪贴板历史',
   noSearchResults: '没有匹配的结果',
 
   // Search
-  searchPlaceholder: '搜索剪切板内容...',
+  searchPlaceholder: '搜索剪贴板内容...',
 
   // Settings sections
   settingsGeneral: '常规',
-  settingsClipboard: '剪切板',
+  settingsClipboard: '剪贴板',
   settingsAppearance: '外观',
   settingsTray: '托盘',
   settingsStorage: '存储',

@@ -79,6 +79,17 @@
         : new Date(item.timestamp * 1000).toLocaleDateString(i18n.locale)
   );
 
+  // 用字符串拼接元信息：模板里的换行在 WebKit 下会多渲染一个空格。
+  const meta = $derived(
+    [
+      time,
+      item.sourceApp,
+      item.contentType === 'files' ? i18n.format(t.fileCount, { n: item.fileCount }) : null,
+    ]
+      .filter(Boolean)
+      .join('\u00a0·\u00a0')
+  );
+
   let editing = $state(false);
   let draft = $state('');
   let saving = $state(false);
@@ -262,7 +273,7 @@
           </span>
         </span>
         <!-- Content column: title, preview, metadata -->
-        <span class="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5 py-1 {multiSelected ? 'pr-5' : ''}">
           {#if item.label}
             <span class="truncate text-sm font-semibold text-foreground">{item.label}</span>
           {/if}
@@ -304,18 +315,13 @@
               src={item.content}
               alt={item.label || t.image}
               class={item.label
-                ? 'max-h-8 w-fit rounded-md border border-border object-contain'
-                : 'max-h-[52px] w-fit rounded-md border border-border object-contain'}
+                ? 'max-h-8 w-fit self-start rounded-md border border-border object-contain'
+                : 'max-h-[52px] w-fit self-start rounded-md border border-border object-contain'}
               loading="lazy"
             />
           {/if}
           <span class="row-meta mt-auto flex min-w-0 items-center gap-1.5 pt-0.5 pr-[8.75rem]">
-            <span class="truncate text-[11px] font-medium text-muted-foreground/70">
-              {time}{#if item.sourceApp}&nbsp;·&nbsp;{item.sourceApp}{/if}
-              {#if item.contentType === 'files'}&nbsp;·&nbsp;{i18n.format(t.fileCount, {
-                  n: item.fileCount,
-                })}{/if}
-            </span>
+            <span class="truncate text-[11px] font-medium text-muted-foreground/70">{meta}</span>
             {#if item.hasHtml}
               <span
                 class="flex-none rounded border border-border/50 bg-muted/50 px-1 text-[9px] font-semibold leading-tight text-muted-foreground/70"

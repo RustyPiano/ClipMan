@@ -4,7 +4,7 @@
 
 <img src="app-icon.png" alt="ClipMan" width="128" />
 
-**轻量级现代剪切板管理器**
+**轻量级现代剪贴板管理器**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/github/v/release/RustyPiano/ClipMan?label=Version&color=blue)](https://github.com/RustyPiano/ClipMan/releases/latest)
@@ -18,7 +18,7 @@
 
 ## 简介
 
-ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采用 Rust + Svelte 5 技术栈，专注于提供核心实用功能。
+ClipMan 是一个**轻量级**、**高性能**的现代剪贴板管理器。采用 Rust + Svelte 5 技术栈，专注于提供核心实用功能。
 
 **为什么选择 ClipMan？**
 
@@ -44,7 +44,7 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪切板管理器。采�
 
 ### 其他功能
 
-- 跳过密码类剪切板内容（可选）
+- 跳过密码类剪贴板内容（可选）
 - 自动更新
 - 开机自启动
 - 自定义存储位置
@@ -129,7 +129,7 @@ bun tauri build
 
 **已完成**
 
-- [x] 剪切板监控和历史
+- [x] 剪贴板监控和历史
 - [x] 置顶功能
 - [x] 全文搜索
 - [x] QuickBar 自动粘贴
@@ -137,7 +137,7 @@ bun tauri build
 - [x] 系统托盘
 - [x] 自动更新
 - [x] 多主题
-- [x] 跳过密码类剪切板内容
+- [x] 跳过密码类剪贴板内容
 - [x] 自定义存储位置
 - [x] 开机自启动
 
@@ -165,7 +165,7 @@ bun tauri build
 - [Tauri](https://tauri.app/) - 桌面应用框架
 - [Svelte](https://svelte.dev/) - 前端框架
 - [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite 绑定
-- [arboard](https://github.com/1Password/arboard) - 剪切板库
+- [arboard](https://github.com/1Password/arboard) - 剪贴板库
 
 ---
 

@@ -455,6 +455,8 @@ test('file rows show basenames with +N badge and Windows paths split correctly',
   await expect(multi).toContainText('budget.xlsx');
   await expect(multi.getByText('+1')).toBeVisible();
   await expect(multi).not.toContainText('/tmp/');
+  // 元信息各段之间只有一个分隔符，模板换行不能多出空白
+  expect(await multi.locator('.row-meta > span.truncate').textContent()).not.toMatch(/\s{2}/);
 
   const windows = page.locator('#clip-item-clip-8');
   await expect(windows).toContainText('report.docx');
