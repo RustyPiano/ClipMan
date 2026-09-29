@@ -20,10 +20,9 @@
 
 ## 待办（按优先级）
 
-1. 在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
-2. 用 v2.4.3 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-3. 用正式包实机验证 Linux，回归 v2.4.2→v2.4.3 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
+1. 用 v2.4.3 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+2. 用正式包实机验证 Linux，回归 v2.4.2→v2.4.3 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+3. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
 
