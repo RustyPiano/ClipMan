@@ -140,8 +140,8 @@
     }
   }
 
-  // Stable ids keep the keyed each (and keyboard focus) intact when the pin
-  // label/icon flips. 多选由左侧类型图标兼任的勾选框负责，不在操作栏里重复。
+  // 固定的 id 让置顶按钮的文字和图标切换时，keyed each 和键盘焦点保持不变。
+  // 多选由左侧类型图标兼任的勾选框负责，不在操作栏里重复。
   const rowActions = $derived<RowAction[]>([
     {
       id: 'copy',
@@ -433,7 +433,7 @@
     box-shadow: none;
   }
   /* 操作按钮只在悬停或键盘焦点进入该行时出现，覆盖元信息预留的右侧空白
-     （pr-[6.5rem] 对应 4 个 1.5rem 按钮加间距），不会盖住文字；出现时隐藏快捷键提示 */
+     （pr-[6.5rem] 对应 4 个 1.5rem 按钮加间距），不会盖住文字 */
   .row-actions {
     background: var(--row-surface);
     opacity: 0;

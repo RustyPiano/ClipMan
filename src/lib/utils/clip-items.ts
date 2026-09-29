@@ -79,7 +79,7 @@ export function formatClipTime(ms: number, now: number, locale: string, labels: 
   if (age < 60_000) return labels.justNow;
   if (age < 3_600_000) return labels.minutesAgo(Math.floor(age / 60_000));
   const date = new Date(ms);
-  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const time = date.toLocaleTimeString(locale, { timeStyle: 'short' });
   const today = new Date(now);
   const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((dayStart(today) - dayStart(date)) / 86_400_000);

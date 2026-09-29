@@ -224,8 +224,12 @@ describe('row display helpers', () => {
     const at = (...args: [number, number, number, number, number]) =>
       formatClipTime(new Date(...args).getTime(), now, 'en-US', labels);
     expect(at(2026, 8, 30, 14, 59)).toBe('1m');
-    expect(at(2026, 8, 30, 9, 5)).toBe('09:05 AM');
-    expect(at(2026, 8, 29, 23, 30)).toBe('Yesterday 11:30 PM');
+    // ICU 版本不同，AM/PM 前可能是普通空格或窄不换行空格
+    expect(at(2026, 8, 30, 9, 5)).toMatch(/^9:05\sAM$/);
+    expect(at(2026, 8, 29, 23, 30)).toMatch(/^Yesterday 11:30\sPM$/);
+    expect(formatClipTime(new Date(2026, 8, 30, 9, 5).getTime(), now, 'zh-CN', labels)).toBe(
+      '09:05'
+    );
     expect(at(2026, 8, 1, 12, 0)).toBe('Sep 1');
     expect(at(2025, 11, 31, 12, 0)).toBe('Dec 31, 2025');
   });

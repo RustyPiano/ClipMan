@@ -699,9 +699,8 @@ type FrontApp = (
     Option<Result<Vec<u8>, String>>,
 );
 
-/// Localized name and bundle id of the app that was frontmost at capture time — the
-/// source the clip was copied from — plus its rendered icon when this run has not
-/// saved one for that name yet. Returns None fields when ClipMan itself is frontmost.
+/// 采集时位于前台的应用（即复制来源）的本地化名称和 bundle id；本次运行还没保存过该应用
+/// 的图标时，一并返回渲染好的图标。ClipMan 自己在前台时各项都是 None。
 // ponytail: reads NSWorkspace off the monitor thread, same as window.rs does
 // off the command thread; AppKit's frontmostApplication tolerates it.
 #[cfg(target_os = "macos")]

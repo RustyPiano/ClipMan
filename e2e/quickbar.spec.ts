@@ -420,7 +420,7 @@ test('row mouse actions target their own item without pasting, and editing keeps
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(72); // 4.5rem at the default 16px root font
+  expect((await row.boundingBox())?.height).toBe(72); // 根字号为默认 16px 时的 4.5rem
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
