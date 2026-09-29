@@ -8,19 +8,19 @@
 
 ## 当前状态一句话
 
-**最新发布版本为 v2.4.1**（2026-09-30 公开，标记为 Latest）；新发布流程第一次实际运行，preflight、quality、四平台打包和 `verify-release` 全部通过，草稿有 17 个附件。内容见 `release_notes_2.4.1.md`（三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复）。v2.4.0 未发布（标签已删除）：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
+**v2.4.2 已打标签，Release 工作流运行中**（修复 QuickBar 多选：点击勾选后回车反复勾选、新增 ⇧↑/↓ 键盘多选）。上一公开版本 v2.4.1（2026-09-30）：三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复；新发布流程已完整跑通。v2.4.0 未发布（标签已删除）：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
 
 ## 最近验证
 
-- 发版前本机：lint、check、test:types、`bun test tests/`（59 项）、build、prettier、`bun run test:ui`（Chromium + WebKit 48 项）。Rust 自 `cfd1234` 起只改了版本号，由 CI 覆盖。
+- 发版前本机：lint、check、test:types、`bun test tests/`（59 项）、build、prettier、`bun run test:ui`（Chromium + WebKit 50 项）。Rust 自 `cfd1234` 起只改了版本号，由 CI 覆盖。
 - WebKit 行修复里的图片 `self-start` 在 Playwright WebKit 下本来就不复现，只在系统 WKWebView 中出现，需要用正式包目测。
 - Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。
 
 ## 待办（按优先级）
 
-1. 在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
-2. 用 v2.4.1 正式包回归：图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.1 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+1. v2.4.2 草稿通过后 Publish；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
+2. 用 v2.4.2 正式包回归：键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.2 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
