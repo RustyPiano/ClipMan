@@ -8,7 +8,7 @@
 
 ## 当前状态一句话
 
-**v2.4.3 已打标签，Release 工作流运行中**：QuickBar 列表重新设计（结构见 AGENTS.md「QuickBar rows」）和 macOS 来源应用图标（`app_icons` 表、`get_app_icon` 命令、`app-icon-saved` 事件），内容见 `release_notes_2.4.3.md`。v2.4.2（多选修复、⇧↑/↓ 键盘多选）已于 2026-09-30 公开。旧记录要等来源应用在新版本里再复制一次才有图标。
+**v2.4.3 已于 2026-09-30 公开**（`latest.json` 报告 2.4.3，11 个平台条目）：QuickBar 列表重新设计（结构见 AGENTS.md「QuickBar rows」）和 macOS 来源应用图标（`app_icons` 表、`get_app_icon` 命令、`app-icon-saved` 事件），内容见 `release_notes_2.4.3.md`。旧记录要等来源应用在新版本里再复制一次才有图标。
 
 ## 最近验证
 
@@ -20,7 +20,7 @@
 
 ## 待办（按优先级）
 
-1. v2.4.3 Release 全部通过后 Publish；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
+1. 在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
 2. 用 v2.4.3 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
 3. 用正式包实机验证 Linux，回归 v2.4.2→v2.4.3 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
