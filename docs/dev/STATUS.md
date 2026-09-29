@@ -4,11 +4,11 @@
 > 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 docs/archive / release notes / git 历史，不要在这里堆积。
 > 保持全文 ≤ 100 行；过时条目直接删除。
 
-**最后更新：2026-09-29**
+**最后更新：2026-09-30**
 
 ## 当前状态一句话
 
-**v2.4.1 已打标签，Release 工作流运行中**，这是新发布流程第一次实际运行；全部通过后在 GitHub 上把草稿 Publish。内容见 `release_notes_2.4.1.md`（三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复）。v2.4.0 标签存在但从未产出 Release：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
+**v2.4.1 草稿已生成，等待 Publish**：新发布流程第一次实际运行，preflight、quality、四平台打包和 `verify-release` 全部通过，草稿有 17 个附件。内容见 `release_notes_2.4.1.md`（三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复）。v2.4.0 未发布（标签已删除）：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
 
 ## 最近验证
 
@@ -18,9 +18,9 @@
 
 ## 待办（按优先级）
 
-1. 等 Release 工作流（含 `verify-release`）通过后 Publish 草稿；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
-2. 用 v2.4.0 正式包回归：图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.0 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+1. 在 GitHub 上 Publish v2.4.1 草稿；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
+2. 用 v2.4.1 正式包回归：图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.1 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
