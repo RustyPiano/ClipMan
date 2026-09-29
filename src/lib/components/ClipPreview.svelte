@@ -2,7 +2,7 @@
   import type { ClipItem, ClipDetail } from '$lib/types';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import { decodeClipText, decodeFilePaths } from '$lib/utils/clip-items';
+  import { decodeClipText, decodeFilePaths, looksLikeCode } from '$lib/utils/clip-items';
   import Button from './ui/Button.svelte';
 
   let { item }: { item: ClipItem | undefined } = $props();
@@ -51,6 +51,25 @@
           : '')
   );
   const imageUrl = $derived(full?.imageUrl || settled?.content || '');
+  // 预览头部的一行元信息：来源、完整时间，以及文本字符数或文件数
+  const meta = $derived(
+    settled
+      ? [
+          settled.sourceApp,
+          new Date(settled.timestamp * 1000).toLocaleString(i18n.locale, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          }),
+          settled.contentType === 'text' && full
+            ? i18n.format(t.characterCount, { n: [...full.text].length.toLocaleString() })
+            : settled.contentType === 'files'
+              ? i18n.format(t.fileCount, { n: settled.fileCount })
+              : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : ''
+  );
 </script>
 
 <div class="flex h-full flex-col text-foreground">
@@ -63,11 +82,7 @@
             ? t.files
             : t.text)}</span
     >
-    {#if settled}<span class="truncate text-[11px] text-muted-foreground">
-        {settled.sourceApp ? `${settled.sourceApp} · ` : ''}{new Date(
-          settled.timestamp * 1000
-        ).toLocaleString(i18n.locale)}
-      </span>{/if}
+    {#if settled}<span class="truncate text-[11px] text-muted-foreground">{meta}</span>{/if}
   </header>
   <div
     bind:this={body}
@@ -82,7 +97,10 @@
       />
     {:else}
       <pre
-        class="m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-6 selection:bg-primary/20">{text}</pre>
+        class="m-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-6 selection:bg-primary/20 {settled?.contentType ===
+          'text' && !looksLikeCode(text)
+          ? 'font-sans text-[13px]'
+          : 'font-mono text-[12px]'}">{text}</pre>
     {/if}
   </div>
   {#if settled && (!full || full?.truncated)}<footer

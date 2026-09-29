@@ -15,8 +15,8 @@ mod window;
 use commands::{
     check_accessibility_permission, check_clipboard_permission, check_for_updates,
     clear_non_pinned_history, copy_to_system_clipboard, delete_clip, disable_global_shortcut,
-    enable_global_shortcut, get_clip, get_current_data_path, get_pinned_clips, get_recent_clips,
-    get_settings, hide_quickbar, install_update, migrate_data_location,
+    enable_global_shortcut, get_app_icon, get_clip, get_current_data_path, get_pinned_clips,
+    get_recent_clips, get_settings, hide_quickbar, install_update, migrate_data_location,
     open_accessibility_settings, open_folder, open_settings_window, paste_clip, paste_clips,
     register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, show_quickbar,
     toggle_pin, update_settings,
@@ -355,6 +355,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_recent_clips,
             get_pinned_clips,
+            get_app_icon,
             get_clip,
             search_clips,
             toggle_pin,

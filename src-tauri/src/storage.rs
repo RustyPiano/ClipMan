@@ -681,6 +681,33 @@ impl ClipStorage {
         Ok(())
     }
 
+    /// 应用图标按应用名保存一份，旧记录只要来自同名应用也能显示。
+    pub fn save_app_icon(&self, name: &str, png: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO app_icons (name, png) VALUES (?1, ?2)",
+            params![name, png],
+        )?;
+        Ok(())
+    }
+
+    pub fn app_icon(&self, name: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT png FROM app_icons WHERE name = ?1",
+                params![name],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map(|png| {
+                png.map(|bytes| {
+                    format!(
+                        "data:image/png;base64,{}",
+                        data_encoding::BASE64.encode(&bytes)
+                    )
+                })
+            })
+    }
+
     fn initialize_schema(conn: &Connection) -> Result<()> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS clips (
@@ -704,6 +731,10 @@ impl ClipStorage {
         Self::add_column_if_missing(conn, "label", "TEXT")?;
         Self::add_column_if_missing(conn, "source_app", "TEXT")?;
         Self::add_column_if_missing(conn, "html", "TEXT")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_icons (name TEXT PRIMARY KEY, png BLOB NOT NULL)",
+            [],
+        )?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON clips(timestamp DESC)",
@@ -1215,6 +1246,21 @@ mod tests {
             source_app: None,
             html: None,
         }
+    }
+
+    #[test]
+    fn app_icons_are_keyed_by_name_and_replaced() {
+        let root = std::env::temp_dir().join(format!("clipman-icons-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
+        assert_eq!(storage.app_icon("Safari").unwrap(), None);
+        storage.save_app_icon("Safari", &[1, 2]).unwrap();
+        storage.save_app_icon("Safari", &[3]).unwrap();
+        assert_eq!(
+            storage.app_icon("Safari").unwrap().as_deref(),
+            Some("data:image/png;base64,Aw==")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

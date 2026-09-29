@@ -176,6 +176,7 @@ html.quickbar-window body {
   --qb-hover: color-mix(in srgb, var(--foreground) 3%, var(--qb-surface));
   --qb-selection: color-mix(in srgb, var(--foreground) 7%, var(--qb-surface));
   --qb-divider: color-mix(in srgb, var(--foreground) 9%, var(--qb-surface));
+  --qb-multi: color-mix(in srgb, var(--primary) 7%, var(--qb-surface));
   border: 1px solid var(--quickbar-border);
   background: var(--qb-surface);
 }
@@ -192,14 +193,14 @@ html.quickbar-window body {
   border: 0;
   box-shadow: none;
   color: var(--foreground);
+  background: var(--qb-hover);
 }
 .quickbar-panel .qb-search::placeholder {
   color: var(--muted-foreground);
 }
 .quickbar-panel .qb-search:focus-visible {
   outline: none;
-  background: var(--qb-hover);
-  box-shadow: inset 0 -1px 0 var(--muted-foreground);
+  box-shadow: inset 0 0 0 1px var(--qb-divider);
 }
 .qb-header {
   border-bottom: 1px solid var(--qb-divider);

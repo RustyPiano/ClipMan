@@ -7,6 +7,7 @@
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { selectionStore, type QuickBarPanel } from '$lib/stores/selection.svelte';
   import { themeStore } from '$lib/stores/theme.svelte';
+  import { appIconStore } from '$lib/stores/app-icons.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { i18n } from '$lib/i18n';
@@ -304,6 +305,7 @@
       listen<{ panel?: QuickBarPanel }>('quickbar-opened', (event) => {
         resetPanel(event.payload?.panel === 'pinned' ? 'pinned' : 'recent');
       }),
+      listen<string>('app-icon-saved', (event) => appIconStore.invalidate(event.payload)),
       listen('quickbar-hidden', () => {
         scrollTop = 0;
         if (actions) actions.open = false;
@@ -340,10 +342,10 @@
           expanded={displayItems.length > 0}
         />
       </div>
-      <div class="qb-tabs flex flex-none gap-0.5 rounded-lg p-0.5" aria-label={t.switchPanel}>
+      <div class="qb-tabs flex h-9 flex-none gap-0.5 rounded-lg p-0.5" aria-label={t.switchPanel}>
         {#each ['recent', 'pinned'] as panel (panel)}
           <button
-            class="rounded-md px-3 py-1.5 text-xs font-medium"
+            class="rounded-md px-3 text-xs font-medium"
             aria-pressed={selectionStore.panel === panel}
             onclick={() => resetPanel(panel as QuickBarPanel)}
           >
@@ -395,7 +397,7 @@
             id="clipboard-results"
             role="grid"
             aria-rowcount={displayItems.length}
-            aria-colcount="2"
+            aria-colcount="3"
             aria-label={t.history}
             aria-multiselectable="true"
             aria-busy={clipboardStore.isSearchPending}
@@ -412,7 +414,7 @@
                 selected={position === selectedIndex}
                 multiSelected={selectionStore.selectedIds.has(item.id)}
                 multiSelecting={selectionStore.selectedIds.size > 0}
-                slotNumber={position < 9 ? position + 1 : null}
+                slotLabel={position < 9 ? `${modifier}${position + 1}` : null}
                 {position}
                 onSelect={() => select(position)}
                 onToggleSelect={() => selectionStore.toggleSelected(item.id)}

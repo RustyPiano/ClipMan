@@ -60,6 +60,39 @@ export function decodeClipText(item: ClipItem, emptyContent: string, decodeFaile
   return text;
 }
 
+// ponytail: 启发式判断，只决定用等宽还是比例字体，误判只影响观感
+export function looksLikeCode(text: string): boolean {
+  return (
+    /^\s*(https?:\/\/|[{[<$]|\/\/)/.test(text) || /(&&|\|\||=>|::|;\s*$|^(\t| {2,})\S)/m.test(text)
+  );
+}
+
+export interface ClipTimeLabels {
+  justNow: string;
+  minutesAgo: (n: number) => string;
+  yesterday: string;
+}
+
+/** 列表时间：一小时内用相对时间，今天只显示时刻，昨天加前缀，今年省略年份。 */
+export function formatClipTime(ms: number, now: number, locale: string, labels: ClipTimeLabels) {
+  const age = Math.max(0, now - ms);
+  if (age < 60_000) return labels.justNow;
+  if (age < 3_600_000) return labels.minutesAgo(Math.floor(age / 60_000));
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const today = new Date(now);
+  const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((dayStart(today) - dayStart(date)) / 86_400_000);
+  if (days === 0) return time;
+  if (days === 1) return `${labels.yesterday} ${time}`;
+  return date.toLocaleDateString(
+    locale,
+    date.getFullYear() === today.getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { year: 'numeric', month: 'short', day: 'numeric' }
+  );
+}
+
 /** Last separator position, accepting both POSIX and Windows separators. */
 function lastSeparator(path: string): number {
   return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));

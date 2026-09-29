@@ -8,7 +8,15 @@
 
 ## 当前状态一句话
 
-**v2.4.2 已打标签，Release 工作流运行中**（修复 QuickBar 多选：点击勾选后回车反复勾选、新增 ⇧↑/↓ 键盘多选）。上一公开版本 v2.4.1（2026-09-30）：三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复；新发布流程已完整跑通。v2.4.0 未发布（标签已删除）：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
+**v2.4.2 草稿已生成，等用户确认后 Publish**：标签在 `bc5550c` 上重打后 Release 全部通过（含四平台打包和 `verify-release`，17 个附件）（修复 QuickBar 多选：点击勾选后回车反复勾选、新增 ⇧↑/↓ 键盘多选）。原 v2.4.2 标签提交里的 e2e 测试 `closing the session cancels Enter…` 反复失败：`fill()` 与 Enter 分开发送时，慢机器上 30ms 防抖加 90ms 模拟搜索会先完成，测试走不到取消路径；已改为输入、Enter、Escape 同一任务派发并断言搜索仍在进行。上一公开版本 v2.4.1（2026-09-30）。
+
+## 未提交：QuickBar 行重设计原型（等用户看截图决定）
+
+- 行高 5.5rem→4.5rem，固定结构：40px 内容区 + 24px 元信息行，操作按钮与元信息行等高对齐、不遮挡文字；单行内容的行因此留一行空白，用户待选“保持”或“允许按钮渐隐盖住文字末尾”。
+- 左侧 15px 细线类型图标按内容种类区分（文本/链接/代码/图片/文件/文件夹/多文件，文本为内联 SVG），兼任 16px 圆形多选框（悬停/多选模式显示，选中填主色）；去掉右上角 ✓、操作栏 ✓ 和多选竖条；行背景上下内缩 2px，相邻选中行留缝；操作按钮仅悬停/焦点时显示（4 个）；右上角淡色 `⌘N` 提示。
+- 元信息行最前面显示来源应用图标和名字（新增 `app_icons` 表、`get_app_icon` 命令、`app-icon-saved` 事件；macOS 采集时渲染，旧记录按应用名也能显示）。
+- 正文比例字体，`looksLikeCode` 判断时才用等宽；时间 `formatClipTime`（今天时刻、昨天、今年省年份）；预览头部加字符数/文件数；搜索框与面板切换统一 36px 填充样式。
+- 本机 lint/check/test:types/单元 61 项/build/prettier/test:ui 52 项、cargo fmt/clippy/test 105 项全绿（含 macOS 真实图标渲染测试）。确认后需同步 AGENTS.md 中 QuickBar 行结构（5.5rem、三段、`pr-[8.75rem]`）的描述。
 
 ## 最近验证
 
@@ -18,7 +26,7 @@
 
 ## 待办（按优先级）
 
-1. v2.4.2 草稿通过后 Publish；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
+1. v2.4.2 草稿通过后经用户确认再 Publish；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
 2. 用 v2.4.2 正式包回归：键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
 3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.2 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
 4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。

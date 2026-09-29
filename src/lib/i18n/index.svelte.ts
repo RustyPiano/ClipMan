@@ -47,6 +47,8 @@ interface Translations {
   // Time
   justNow: string;
   minutesAgo: string;
+  yesterday: string;
+  characterCount: string;
 
   // Empty states
   noPinnedItems: string;
@@ -254,6 +256,8 @@ const zh: Translations = {
   // Time
   justNow: '刚刚',
   minutesAgo: '{n}分钟前',
+  yesterday: '昨天',
+  characterCount: '{n} 字符',
 
   // Empty states
   noPinnedItems: '暂无置顶项目',
@@ -463,6 +467,8 @@ const en: Translations = {
   // Time
   justNow: 'Just now',
   minutesAgo: '{n}m ago',
+  yesterday: 'Yesterday',
+  characterCount: '{n} chars',
 
   // Empty states
   noPinnedItems: 'No pinned items',

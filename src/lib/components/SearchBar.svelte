@@ -137,7 +137,7 @@
     oninput={handleInput}
     oncompositionstart={handleCompositionStart}
     oncompositionend={handleCompositionEnd}
-    class="qb-search h-10 w-full rounded-lg bg-transparent pl-9 pr-10 text-sm"
+    class="qb-search h-9 w-full rounded-lg pl-9 pr-10 text-sm"
   />
 
   {#if clipboardStore.searchQuery}

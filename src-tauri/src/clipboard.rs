@@ -1,7 +1,8 @@
 use arboard::{Clipboard, ImageData};
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
 use image::{DynamicImage, ImageBuffer, RgbaImage};
-use std::sync::{mpsc, Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::{mpsc, Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -199,7 +200,7 @@ fn handle_clipboard_event(
     }
 
     // 前台应用在分派前同步读取：图片在后台任务中处理，来源必须在那之前确定。
-    let (source_app, source_id) = frontmost_app();
+    let (source_app, source_id, app_icon) = frontmost_app();
 
     // 应用排除放在推进 `last_marker` 之后，与自身复制的跳过相同：否则之后的复制会与
     // 过期的记录比较。
@@ -210,6 +211,9 @@ fn handle_clipboard_event(
     {
         log::debug!("Skipping clipboard change from an excluded application");
         return;
+    }
+    if let (Some(name), Some(icon)) = (&source_app, app_icon) {
+        save_app_icon(app_handle, name, icon);
     }
 
     match snapshot {
@@ -685,35 +689,133 @@ fn clipboard_has_sensitive_marker() -> bool {
     false
 }
 
-/// Localized name of the app that was frontmost at capture time — the source
-/// the clip was copied from. Returns None when ClipMan itself is frontmost or
-/// the name is unavailable.
+/// 本次运行中已保存过图标的应用名；每个应用每次启动只渲染一次图标，应用更新后的新图标
+/// 会在下次启动时覆盖旧的。
+static SAVED_APP_ICONS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+type FrontApp = (
+    Option<String>,
+    Option<String>,
+    Option<Result<Vec<u8>, String>>,
+);
+
+/// Localized name and bundle id of the app that was frontmost at capture time — the
+/// source the clip was copied from — plus its rendered icon when this run has not
+/// saved one for that name yet. Returns None fields when ClipMan itself is frontmost.
 // ponytail: reads NSWorkspace off the monitor thread, same as window.rs does
 // off the command thread; AppKit's frontmostApplication tolerates it.
 #[cfg(target_os = "macos")]
-fn frontmost_app() -> (Option<String>, Option<String>) {
+fn frontmost_app() -> FrontApp {
     use objc2_app_kit::NSWorkspace;
 
     let Some(front) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
-        return (None, None);
+        return (None, None, None);
     };
     if front.processIdentifier() == std::process::id() as i32 {
-        return (None, None);
+        return (None, None, None);
     }
+    let name = front.localizedName().map(|name| name.to_string());
+    let icon = match &name {
+        Some(name) if !SAVED_APP_ICONS.lock().unwrap().contains(name) => {
+            front.icon().map(|icon| render_app_icon(&icon))
+        }
+        _ => None,
+    };
     (
-        front.localizedName().map(|name| name.to_string()),
+        name,
         front.bundleIdentifier().map(|id| id.to_string()),
+        icon,
     )
 }
 
+/// 把应用图标画进 64px 位图再编码成 PNG，列表里以 12–16px 显示，足够 2x 屏幕使用。
+#[cfg(target_os = "macos")]
+fn render_app_icon(icon: &objc2_app_kit::NSImage) -> Result<Vec<u8>, String> {
+    use objc2::AllocAnyThread;
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSCompositingOperation, NSDeviceRGBColorSpace,
+        NSGraphicsContext,
+    };
+    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
+
+    const SIZE: isize = 64;
+    // SAFETY: 传入空 planes 让 AppKit 自行分配像素内存；颜色空间名是 AppKit 导出的常量。
+    let bitmap = unsafe {
+        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+            NSBitmapImageRep::alloc(),
+            std::ptr::null_mut(),
+            SIZE,
+            SIZE,
+            8,
+            4,
+            true,
+            false,
+            NSDeviceRGBColorSpace,
+            0,
+            0,
+        )
+    }
+    .ok_or("无法创建应用图标位图")?;
+    let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bitmap)
+        .ok_or("无法创建应用图标绘制上下文")?;
+    NSGraphicsContext::saveGraphicsState_class();
+    NSGraphicsContext::setCurrentContext(Some(&context));
+    icon.drawInRect_fromRect_operation_fraction(
+        NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(SIZE as f64, SIZE as f64),
+        ),
+        NSRect::ZERO,
+        NSCompositingOperation::SourceOver,
+        1.0,
+    );
+    NSGraphicsContext::restoreGraphicsState_class();
+    // SAFETY: 空属性字典对 PNG 编码有效。
+    let png = unsafe {
+        bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+    }
+    .ok_or("无法把应用图标编码为 PNG")?;
+    Ok(png.to_vec())
+}
+
 #[cfg(not(target_os = "macos"))]
-fn frontmost_app() -> (Option<String>, Option<String>) {
-    (None, None)
+fn frontmost_app() -> FrontApp {
+    (None, None, None)
+}
+
+/// 图标只影响显示：渲染或保存失败时记录错误，本次复制照常保存。
+fn save_app_icon(app_handle: &AppHandle, name: &str, icon: Result<Vec<u8>, String>) {
+    let saved = icon.and_then(|png| {
+        let state = app_handle.state::<AppState>();
+        let storage = state.storage.lock().unwrap();
+        storage.save_app_icon(name, &png).map_err(|e| e.to_string())
+    });
+    match saved {
+        Ok(()) => {
+            SAVED_APP_ICONS.lock().unwrap().insert(name.to_owned());
+            app_handle.emit("app-icon-saved", name).ok();
+        }
+        Err(error) => log::error!("Failed to save the icon of {name}: {error}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_icon_renders_to_a_64px_png() {
+        use objc2_app_kit::NSWorkspace;
+        use objc2_foundation::NSString;
+
+        let icon = NSWorkspace::sharedWorkspace()
+            .iconForFile(&NSString::from_str("/System/Applications/Calculator.app"));
+        let png = render_app_icon(&icon).unwrap();
+        let decoded = image::load_from_memory(&png).unwrap();
+        assert_eq!((64, 64), (decoded.width(), decoded.height()));
+        assert!(decoded.to_rgba8().pixels().any(|pixel| pixel[3] > 0));
+    }
 
     #[test]
     fn oversized_image_is_downsampled_to_max_dimension() {

@@ -6,8 +6,10 @@ import {
   decodeFilePaths,
   fileBasename,
   fileDirname,
+  formatClipTime,
   getRecentDisplayItems,
   looksLikeDirectory,
+  looksLikeCode,
 } from '../../src/lib/utils/clip-items';
 import type { ClipItem } from '../../src/lib/types';
 
@@ -199,5 +201,32 @@ describe('file path display helpers', () => {
     expect(looksLikeDirectory('C:\\Users\\me\\Projects')).toBe(true);
     expect(looksLikeDirectory('/tmp/report.pdf')).toBe(false);
     expect(looksLikeDirectory('C:\\Users\\me\\report.docx')).toBe(false);
+  });
+});
+
+describe('row display helpers', () => {
+  test('only code-like text uses the monospace font', () => {
+    for (const code of [
+      'https://example.com/a',
+      '{ "a": 1 }',
+      'bun run check && bun test',
+      '  indented()',
+      'const x = 1;',
+    ])
+      expect(looksLikeCode(code)).toBe(true);
+    for (const prose of ['Keep common actions close.', '周会纪要：确认搜索体验。', 'a | b is fine'])
+      expect(looksLikeCode(prose)).toBe(false);
+  });
+
+  test('clip times get coarser with age', () => {
+    const labels = { justNow: 'now', minutesAgo: (n: number) => `${n}m`, yesterday: 'Yesterday' };
+    const now = new Date(2026, 8, 30, 15, 0).getTime();
+    const at = (...args: [number, number, number, number, number]) =>
+      formatClipTime(new Date(...args).getTime(), now, 'en-US', labels);
+    expect(at(2026, 8, 30, 14, 59)).toBe('1m');
+    expect(at(2026, 8, 30, 9, 5)).toBe('09:05 AM');
+    expect(at(2026, 8, 29, 23, 30)).toBe('Yesterday 11:30 PM');
+    expect(at(2026, 8, 1, 12, 0)).toBe('Sep 1');
+    expect(at(2025, 11, 31, 12, 0)).toBe('Dec 31, 2025');
   });
 });

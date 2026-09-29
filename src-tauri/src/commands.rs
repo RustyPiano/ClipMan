@@ -109,6 +109,17 @@ pub async fn get_clip(
 }
 
 #[tauri::command]
+pub async fn get_app_icon(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Option<String>, String> {
+    with_storage(state.storage.clone(), move |storage| {
+        storage.app_icon(&name).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn search_clips(
     state: State<'_, AppState>,
     query: String,

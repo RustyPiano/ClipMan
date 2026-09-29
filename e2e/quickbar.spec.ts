@@ -78,6 +78,7 @@ test.beforeEach(async ({ page }) => {
       content: btoa(JSON.stringify(['C:\\Users\\me\\report.docx'])),
       fileCount: 1,
     };
+    const appIcon = canvas.toDataURL();
     let pasteFormat = 'original';
     w.__setPasteFormat = (value: string) => {
       pasteFormat = value;
@@ -109,6 +110,7 @@ test.beforeEach(async ({ page }) => {
             locale: 'en',
           };
         if (cmd === 'check_accessibility_permission') return true;
+        if (cmd === 'get_app_icon') return args.name === 'Editor' ? appIcon : null;
         if (cmd === 'get_pinned_clips')
           return structuredClone(clips.filter((item) => item.isPinned));
         if (cmd === 'get_recent_clips') {
@@ -418,7 +420,7 @@ test('row mouse actions target their own item without pasting, and editing keeps
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(88); // 5.5rem at the default 16px root font
+  expect((await row.boundingBox())?.height).toBe(72); // 4.5rem at the default 16px root font
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
@@ -441,6 +443,7 @@ test('row mouse actions target their own item without pasting, and editing keeps
 
 test('Escape cancels row editing without closing QuickBar or saving', async ({ page }) => {
   const row = page.locator('#clip-item-clip-0');
+  await row.hover();
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   await row.getByRole('textbox').fill('discard this');
   await row.getByRole('textbox').press('Escape');
@@ -457,18 +460,19 @@ test('Escape cancels row editing without closing QuickBar or saving', async ({ p
 
 test('row actions never reserve text width or cover the content line', async ({ page }) => {
   const row = page.locator('#clip-item-clip-1');
-  const content = row.locator('[role=gridcell]').first();
+  // 第一个 gridcell 是类型图标兼多选框，正文在第二个
+  const content = row.locator('[role=gridcell]').nth(1);
   const title = content.locator('.text-foreground');
   const rowBox = (await row.boundingBox())!;
   const before = (await content.boundingBox())!;
-  expect(before.width).toBeGreaterThan(rowBox.width - 20);
+  expect(before.width).toBeGreaterThan(rowBox.width - 70);
   await row.hover();
   const after = (await content.boundingBox())!;
   expect(after.width).toBe(before.width);
   const actions = (await row.locator('.row-actions').boundingBox())!;
   const titleBox = (await title.boundingBox())!;
   expect(actions.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-  const slot = (await content.locator('.tabular-nums').boundingBox())!;
+  const slot = (await row.locator('.slot-hint').boundingBox())!;
   expect(actions.y).toBeGreaterThanOrEqual(slot.y + slot.height);
   // The metadata line reserves right padding for the action cluster, so the
   // hovered buttons never overlap the (truncated) metadata text itself.
@@ -498,6 +502,14 @@ test('file rows show basenames with +N badge and Windows paths split correctly',
   const windows = page.locator('#clip-item-clip-8');
   await expect(windows).toContainText('report.docx');
   await expect(windows).toContainText('C:\\Users\\me');
+});
+
+test('metadata starts with the source app icon and name', async ({ page }) => {
+  const meta = page.locator('#clip-item-clip-0 .row-meta');
+  await expect(meta.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  await expect(meta.locator('span.truncate')).toHaveText(/^Editor\u00a0·\u00a0/);
+  // 没有图标的应用只显示名字
+  await expect(page.locator('#clip-item-clip-1 .row-meta img')).toHaveCount(0);
 });
 
 test('labeled rows keep a one-line preview next to the label', async ({ page }) => {
