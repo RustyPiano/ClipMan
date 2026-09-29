@@ -219,7 +219,9 @@
           .reorderPinned(selectedItem.id, event.key === 'ArrowUp' ? 'up' : 'down')
           .catch((error) => toastStore.add(String(error), 'error'));
       } else {
-        selectionStore.move(event.key === 'ArrowDown' ? 1 : -1, displayItems);
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        if (event.shiftKey && !mod) selectionStore.extendSelection(delta, displayItems);
+        else selectionStore.move(delta, displayItems);
         revealSelection();
         if (selectionStore.panel === 'recent' && selectedIndex >= displayItems.length - 10) {
           void clipboardStore.loadMoreRecent();
@@ -454,6 +456,7 @@
               ><kbd class="kbd-keycap">{modifier}↵</kbd>
               {clipboardStore.autoPaste ? t.copy : t.paste}</span
             >
+            <span><kbd class="kbd-keycap">⇧↑↓</kbd> {t.multiSelectHint}</span>
             <span><kbd class="kbd-keycap">Esc</kbd> {t.close}</span>
           </span>{/if}
       </div>

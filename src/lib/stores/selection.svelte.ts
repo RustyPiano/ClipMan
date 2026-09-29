@@ -12,6 +12,8 @@ class SelectionStore {
   selectedId = $state<string | null>(null);
   selectedIds = new SvelteSet<string>();
   private useRevision = 0;
+  // ⇧↑/↓ 从锚点扩展到光标；单独勾选的行会成为新的锚点
+  private anchorId: string | null = null;
 
   index(items: readonly Item[]) {
     return Math.max(
@@ -30,6 +32,19 @@ class SelectionStore {
     this.setSelectedIndex(count ? (this.index(items) + delta + count) % count : 0, items);
   }
 
+  /** 光标移动一行，并把多选设为锚点到光标之间的连续范围（到边界不回绕）。 */
+  extendSelection(delta: number, items: readonly Item[]) {
+    const from = this.index(items);
+    if (!this.selectedIds.size || !items.some((item) => item.id === this.anchorId))
+      this.anchorId = items[from]?.id ?? null;
+    this.setSelectedIndex(from + delta, items);
+    const anchor = items.findIndex((item) => item.id === this.anchorId);
+    const cursor = this.index(items);
+    this.selectedIds.clear();
+    for (const item of items.slice(Math.min(anchor, cursor), Math.max(anchor, cursor) + 1))
+      this.selectedIds.add(item.id);
+  }
+
   reset(panel: QuickBarPanel = 'recent') {
     this.panel = panel;
     this.resetSelection();
@@ -44,6 +59,7 @@ class SelectionStore {
   toggleSelected(id: string) {
     this.cancelUse();
     if (!this.selectedIds.delete(id)) this.selectedIds.add(id);
+    this.anchorId = id;
   }
 
   clearSelection() {

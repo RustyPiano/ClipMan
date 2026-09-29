@@ -206,6 +206,7 @@ interface Translations {
   // Multi-select merge paste
   selectedCount: string;
   mergePasteHint: string;
+  multiSelectHint: string;
 }
 
 const zh: Translations = {
@@ -414,6 +415,7 @@ const zh: Translations = {
   // Multi-select merge paste
   selectedCount: '已选 {n} 项',
   mergePasteHint: '合并粘贴（换行分隔）',
+  multiSelectHint: '多选',
 };
 
 const en: Translations = {
@@ -631,6 +633,7 @@ const en: Translations = {
   // Multi-select merge paste
   selectedCount: '{n} selected',
   mergePasteHint: 'Merge paste (newlines)',
+  multiSelectHint: 'Multi-select',
 };
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };

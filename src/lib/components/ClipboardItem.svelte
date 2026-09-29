@@ -356,6 +356,7 @@
           aria-pressed={action.pressed}
           tabindex={selected ? 0 : -1}
           disabled={busy}
+          onmousedown={(event) => event.preventDefault()}
           onclick={() => {
             onSelect();
             void action.run();

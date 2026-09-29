@@ -360,6 +360,36 @@ test('multi-selection is distinct from keyboard focus and exposes image skipping
   await expect(page.locator('.quickbar-panel > footer')).toContainText('Merge skips 1 image(s)');
 });
 
+test('multi-selection works from the keyboard and Enter pastes it after mouse toggles', async ({
+  page,
+}) => {
+  const pasted = () =>
+    page.evaluate(() =>
+      (window as any).calls.filter((c: any) => c.cmd === 'paste_clips').map((c: any) => c.args.ids)
+    );
+  await page.getByRole('combobox').focus();
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowUp');
+  await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
+  await page.keyboard.press('Enter');
+  await expect.poll(pasted).toEqual([['clip-0', 'clip-1']]);
+
+  // 鼠标勾选后焦点留在搜索框，回车合并粘贴，不会再次触发勾选按钮
+  await page.keyboard.press('Escape');
+  for (const id of ['clip-3', 'clip-4']) {
+    const row = page.locator(`#clip-item-${id}`);
+    await row.hover();
+    await row.getByRole('button', { name: 'Select / deselect' }).click();
+  }
+  await expect(page.getByRole('combobox')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(pasted).toEqual([
+    ['clip-0', 'clip-1'],
+    ['clip-3', 'clip-4'],
+  ]);
+});
+
 test('limited text preview explains that copy still uses complete content', async ({ page }) => {
   await page.getByRole('combobox').fill('large');
   const expand = page.getByRole('button', { name: 'Expand preview' });
