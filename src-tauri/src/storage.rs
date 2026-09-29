@@ -1260,6 +1260,7 @@ mod tests {
             storage.app_icon("Safari").unwrap().as_deref(),
             Some("data:image/png;base64,Aw==")
         );
+        drop(storage);
         fs::remove_dir_all(root).unwrap();
     }
 
