@@ -35,7 +35,7 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪贴板管理器。采�
 - **置顶常用内容** - 一键置顶代码片段、命令、链接等，永久保存
 - **持久化存储** - SQLite 本地数据库，重启不丢失，智能去重
 - **全文搜索** - SQLite FTS5 + trigram 索引，支持中英文实时搜索
-- **多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览
+- **多类型历史** - 统一保存纯文本、HTML 富文本、图片和文件列表，完整内容按需预览；图标区分文本、链接、代码、图片和文件，macOS 上显示来源应用图标
 - **QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`），键盘选择并按设置自动粘贴或仅复制
 - **粘贴格式** - 保留原始格式、仅经 ClipMan 取用时去除格式，或复制富文本后直接改为纯文本；`⌥Enter` 临时切换一次
 - **键鼠操作** - 每行可直接复制、置顶、编辑标签、删除；`⇧↑/↓` 或 `⌘`+点击多选后回车合并粘贴
@@ -55,10 +55,10 @@ ClipMan 是一个**轻量级**、**高性能**的现代剪贴板管理器。采�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.4.2_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.4.2_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.4.2_x64.dmg`
-- **Linux**: `ClipMan_2.4.2_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.3_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.3_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.3_x64.dmg`
+- **Linux**: `ClipMan_2.4.3_amd64.AppImage`
 
 ### macOS 安装与权限
 
