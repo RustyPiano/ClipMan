@@ -8,32 +8,20 @@
 
 ## 当前状态一句话
 
-**最新发布版本为 v2.3.0**；main 上发布流程加固和过度设计与防御性代码清理两个提交已推送（`cfd1234`），CI 全部通过（Windows/Linux 编译通过，rustup 按 `rust-toolchain.toml` 装上 1.96.0），尚未发布，新发布流程尚未实际运行。
+**v2.4.1 已打标签，Release 工作流运行中**，这是新发布流程第一次实际运行；全部通过后在 GitHub 上把草稿 Publish。内容见 `release_notes_2.4.1.md`（三种粘贴格式、5.5rem 行、去除 fallback 的清理、发布流程加固、WebKit 行显示修复）。v2.4.0 标签存在但从未产出 Release：标签提交里的 e2e 测试 `closing the session cancels Enter…` 在 CI 的 WebKit 上两次因时序失败（Escape 晚于 90ms 模拟搜索），已在 `a1d06b5` 改为同一任务内派发按键。
 
-## 最近提交（已推送，未发布）
+## 最近验证
 
-- 发布流程：版本预检查、共用 CI、`verify-release.py` 下载附件并用 minisign 校验更新签名和历史公钥；无用代码、`serde_bytes` 依赖和 47 个生成图标已删除。
-- 2026-09-29 清理（按全仓审查逐项修改）：
-  - 删除：剪贴板监听的停止/重启和轮询 fallback、迁移目标的替换逻辑、从未发布过的旧设置键、`group_name`、⌥回车后的延迟富文本清理、文件写回失败时改写路径文本、自定义目录不可用时退回默认目录、`safe_lock`、Markdown 渲染（更新说明改为原文显示，移除 marked）、`hasTauriRuntime` 及同类判断、手写焦点陷阱（改用原生 `<dialog>`）。
-  - IPC：`paste_clip` 的 plain 必填；`paste_clips` 不再传 separator；`check_clipboard_permission` 失败时抛出错误；列表项不再有 `groupName`。
-  - 数据库每次打开时把换行格式的文件记录转为 JSON；界面语言以后端 `settings.locale` 为准。
-  - 剪贴板监听启动失败时与数据存储初始化失败一样，弹出错误对话框后退出；读取版本号、打开辅助功能设置失败时以提示显示错误；`vite.config.js` 改读 Tauri v2 的 `TAURI_ENV_DEBUG`，debug 构建不再压缩并生成 sourcemap。
-  - capabilities 只保留 `core:default`、`core:window:allow-hide`、`dialog:default`；CI 和发布工作流去掉 `dtolnay/rust-toolchain`，由 rustup 按 `rust-toolchain.toml` 安装 1.96.0。
-  - 8 份已完成的开发文档移入 `docs/archive/`；README、发布指南、AGENTS.md 同步修改。
-- 本机验证：cargo fmt / clippy `-D warnings` / test（103 项，1 个手动基准忽略）/ build；lint、check、test:types、`bun test tests/`（59 项）、build、prettier；`bun run test:ui`（Chromium + WebKit 48 项）；发布校验测试 6 项。命令见 AGENTS.md「Testing & quality gates」。
+- 发版前本机：lint、check、test:types、`bun test tests/`（59 项）、build、prettier、`bun run test:ui`（Chromium + WebKit 48 项）。Rust 自 `cfd1234` 起只改了版本号，由 CI 覆盖。
+- WebKit 行修复里的图片 `self-start` 在 Playwright WebKit 下本来就不复现，只在系统 WKWebView 中出现，需要用正式包目测。
 - Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。
 
 ## 待办（按优先级）
 
-1. 在真实应用里回归本轮行为变化：精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-2. QuickBar 行在 WebKit（macOS 应用实际使用的引擎）下的显示问题，生成产品页截图时发现，均在 `ClipboardItem.svelte`：
-   - 图片缩略图的 `w-fit` 不生效，边框撑满整行、图片居中（已用系统 WKWebView 核实）；改为 `self-start` 之类让图片按自身宽度显示。
-   - 文件条目元信息里模板换行多出一个空格（“访达  · 2 个文件”）。
-   - 多选勾选标记盖住较长的第一行文字。
-   - 搜索框占位符写“剪切板”，其余界面写“剪贴板”。
-3. 用 v2.3.0 正式包实机验证 Linux，并回归 v2.2.1→v2.3.0 updater 路径。
-4. 发布前用正式签名包复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-5. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
+1. 等 Release 工作流（含 `verify-release`）通过后 Publish 草稿；在 Vercel 重新部署产品页，并在 `ClipMan-Page` 运行 `npm run screenshots` 更新截图。
+2. 用 v2.4.0 正式包回归：图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+3. 用正式包实机验证 Linux，回归 v2.3.0→v2.4.0 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
 

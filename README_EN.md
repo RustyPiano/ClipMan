@@ -55,10 +55,10 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 
 Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
 
-- **Windows**: `ClipMan_2.4.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.4.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.4.0_x64.dmg`
-- **Linux**: `ClipMan_2.4.0_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.1_x64.dmg`
+- **Linux**: `ClipMan_2.4.1_amd64.AppImage`
 
 ### macOS Install & Permissions
 
