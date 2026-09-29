@@ -219,16 +219,20 @@ test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page
 });
 
 test('closing the session cancels Enter while a search is running', async ({ page }) => {
-  await page.getByRole('combobox').fill('cancelled');
-  // 两个按键在同一个任务里派发，保证 Escape 一定早于搜索返回，不受 CI 速度影响
-  await page.getByRole('combobox').evaluate((input) => {
+  // 输入、Enter、Escape 在同一个任务里派发：分开发送时，慢机器上 30ms 防抖加 90ms 搜索
+  // 可能在 Enter 之前就完成，此时 Enter 粘贴已有结果是正确行为，测试就不再覆盖取消路径
+  await page.getByRole('combobox').evaluate((input: HTMLInputElement) => {
+    input.value = 'cancelled';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     for (const key of ['Enter', 'Escape'])
       input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
   });
   await page.waitForTimeout(150);
-  expect(
-    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
-  ).toEqual([]);
+  const calls = await page.evaluate(() =>
+    (window as any).calls.filter((c: any) => ['search_clips', 'paste_clip'].includes(c.cmd))
+  );
+  expect(calls.map((c: any) => c.cmd)).toEqual(['search_clips']);
+  expect(calls[0].args.query).toBe('cancelled');
 });
 
 test('large searches show a truncation notice and reset the scroller', async ({ page }) => {
