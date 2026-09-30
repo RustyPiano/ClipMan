@@ -38,7 +38,7 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 - **Multiple Content Types** - Store plain text, HTML, images, and file lists with details loaded on demand; glyphs tell text, links, code, images and files apart, and macOS shows the source app's icon
 - **QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, then auto-paste or copy based on settings
 - **Paste Format** - Keep original formatting, strip it only when taking clips through ClipMan, or turn copied rich text into plain text right away; `⌥Enter` flips it for one paste
-- **Mouse and Keyboard** - Copy, pin, label, or delete directly from each row; multi-select with `⇧↑/↓` or `⌘`-click, then press Enter to merge paste
+- **Mouse and Keyboard** - Copy, pin, label, or delete directly from each row; select a range with `⇧↑/↓` or `⇧`-click, toggle rows with `⌘`-click, then press Enter to merge paste
 - **Tray Menu** - Quick access to recent and pinned items
 - **Multiple Themes** - Light/Dark/Pink themes, follow system
 - **Multi-Language** - English and Chinese support, auto-detect system language
@@ -55,10 +55,10 @@ ClipMan is a **lightweight**, **high-performance** modern clipboard manager buil
 
 Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
 
-- **Windows**: `ClipMan_2.4.3_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.4.3_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.4.3_x64.dmg`
-- **Linux**: `ClipMan_2.4.3_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.4_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.4_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.4_x64.dmg`
+- **Linux**: `ClipMan_2.4.4_amd64.AppImage`
 
 ### macOS Install & Permissions
 
