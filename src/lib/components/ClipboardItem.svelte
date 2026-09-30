@@ -60,6 +60,7 @@
     onSelect,
     onHover,
     onToggleSelect,
+    onExtendSelect,
     onUse,
   }: {
     item: ClipItem;
@@ -71,6 +72,7 @@
     onSelect: () => void;
     onHover: () => void;
     onToggleSelect: () => void;
+    onExtendSelect: () => void;
     onUse: () => void | Promise<void>;
   } = $props();
   const t = $derived(i18n.t);
@@ -183,8 +185,10 @@
     }
   }
 
+  // ⇧ 点击选择范围、⌘ 点击勾选单行，都不粘贴
   function use(event: MouseEvent) {
-    if (event.metaKey || event.ctrlKey) onToggleSelect();
+    if (event.shiftKey) onExtendSelect();
+    else if (event.metaKey || event.ctrlKey) onToggleSelect();
     else {
       onSelect();
       void onUse();
@@ -224,7 +228,8 @@
       tabindex={selected ? 0 : -1}
       disabled={busy || editing}
       onmousedown={(event) => event.preventDefault()}
-      onclick={() => {
+      onclick={(event) => {
+        if (event.shiftKey) return onExtendSelect();
         onSelect();
         onToggleSelect();
       }}

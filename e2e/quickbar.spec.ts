@@ -350,14 +350,14 @@ test('image originals are loaded only when explicitly requested', async ({ page 
 test('multi-selection is distinct from keyboard focus and exposes image skipping', async ({
   page,
 }) => {
+  await page.getByRole('combobox').focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
   await page
     .locator('#clip-item-clip-0 [role=gridcell]')
     .first()
     .getByRole('button')
     .click({ modifiers: ['ControlOrMeta'] });
-  await page.getByRole('combobox').focus();
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('ArrowDown');
   await expect(page.locator('#clip-item-clip-2')).toHaveAttribute('aria-selected', 'false');
   await page
     .locator('#clip-item-clip-2')
@@ -378,6 +378,16 @@ test('multi-selection works from the keyboard and Enter pastes it after mouse to
   await page.keyboard.press('Shift+ArrowDown');
   await page.keyboard.press('Shift+ArrowUp');
   await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
+  // 缩回只剩起始行时取消多选，不按 Shift 的方向键清空多选
+  await page.keyboard.press('Shift+ArrowUp');
+  await expect(page.locator('.quickbar-panel > footer')).not.toContainText('selected');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.quickbar-panel > footer')).not.toContainText('selected');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
   await page.keyboard.press('Enter');
   await expect.poll(pasted).toEqual([['clip-0', 'clip-1']]);
 
@@ -394,6 +404,34 @@ test('multi-selection works from the keyboard and Enter pastes it after mouse to
     ['clip-0', 'clip-1'],
     ['clip-3', 'clip-4'],
   ]);
+});
+
+test('shift-click selects a range and Enter uses a single checked row', async ({ page }) => {
+  const footer = page.locator('.quickbar-panel > footer');
+  const body = (id: string) =>
+    page.locator(`#clip-item-${id} [role=gridcell]`).nth(1).getByRole('button');
+  await body('clip-1').click({ modifiers: ['Shift'] });
+  await expect(footer).toContainText('1 selected');
+  await body('clip-3').click({ modifiers: ['Shift'] });
+  await expect(footer).toContainText('3 selected');
+  await page.keyboard.press('Escape');
+  await body('clip-3').click({ modifiers: ['ControlOrMeta'] });
+  await page.locator('#clip-item-clip-5').hover();
+  await expect(page.locator('#clip-item-clip-5')).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('Enter');
+  const used = await page.evaluate(() =>
+    (window as any).calls.filter((c: any) => c.cmd === 'paste_clip' || c.cmd === 'paste_clips')
+  );
+  expect(used.map((c: any) => c.args.id ?? c.args.ids)).toEqual(['clip-3']);
+});
+
+test('deleting the cursor row keeps the cursor in place', async ({ page }) => {
+  await page.getByRole('combobox').focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#clip-item-clip-3')).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('ControlOrMeta+Backspace');
+  await expect(page.locator('#clip-item-clip-3')).toHaveCount(0);
+  await expect(page.locator('#clip-item-clip-4')).toHaveAttribute('data-active', 'true');
 });
 
 test('limited text preview explains that copy still uses complete content', async ({ page }) => {

@@ -48,3 +48,36 @@ test('new input, navigation and window reset invalidate a pending use intent', (
   selectionStore.reset();
   expect(selectionStore.isCurrentUse(revision)).toBe(false);
 });
+
+test('shift-arrows grow and shrink a range; collapsing to one row or a plain arrow clears it', () => {
+  const rows = [...items, { id: 'd' }];
+  selectionStore.extendSelection(1, rows);
+  selectionStore.extendSelection(1, rows);
+  expect([...selectionStore.selectedIds]).toEqual(['a', 'b', 'c']);
+  selectionStore.extendSelection(-1, rows);
+  expect([...selectionStore.selectedIds]).toEqual(['a', 'b']);
+  selectionStore.extendSelection(-1, rows);
+  expect(selectionStore.selectedIds.size).toBe(0);
+  selectionStore.extendSelection(-1, rows);
+  expect(selectionStore.selectedIds.size).toBe(0);
+
+  selectionStore.setSelectedIndex(1, rows);
+  selectionStore.extendSelection(1, rows);
+  expect([...selectionStore.selectedIds]).toEqual(['b', 'c']);
+  selectionStore.move(1, rows);
+  expect(selectionStore.selectedIds.size).toBe(0);
+  expect(selectionStore.selectedId).toBe('d');
+});
+
+test('shift-click starts a selection at the clicked row, then selects the range from it', () => {
+  const rows = [...items, { id: 'd' }];
+  selectionStore.extendTo('b', rows);
+  expect([...selectionStore.selectedIds]).toEqual(['b']);
+  selectionStore.extendTo('d', rows);
+  expect([...selectionStore.selectedIds]).toEqual(['b', 'c', 'd']);
+  expect(selectionStore.selectedId).toBe('d');
+  selectionStore.extendTo('a', rows);
+  expect([...selectionStore.selectedIds]).toEqual(['a', 'b']);
+  selectionStore.extendSelection(1, rows);
+  expect(selectionStore.selectedIds.size).toBe(0);
+});

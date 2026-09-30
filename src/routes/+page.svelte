@@ -77,9 +77,14 @@
     }
   });
 
+  // 光标所在行被删除或移出列表时，光标留在原来的位置（落到下一行），不跳回顶部
+  let lastSelectedIndex = 0;
+  $effect(() => {
+    if (selectedItem?.id === selectionStore.selectedId) lastSelectedIndex = selectedIndex;
+  });
   $effect(() => {
     if (selectionStore.selectedId && selectedItem?.id !== selectionStore.selectedId) {
-      selectionStore.setSelectedIndex(0, displayItems);
+      selectionStore.setSelectedIndex(lastSelectedIndex, displayItems);
       revealSelection();
     }
   });
@@ -155,10 +160,15 @@
         return;
     }
     if (!selectionStore.isCurrentUse(revision)) return;
-    if (slot === undefined && selectionStore.selectedIds.size >= 2) {
+    const selected = [...selectionStore.selectedIds];
+    if (slot === undefined && selected.length >= 2) {
       await clipboardStore.useSelectedClips(mode);
     } else {
-      const item = displayItems[slot ?? selectionStore.index(displayItems)];
+      // 只勾选了一行时回车使用这一行，而不是光标所在行
+      const item =
+        slot === undefined && selected.length === 1
+          ? displayItems.find((clip) => clip.id === selected[0])
+          : displayItems[slot ?? selectionStore.index(displayItems)];
       if (item) await clipboardStore.useClip(item, mode, { plain });
     }
   }
@@ -218,6 +228,7 @@
       if (mod && event.shiftKey && selectionStore.panel === 'pinned' && selectedItem) {
         void clipboardStore
           .reorderPinned(selectedItem.id, event.key === 'ArrowUp' ? 'up' : 'down')
+          .then(revealSelection)
           .catch((error) => toastStore.add(String(error), 'error'));
       } else {
         const delta = event.key === 'ArrowDown' ? 1 : -1;
@@ -418,6 +429,7 @@
                 {position}
                 onSelect={() => select(position)}
                 onToggleSelect={() => selectionStore.toggleSelected(item.id)}
+                onExtendSelect={() => selectionStore.extendTo(item.id, displayItems)}
                 onHover={() => {
                   if (hoverSelectArmed) select(position);
                 }}
@@ -446,6 +458,8 @@
     >
       <div class="min-w-0 truncate" aria-live="polite">
         {#if clipboardStore.isUsing}{t.loading}
+        {:else if selectionStore.selectedIds.size === 1}
+          {i18n.format(t.selectedCount, { n: 1 })} · ↵ {clipboardStore.autoPaste ? t.paste : t.copy}
         {:else if selectionStore.selectedIds.size >= 2}
           {i18n.format(t.selectedCount, { n: selectionStore.selectedIds.size })} · ↵ {t.mergePasteHint}
           {#if skippedImages}

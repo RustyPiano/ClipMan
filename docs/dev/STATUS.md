@@ -10,6 +10,10 @@
 
 **v2.4.3 已于 2026-09-30 公开**（`latest.json` 报告 2.4.3，11 个平台条目）：QuickBar 列表重新设计（结构见 AGENTS.md「QuickBar rows」）和 macOS 来源应用图标（`app_icons` 表、`get_app_icon` 命令、`app-icon-saved` 事件），内容见 `release_notes_2.4.3.md`。旧记录要等来源应用在新版本里再复制一次才有图标。
 
+## 未提交改动
+
+- QuickBar 多选与光标改为访达式（`selection.svelte.ts`、`ClipboardItem.svelte`、`+page.svelte`，单元测试与 e2e 已补），随下一个版本发布：⇧↑/↓ 缩回一行时取消多选，不按 Shift 的 ↑/↓ 清空多选；⇧ 点击选择范围而不是粘贴；只勾一行时回车用这一行；删除或取消置顶后光标留在原位置；⌘⇧↑/↓ 排序后滚动跟随。
+
 ## 最近验证
 
 - 本机：cargo fmt / clippy `-D warnings` / test（105 项，含 macOS 真实图标渲染）；lint、check、test:types、`bun test tests/`（62 项）、build、prettier、`bun run test:ui`（Chromium + WebKit 52 项，重复 5 遍共 260 次全部通过）；发布校验测试 6 项。
@@ -22,7 +26,11 @@
 
 1. 用 v2.4.3 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
 2. 用正式包实机验证 Linux，回归 v2.4.2→v2.4.3 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-3. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
+3. QuickBar 交互待观察（2026-09-30 检查时发现，按实际使用情况再决定是否改）：
+   - 有多选时 ⌘⌫ / ⌘P 只处理光标所在行，不处理勾选的行；访达会作用于全部选中项。批量删除没有撤销，要改需新增批量删除/置顶。
+   - Esc 直接关闭并清空搜索词；可改成先清空搜索、再按一次关闭，与「先清空多选」一致，但关闭要多按一次。
+   - 鼠标悬停会移动光标，⇧↑/↓ 选范围时鼠标划过别的行，下一次扩展会从鼠标所在行算起；悬停移动光标是为了让预览跟随鼠标。
+4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
 
