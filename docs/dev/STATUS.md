@@ -8,7 +8,7 @@
 
 ## 当前状态一句话
 
-**v2.4.4 已打标签，Release 工作流运行中**：QuickBar 多选与光标改为访达式（⇧ 点击选范围、方向键清空多选、删除后光标留在原位等），内容见 `release_notes_2.4.4.md`。v2.4.3（列表重新设计、macOS 来源应用图标）已于 2026-09-30 公开。
+**v2.4.4 已于 2026-09-30 公开**，产品页已重新部署：QuickBar 多选与光标改为访达式（⇧ 点击选范围、方向键清空多选、删除后光标留在原位等），内容见 `release_notes_2.4.4.md`。v2.4.3 带来了列表重新设计和 macOS 来源应用图标。
 
 ## 最近验证
 
@@ -20,14 +20,13 @@
 
 ## 待办（按优先级）
 
-1. v2.4.4 Release 全部通过后 Publish，并在 Vercel 重新部署产品页（版本号在构建时读取）。
-2. 用 v2.4.4 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-3. 用正式包实机验证 Linux，回归 v2.4.3→v2.4.4 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-4. QuickBar 交互待观察（2026-09-30 检查时发现，按实际使用情况再决定是否改）：
+1. 用 v2.4.4 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
+2. 用正式包实机验证 Linux，回归 v2.4.3→v2.4.4 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
+3. QuickBar 交互待观察（2026-09-30 检查时发现，按实际使用情况再决定是否改）：
    - 有多选时 ⌘⌫ / ⌘P 只处理光标所在行，不处理勾选的行；访达会作用于全部选中项。批量删除没有撤销，要改需新增批量删除/置顶。
    - Esc 直接关闭并清空搜索词；可改成先清空搜索、再按一次关闭，与「先清空多选」一致，但关闭要多按一次。
    - 鼠标悬停会移动光标，⇧↑/↓ 选范围时鼠标划过别的行，下一次扩展会从鼠标所在行算起；悬停移动光标是为了让预览跟随鼠标。
-5. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
+4. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
 
 ## 已知问题 / 注意事项
 
@@ -45,4 +44,4 @@
 - 竞品分析与长期路线图：claude.ai artifact「ClipMan 盲点报告与路线图」（2026-07-07）。
 - 已完成的开发记录（v2.2 波次规格与验收、审核记录、QuickBar 改版记录）和 v2.0 重设计文档：`docs/archive/`，均带归档横幅，不作为当前指导。
 - 发布流程：`.github/RELEASE_GUIDE.md`。
-- 产品页（https://www.clipman.top）在 `RustyPiano/ClipMan-Page` 仓库，推送 main 后由 Vercel 部署。版本和下载链接在构建时读取最新发布，发版后需在 Vercel 重新部署；QuickBar 界面变化后在该仓库运行 `npm run screenshots`，用本仓库前端和 WebKit 重新截图。
+- 产品页（https://www.clipman.top）在 `RustyPiano/ClipMan-Page` 仓库，推送 main 后由 Vercel 部署。版本和下载链接在构建时读取最新发布，发版后需在 Vercel 重新部署（没有新提交时运行 `vercel redeploy <最新生产部署 URL> --target production`，项目名 `clip-man-page`）；QuickBar 界面变化后在该仓库运行 `npm run screenshots`，用本仓库前端和 WebKit 重新截图。
