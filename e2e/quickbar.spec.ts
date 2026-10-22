@@ -574,6 +574,38 @@ test('file rows show basenames with +N badge and Windows paths split correctly',
   await expect(windows).toContainText('C:\\Users\\me');
 });
 
+test('duplicate file preview paths render both entries and keep the total count', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    (window as any).emitTestEvent('clipboard-changed', {
+      id: 'duplicate-files',
+      contentType: 'files',
+      content: btoa(JSON.stringify(['/qa/report.pdf', '/qa/report.pdf'])),
+      timestamp: Date.now() / 1000,
+      isPinned: false,
+      pinOrder: null,
+      label: null,
+      sourceApp: 'Editor',
+      hasHtml: false,
+      contentBytes: 60,
+      fileCount: 3,
+    });
+  });
+  const row = page.locator('#clip-item-duplicate-files');
+  const filenames = row.getByText('report.pdf', { exact: true });
+  await expect(filenames).toHaveCount(2);
+  await expect(row.getByText('+1', { exact: true })).toBeVisible();
+  await filenames.first().click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).calls.filter((call: any) => call.cmd === 'paste_clip'))
+    )
+    .toEqual([
+      { cmd: 'paste_clip', args: { id: 'duplicate-files', mode: 'default', plain: false } },
+    ]);
+});
+
 test('metadata starts with the source app icon and name', async ({ page }) => {
   const meta = page.locator('#clip-item-clip-0 .row-meta');
   await expect(meta.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);

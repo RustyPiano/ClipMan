@@ -323,7 +323,7 @@
                 : 'line-clamp-2 [overflow-wrap:anywhere]'}">{text}</span
             >
           {:else if item.contentType === 'files'}
-            {#each visiblePaths as path, index (path)}
+            {#each visiblePaths as path, index}
               <span class="flex min-w-0 items-center gap-1.5">
                 <span class="truncate text-[13px] leading-5 text-foreground"
                   >{fileBasename(path) || path}</span
