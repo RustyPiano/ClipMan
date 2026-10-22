@@ -18,15 +18,7 @@
 
 ## Introduction
 
-ClipMan is a **lightweight**, **high-performance** modern clipboard manager built with Rust + Svelte 5, focusing on essential and practical features.
-
-**Why ClipMan?**
-
-- **Persistent Storage** - History remains available after system restart
-- **Pin Feature** - Pin frequently used content with one click, access anytime
-- **Lightweight & Fast** - Small installers and fast startup
-- **Modern UI** - Clean interface with multiple themes
-- **Open Source** - MIT license, fully open source
+ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is stored in a local SQLite database.
 
 ## Features
 
@@ -125,20 +117,6 @@ See "Where Things Live" in [AGENTS.md](AGENTS.md) for where each module lives.
 
 ## Roadmap
 
-**Completed**
-- [x] Clipboard monitoring and history
-- [x] Pin feature
-- [x] Full-text search
-- [x] QuickBar auto-paste
-- [x] Global hotkey
-- [x] System tray
-- [x] Auto-update
-- [x] Multiple themes
-- [x] Skip password-like clipboard contents
-- [x] Custom storage location
-- [x] Launch at startup
-
-**Planned**
 - [ ] Smart image compression (AVIF/WebP/MozJPEG, configurable)
 - [ ] Filter rules
 - [ ] Plugin system

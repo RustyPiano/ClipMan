@@ -18,7 +18,6 @@
 
   const t = $derived(i18n.t);
 
-  // Dynamic shortcut presets based on OS
   const shortcutPresets = [
     {
       label: isMac ? '⌘⇧V' : 'Ctrl+Shift+V',
@@ -45,7 +44,6 @@
     },
   ];
 
-  // Convert Tauri shortcut to display format
   function formatShortcut(shortcut: string): string[] {
     if (!shortcut) return [];
 
@@ -71,7 +69,6 @@
     }
   }
 
-  // Keyboard recording state
   let isRecording = $state(false);
   let recordedKeys = $state<string[]>([]);
   let recordingWarning = $state('');
@@ -115,7 +112,7 @@
     isRecording = false;
     recordedKeys = [];
     recordingWarning = '';
-    // Serialize restoration after an in-flight disable, including hide/unmount.
+    // 等待禁用操作结束后再恢复快捷键，关闭窗口或卸载组件时也按这个顺序执行。
     shortcutTask = shortcutTask
       .then(() => invoke<void>('enable_global_shortcut'))
       .catch((error) => {
@@ -145,16 +142,13 @@
     event.preventDefault();
     event.stopPropagation();
 
-    // ESC to cancel
     if (event.key === 'Escape') {
       void stopRecording();
       return;
     }
 
-    // Build key combination
     const keys: string[] = [];
 
-    // Add modifiers
     if (event.metaKey || event.ctrlKey) {
       keys.push('CommandOrControl');
     }
@@ -165,35 +159,22 @@
       keys.push('Alt');
     }
 
-    // Add main key (ignore pure modifiers)
     const mainKey = event.key.toUpperCase();
-    if (
-      mainKey !== 'META' &&
-      mainKey !== 'CONTROL' &&
-      mainKey !== 'SHIFT' &&
-      mainKey !== 'ALT' &&
-      mainKey !== 'ESCAPE' &&
-      mainKey.length === 1
-    ) {
+    if (mainKey.length === 1) {
       keys.push(mainKey);
 
-      // Build the shortcut string
       const shortcut = keys.join('+');
 
-      // Check if it's the same as current shortcut
       if (shortcut === settings.globalShortcut) {
         recordingWarning = t.alreadyCurrentHotkey;
-        // Auto-close warning after 2 seconds
         recordingTimeout = setTimeout(() => {
           void stopRecording();
         }, 2000);
       } else {
-        // Set the new shortcut
         settings.globalShortcut = shortcut;
         void stopRecording();
       }
     } else {
-      // Just show modifiers while waiting for main key
       recordedKeys = keys.map(formatShortcutKey);
       recordingWarning = '';
     }
@@ -256,7 +237,6 @@
         {/if}
       </div>
 
-      <!-- Keyboard key display or recording prompt -->
       <div
         class={`flex items-center gap-2 p-3 rounded-lg border transition-all duration-200 ${
           isRecording ? 'bg-primary/10 border-primary animate-pulse' : 'bg-muted/30 border-border'
@@ -313,7 +293,6 @@
         {/if}
       </div>
 
-      <!-- Preset shortcuts -->
       <div class="flex flex-wrap gap-2 pt-1">
         <span class="text-xs text-muted-foreground self-center">{t.commonHotkeys}</span>
         {#each shortcutPresets as preset (preset.value)}
@@ -328,7 +307,6 @@
         {/each}
       </div>
 
-      <!-- Advanced: Manual input -->
       <details class="group">
         <summary
           class="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors select-none"

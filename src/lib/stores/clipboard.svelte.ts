@@ -397,26 +397,16 @@ class ClipboardStore {
   async setClipLabel(id: string, label: string) {
     const normalizedLabel = label.trim();
 
-    try {
-      await invoke('set_clip_label', {
-        id,
-        label: normalizedLabel.length > 0 ? normalizedLabel : null,
-      });
-      await this.reloadFromBackend();
-    } catch (error) {
-      console.error('Failed to set clip label:', error);
-      throw error;
-    }
+    await invoke('set_clip_label', {
+      id,
+      label: normalizedLabel.length > 0 ? normalizedLabel : null,
+    });
+    await this.reloadFromBackend();
   }
 
   async reorderPinned(id: string, direction: ReorderDirection) {
-    try {
-      await invoke('reorder_pinned', { id, direction });
-      await this.reloadFromBackend();
-    } catch (error) {
-      console.error('Failed to reorder pinned item:', error);
-      throw error;
-    }
+    await invoke('reorder_pinned', { id, direction });
+    await this.reloadFromBackend();
   }
 
   /** takePlain/globalPlain: ClipMan-mediated takes write plain text only. */

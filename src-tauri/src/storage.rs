@@ -173,13 +173,13 @@ const TEXT_HEAD_PREVIEW: &str = "substr(content, 1, 4096)";
 const TEXT_MATCH_EXCERPT: &str = "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)";
 const FTS_REBUILD_BATCH_SIZE: i64 = 100;
 
-/// 预览列清单；`text_preview` 是文本类型的预览表达式。Files 只预览第一个路径。
+/// Files 最多返回两个路径，每个路径最多 4096 个字符；总数单独保留。
 fn preview_columns(text_preview: &str) -> String {
     format!(
         "id,
      CASE WHEN content_type='text' THEN {text_preview}
-       WHEN content_type='files' THEN CAST(CASE WHEN json_array_length(CAST(content AS TEXT))>0
-         THEN json_array(substr(json_extract(CAST(content AS TEXT), '$[0]'), 1, 4096)) ELSE '[]' END AS BLOB)
+       WHEN content_type='files' THEN CAST((SELECT json_group_array(substr(value, 1, 4096))
+         FROM json_each(CAST(content AS TEXT)) WHERE key < 2) AS BLOB)
        ELSE x'' END AS preview_content,
      thumbnail, content_type, timestamp, is_pinned, pin_order, label, source_app,
      (html IS NOT NULL) AS has_html, length(content) AS content_bytes,
@@ -1388,7 +1388,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("clipman-paths-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
-        let paths = vec!["/tmp/one\ntwo.txt".to_string(), "/tmp/quote\".txt".into()];
+        let paths = vec![
+            "/tmp/one\ntwo.txt".to_string(),
+            "/tmp/quote\".txt".into(),
+            "/tmp/third.txt".into(),
+        ];
         let payload = encode_file_paths(&paths);
         assert_eq!(split_file_paths(&payload), paths);
         let item = ClipItem {
@@ -1397,10 +1401,10 @@ mod tests {
         };
         storage.insert(&item, 100).unwrap();
         let preview = storage.get_preview_by_id("files").unwrap().unwrap();
-        assert_eq!(preview.file_count, 2);
+        assert_eq!(preview.file_count, 3);
         assert_eq!(
             split_file_paths(std::str::from_utf8(&preview.preview_content).unwrap()),
-            paths[..1]
+            paths[..2]
         );
         assert_eq!(
             storage.get_detail("files").unwrap().unwrap().text,
@@ -2513,6 +2517,27 @@ mod tests {
     }
 
     #[test]
+    fn file_previews_bound_paths_and_keep_the_full_count() {
+        let db_path = temp_db_path("bounded_file_preview");
+        let storage = ClipStorage::new(&db_path).unwrap();
+        let long_path = "中".repeat(4097);
+        storage
+            .insert(
+                &files_item("files", &[&long_path, "/second", "/third"], 1),
+                100,
+            )
+            .unwrap();
+        let preview = storage.get_preview_by_id("files").unwrap().unwrap();
+        assert_eq!(preview.file_count, 3);
+        assert_eq!(
+            split_file_paths(std::str::from_utf8(&preview.preview_content).unwrap()),
+            vec!["中".repeat(4096), "/second".into()]
+        );
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
     fn files_preview_returns_path_text_and_html_flag() {
         let db_path = temp_db_path("files_preview");
         let storage = ClipStorage::new(&db_path).unwrap();
@@ -2536,7 +2561,10 @@ mod tests {
         let files_preview = storage.get_preview_by_id("files").unwrap().unwrap();
         assert_eq!(ContentType::Files, files_preview.content_type);
         assert_eq!(
-            vec!["/Users/bob/a.txt".to_string()],
+            vec![
+                "/Users/bob/a.txt".to_string(),
+                "/Users/bob/b.txt".to_string()
+            ],
             split_file_paths(&String::from_utf8_lossy(&files_preview.preview_content))
         );
         assert_eq!(2, files_preview.file_count);

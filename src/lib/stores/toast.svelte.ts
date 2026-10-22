@@ -11,7 +11,6 @@ class ToastStore {
     const toast = { id, message, type };
     this.toasts.push(toast);
 
-    // Auto remove after configured duration
     setTimeout(() => {
       this.remove(id);
     }, TOAST_DURATION_MS);

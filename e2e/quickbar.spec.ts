@@ -69,7 +69,7 @@ test.beforeEach(async ({ page }) => {
     clips[7] = {
       ...clips[7],
       contentType: 'files',
-      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx', '/tmp/notes.md'])),
+      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
       fileCount: 3,
     };
     clips[8] = {
@@ -267,6 +267,38 @@ test('IME composition does not search or paste before composition ends', async (
       page.evaluate(() => (window as any).calls.some((c: any) => c.cmd === 'search_clips'))
     )
     .toBe(true);
+});
+
+test('IME confirmation after compositionend leaves Enter available for the next paste', async ({
+  page,
+}) => {
+  const input = page.getByRole('combobox');
+  const prevented = await input.evaluate((element: HTMLInputElement) => {
+    element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    element.value = '中文';
+    element.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
+    element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    const confirmation = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      keyCode: 229,
+      isComposing: false,
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(confirmation);
+    return confirmation.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+  await expect(page.getByRole('row')).toHaveCount(1);
+  expect(
+    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
+  ).toEqual([]);
+  await input.press('Enter');
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
+    )
+    .toEqual([{ cmd: 'paste_clip', args: { id: '中文', mode: 'default', plain: false } }]);
 });
 
 test('Tab reaches controls and screenshots cover both panel sizes', async ({

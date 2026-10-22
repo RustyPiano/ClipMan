@@ -10,7 +10,6 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
 
-  // Import modularized components
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
   import GeneralSettings from '$lib/components/settings/GeneralSettings.svelte';
   import ClipboardSettings from '$lib/components/settings/ClipboardSettings.svelte';
@@ -26,14 +25,14 @@
   let loading = $state(true);
   let saving = $state(false);
 
-  // 更新相关状态
   let updateInfo = $state<UpdateInfo | null>(null);
   let checkingUpdate = $state(false);
   let installingUpdate = $state(false);
   let updateMessage = $state('');
 
-  // 数据位置相关状态
   let currentDataPath = $state('');
+  let loadingDataPath = $state(true);
+  let dataPathError = $state('');
   let changingDataPath = $state(false);
   let showMigrationDialog = $state(false);
   let newDataPath = $state('');
@@ -44,11 +43,9 @@
   const MIGRATION_DIALOG_DESCRIPTION_ID = 'migration-dialog-description';
   const MIGRATION_CANCEL_ID = 'migration-dialog-cancel';
 
-  // 侧边栏导航状态
   let activeTab = $state<SettingsTab>('general');
 
   onMount(async () => {
-    // Load settings and data path in parallel for better performance
     await Promise.all([loadSettings(), loadDataPath()]);
   });
 
@@ -67,11 +64,14 @@
   }
 
   async function loadDataPath() {
+    loadingDataPath = true;
+    dataPathError = '';
     try {
       currentDataPath = await invoke<string>('get_current_data_path');
     } catch (err) {
-      console.error('Failed to load data path:', err);
-      currentDataPath = '';
+      dataPathError = String(err);
+    } finally {
+      loadingDataPath = false;
     }
   }
 
@@ -241,7 +241,8 @@
         {t.reset}
       </Button>
       <Button
-        onclick={() => saveSettings()}
+        type="submit"
+        form="settings-form"
         disabled={!settings || loading || saving || changingDataPath}
         class="gap-2 min-w-[100px]"
       >
@@ -267,7 +268,14 @@
           <Loader2 class="h-8 w-8 animate-spin text-primary" />
         </div>
       {:else if settings}
-        <div class="max-w-2xl mx-auto space-y-6">
+        <form
+          id="settings-form"
+          class="max-w-2xl mx-auto space-y-6"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void saveSettings();
+          }}
+        >
           {#if activeTab === 'general'}
             <GeneralSettings bind:settings />
           {:else if activeTab === 'clipboard'}
@@ -277,7 +285,14 @@
           {:else if activeTab === 'tray'}
             <TraySettings bind:settings />
           {:else if activeTab === 'storage'}
-            <StorageSettings {currentDataPath} {changingDataPath} {changeDataLocation} />
+            <StorageSettings
+              {currentDataPath}
+              {loadingDataPath}
+              {dataPathError}
+              {loadDataPath}
+              {changingDataPath}
+              {changeDataLocation}
+            />
           {:else if activeTab === 'about'}
             <AboutSection
               {updateInfo}
@@ -288,7 +303,7 @@
               {installUpdate}
             />
           {/if}
-        </div>
+        </form>
       {:else}
         <div class="flex h-full flex-col items-center justify-center gap-3">
           <p>{t.loadSettingsFailed}</p>

@@ -143,7 +143,7 @@ pub async fn use_clips(
                     .iter()
                     .map(|item| (&item.content_type, item.content.as_slice())),
             )?;
-            write_merged_text_to_system_clipboard(&merged, &marker)?;
+            write_plain_text_to_system_clipboard(&merged, &marker)?;
         } else {
             if items.len() != 1 {
                 return Err("A single copy requires exactly one clip".into());
@@ -244,47 +244,20 @@ fn merge_clip_texts<'a>(
     Ok(merged)
 }
 
-/// Write merged plain text to the clipboard using the same self-copy marker +
-/// TTL as every other write. Merge paste never carries html, so this is the
-/// plain-text write path only.
-fn write_merged_text_to_system_clipboard(
-    merged: &str,
-    marker_state: &Mutex<Option<CopyWrite>>,
-) -> Result<(), String> {
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-    let marker = CopyMarker::from_payload(ContentType::Text, merged.as_bytes());
-    write_with_marker(marker_state, marker, || {
-        clipboard
-            .set_text(merged)
-            .map_err(|e| format!("Failed to write merged text clipboard: {e}"))
-    })?;
-
-    log::info!(
-        "Copied merged clip text to clipboard: {} chars",
-        merged.len()
-    );
-    Ok(())
-}
-
-/// Global-plain mode (`globalPlain`): replace the live clipboard's rich text
-/// with its plain-text form so a direct paste anywhere (without QuickBar) is
-/// unformatted. The marker hashes the plain text only — the same value the
-/// monitor just recorded — so the rewrite is treated as our own write and
-/// never re-captured.
-pub fn strip_rich_text_from_clipboard(
+/// 合并和 globalPlain 共用纯文本写入及自身复制标记。
+pub fn write_plain_text_to_system_clipboard(
     text: &str,
     marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
     write_with_marker(marker_state, marker, || {
-        clipboard.set_text(text).map_err(|e| e.to_string())
+        clipboard
+            .set_text(text)
+            .map_err(|e| format!("Failed to write plain text clipboard: {e}"))
     })?;
 
-    log::info!(
-        "Stripped rich text from clipboard (globalPlain): {} chars",
-        text.len()
-    );
+    log::info!("Copied plain text to clipboard: {} bytes", text.len());
     Ok(())
 }
 

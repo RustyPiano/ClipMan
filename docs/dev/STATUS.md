@@ -1,18 +1,18 @@
 # 项目状态（活文档）
 
-> **这是 Agent 每个工作会话结束前必须更新的文件**（规则见 AGENTS.md「文档维护协议」）。
-> 只记"当前是什么状态、接下来做什么"；做过的事的细节归档在 docs/archive / release notes / git 历史，不要在这里堆积。
-> 保持全文 ≤ 100 行；过时条目直接删除。
+> 记录当前状态、待办和已知问题，保持全文 ≤ 100 行。代码或发布状态变化时更新，过时条目直接删除。
 
-**最后更新：2026-09-30**
+**最后更新：2026-10-22**
 
-## 当前状态一句话
+## 当前状态
 
 **v2.4.4 已于 2026-09-30 公开**，产品页已重新部署：QuickBar 多选与光标改为访达式（⇧ 点击选范围、方向键清空多选、删除后光标留在原位等），内容见 `release_notes_2.4.4.md`。v2.4.3 带来了列表重新设计和 macOS 来源应用图标。
 
+文件摘要最多提供两个路径，界面使用实际文件总数；设置保存拒绝非法值，存储目录读取失败可重新读取；纯文本写入共用，重复判断、异常包装、注释和文档已精简。QuickBar 忽略输入法确认按键，避免回车确认中文时触发粘贴。
+
 ## 最近验证
 
-- 本机（v2.4.4，只改前端）：lint、check、test:types、`bun test tests/`（64 项）、build、prettier、`bun run test:ui`（Chromium + WebKit 56 项，重复 5 遍共 280 次全部通过）；Rust 检查由 CI 覆盖。
+- 本机（2026-10-22，当前工作区）：Rust 107 项、前端 64 项、Chromium/WebKit 64 项、发布校验 6 项全部通过；lint、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。性能基准按配置跳过，原生桌面交互及 Windows/Linux 运行未实测。
 - main 的 CI（`7d6f386`）五个作业全部通过，包括 Windows 和 Linux 编译与测试。
 - 本机 PATH 没有 `minisign`，运行发布校验测试和 `verify-release.py` 时用 `src-tauri/target/release-verification/tools/minisign`。
 - 图片缩略图 `self-start`、类型图标和应用图标的实际观感需要用正式包在系统 WKWebView 中目测。
@@ -41,7 +41,6 @@
 
 ## 背景资料指路
 
-- 竞品分析与长期路线图：claude.ai artifact「ClipMan 盲点报告与路线图」（2026-07-07）。
 - 已完成的开发记录（v2.2 波次规格与验收、审核记录、QuickBar 改版记录）和 v2.0 重设计文档：`docs/archive/`，均带归档横幅，不作为当前指导。
 - 发布流程：`.github/RELEASE_GUIDE.md`。
 - 产品页（https://www.clipman.top）在 `RustyPiano/ClipMan-Page` 仓库，推送 main 后由 Vercel 部署。版本和下载链接在构建时读取最新发布，发版后需在 Vercel 重新部署（没有新提交时运行 `vercel redeploy <最新生产部署 URL> --target production`，项目名 `clip-man-page`）；QuickBar 界面变化后在该仓库运行 `npm run screenshots`，用本仓库前端和 WebKit 重新截图。

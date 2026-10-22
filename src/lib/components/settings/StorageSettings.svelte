@@ -4,9 +4,20 @@
   import { Loader2, FolderOpen } from 'lucide-svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
+  import { toastStore } from '$lib/stores/toast.svelte';
 
-  let { currentDataPath, changingDataPath, changeDataLocation } = $props<{
+  let {
+    currentDataPath,
+    loadingDataPath,
+    dataPathError,
+    loadDataPath,
+    changingDataPath,
+    changeDataLocation,
+  } = $props<{
     currentDataPath: string;
+    loadingDataPath: boolean;
+    dataPathError: string;
+    loadDataPath: () => void;
     changingDataPath: boolean;
     changeDataLocation: () => void;
   }>();
@@ -14,14 +25,10 @@
   const t = $derived(i18n.t);
 
   async function openDataFolder() {
-    if (!currentDataPath) {
-      return;
-    }
-
     try {
       await invoke('open_folder', { path: currentDataPath });
     } catch (err) {
-      console.error('Failed to open folder:', err);
+      toastStore.add(String(err), 'error');
     }
   }
 </script>
@@ -41,27 +48,27 @@
           variant="ghost"
           size="sm"
           onclick={openDataFolder}
+          disabled={loadingDataPath || !!dataPathError || !currentDataPath}
           class="gap-1 h-7 text-xs"
         >
           <FolderOpen class="h-3.5 w-3.5" />
           {t.openFolder}
         </Button>
       </div>
-      <div class="p-3 bg-muted rounded-md text-sm font-mono break-all border border-border">
-        {currentDataPath || t.loading}
-      </div>
-      <p class="text-xs text-muted-foreground">
-        {t.dataLocationDesc}
-      </p>
+      {#if dataPathError}
+        <p role="alert" class="text-sm text-destructive">{dataPathError}</p>
+        <Button variant="outline" onclick={loadDataPath}>{t.recheck}</Button>
+      {:else}
+        <div class="p-3 bg-muted rounded-md text-sm font-mono break-all border border-border">
+          {loadingDataPath ? t.loading : currentDataPath}
+        </div>
+      {/if}
     </div>
 
     <div class="pt-2 border-t border-border">
       <div class="flex items-center justify-between">
         <div class="space-y-0.5">
           <span class="text-sm font-medium">{t.changeLocation}</span>
-          <p class="text-xs text-muted-foreground">
-            {t.dataLocationDesc}
-          </p>
         </div>
         <Button
           type="button"

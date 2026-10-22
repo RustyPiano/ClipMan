@@ -55,7 +55,6 @@
     }
   }
 
-  // --- Ignored apps ---
   const ignoredApps = $derived(settings.ignoredApps);
 
   let newIgnoredApp = $state('');
@@ -85,34 +84,12 @@
     }
   }
 
-  // --- Capture size limits ---
   const BYTES_PER_MB = 1_000_000;
   const MIN_TEXT_BYTES = 4096;
   const MAX_TEXT_BYTES = 50_000_000;
-  const MIN_IMAGE_DIMENSION = 512;
   const MAX_IMAGE_DIMENSION = 16384;
 
   const maxTextMb = $derived(settings.maxTextBytes / BYTES_PER_MB);
-
-  function updateMaxTextMb(raw: string) {
-    const value = Number.parseFloat(raw);
-    if (!Number.isFinite(value) || value < 0) {
-      return;
-    }
-    settings.maxTextBytes = Math.min(
-      MAX_TEXT_BYTES,
-      Math.max(MIN_TEXT_BYTES, Math.round(value * BYTES_PER_MB))
-    );
-  }
-
-  function updateMaxImageDimension(raw: string) {
-    const value = Number.parseInt(raw, 10);
-    if (!Number.isFinite(value) || value < 0) {
-      return;
-    }
-    settings.maxImageDimension =
-      value === 0 ? 0 : Math.min(MAX_IMAGE_DIMENSION, Math.max(MIN_IMAGE_DIMENSION, value));
-  }
 </script>
 
 <div class="space-y-6 duration-300">
@@ -222,8 +199,10 @@
           min={MIN_TEXT_BYTES / BYTES_PER_MB}
           max={MAX_TEXT_BYTES / BYTES_PER_MB}
           step="any"
+          required
           value={maxTextMb}
-          onchange={(event) => updateMaxTextMb(event.currentTarget.value)}
+          oninput={(event) =>
+            (settings.maxTextBytes = Math.round(event.currentTarget.valueAsNumber * BYTES_PER_MB))}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
@@ -241,8 +220,9 @@
           min="0"
           max={MAX_IMAGE_DIMENSION}
           step="1"
+          required
           value={settings.maxImageDimension}
-          onchange={(event) => updateMaxImageDimension(event.currentTarget.value)}
+          oninput={(event) => (settings.maxImageDimension = event.currentTarget.valueAsNumber)}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>

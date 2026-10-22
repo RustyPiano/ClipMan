@@ -67,13 +67,7 @@ const LEGACY_SETTINGS_KEYS: [&str; 11] = [
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
-    /// Paste-format mode; one of [`PASTE_FORMATS`]:
-    /// - `original`: paste exactly as copied (rich text included).
-    /// - `takePlain`: takes/copies via ClipMan write plain text only; a direct
-    ///   system paste keeps the copied formatting.
-    /// - `globalPlain`: like `takePlain`, plus every captured rich-text copy is
-    ///   immediately flattened on the system clipboard so a direct paste
-    ///   anywhere is plain text too.
+    /// original 保留格式；takePlain 在取用时去除格式；globalPlain 在采集后去除格式。
     pub paste_format: String,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
@@ -84,24 +78,15 @@ pub struct Settings {
     pub custom_data_path: Option<String>,
     pub enable_autostart: bool,
     pub locale: String,
-    /// Text/Files clips whose content exceeds this many bytes are skipped
-    /// entirely at capture time.
+    /// 超过此字节数的文本或文件路径列表不参与采集。
     pub max_text_bytes: usize,
-    /// Images whose longest side exceeds this many pixels are downsampled
-    /// before being stored. `0` disables downscaling.
+    /// 图片最长边的像素上限；0 表示不缩小。
     pub max_image_dimension: u32,
-    /// When true, Text clips matching a high-confidence secret pattern
-    /// (PEM private key, cloud/API token, JWT, ...) are skipped at capture
-    /// time instead of being recorded.
+    /// 跳过符合密钥特征的文本。
     pub skip_secrets: bool,
-    /// App names or bundle identifiers whose copies are never captured,
-    /// matched case-insensitively against the frontmost app at capture time.
-    /// Normalized on every load/save: trimmed, emptied entries dropped,
-    /// deduplicated, and capped at 100 entries.
+    /// 按应用名称或 bundle identifier 排除采集，忽略大小写，最多 100 项。
     pub ignored_apps: Vec<String>,
-    /// When true, the clipboard monitor observes clipboard changes but
-    /// captures nothing at all, regardless of source app or content.
-    /// Toggled from the tray's "Pause Capture" menu item.
+    /// 托盘菜单控制的暂停采集状态。
     pub capture_paused: bool,
 }
 
@@ -131,27 +116,60 @@ impl Default for Settings {
 
 impl Settings {
     pub fn validate_and_normalize(mut self) -> Result<Self, String> {
-        self.global_shortcut = self.global_shortcut.trim().to_string();
+        self.normalize_common();
         if self.global_shortcut.is_empty() {
             return Err("Global shortcut cannot be empty".to_string());
         }
 
-        self.normalize_common();
-
         if self.pinned_shortcut.as_deref() == Some(self.global_shortcut.as_str()) {
             return Err("Pinned shortcut cannot match the main global shortcut".to_string());
+        }
+
+        for (name, value, min, max) in [
+            ("maxHistoryItems", self.max_history_items, 1, 10_000),
+            ("trayTextLength", self.tray_text_length, 10, 200),
+            ("maxPinnedInTray", self.max_pinned_in_tray, 0, 50),
+            ("maxRecentInTray", self.max_recent_in_tray, 0, 100),
+            ("maxTextBytes", self.max_text_bytes, 4096, 50_000_000),
+        ] {
+            if !(min..=max).contains(&value) {
+                return Err(format!("{name} must be between {min} and {max}"));
+            }
+        }
+        if self.max_image_dimension != 0 && !(512..=16384).contains(&self.max_image_dimension) {
+            return Err("maxImageDimension must be 0 or between 512 and 16384".into());
+        }
+        if !matches!(self.locale.as_str(), "zh-CN" | "en") {
+            return Err("locale must be zh-CN or en".into());
+        }
+        if !PASTE_FORMATS.contains(&self.paste_format.as_str()) {
+            return Err("pasteFormat must be original, takePlain or globalPlain".into());
+        }
+        if self.ignored_apps.len() > MAX_IGNORED_APPS {
+            return Err(format!(
+                "ignoredApps cannot exceed {MAX_IGNORED_APPS} entries"
+            ));
         }
 
         Ok(self)
     }
 
     pub fn normalize_for_load(mut self) -> Self {
-        self.global_shortcut = self.global_shortcut.trim().to_string();
+        self.normalize_common();
         if self.global_shortcut.is_empty() {
             self.global_shortcut = Settings::default().global_shortcut;
         }
 
-        self.normalize_common();
+        // 旧设置在读取时保留兼容处理；保存入口拒绝超出范围或未知的值。
+        self.max_history_items = self.max_history_items.clamp(1, 10_000);
+        self.tray_text_length = self.tray_text_length.clamp(10, 200);
+        self.max_pinned_in_tray = self.max_pinned_in_tray.clamp(0, 50);
+        self.max_recent_in_tray = self.max_recent_in_tray.clamp(0, 100);
+        self.max_text_bytes = self.max_text_bytes.clamp(4096, 50_000_000);
+        self.max_image_dimension = clamp_max_image_dimension(self.max_image_dimension);
+        self.ignored_apps.truncate(MAX_IGNORED_APPS);
+        self.locale = normalize_locale(&self.locale);
+        self.paste_format = normalize_paste_format(&self.paste_format);
 
         if self.pinned_shortcut.as_deref() == Some(self.global_shortcut.as_str()) {
             log::warn!("Pinned shortcut matches main shortcut on load; clearing pinned shortcut");
@@ -162,39 +180,28 @@ impl Settings {
     }
 
     fn normalize_common(&mut self) {
+        self.global_shortcut = self.global_shortcut.trim().to_string();
         self.pinned_shortcut = self
             .pinned_shortcut
             .take()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
-        self.max_history_items = self.max_history_items.clamp(1, 10_000);
-        self.tray_text_length = self.tray_text_length.clamp(10, 200);
-        self.max_pinned_in_tray = self.max_pinned_in_tray.clamp(0, 50);
-        self.max_recent_in_tray = self.max_recent_in_tray.clamp(0, 100);
-        self.max_text_bytes = self.max_text_bytes.clamp(4096, 50_000_000);
-        self.max_image_dimension = clamp_max_image_dimension(self.max_image_dimension);
         self.ignored_apps = normalize_ignored_apps(std::mem::take(&mut self.ignored_apps));
-
-        self.locale = normalize_locale(&self.locale);
-        self.paste_format = normalize_paste_format(&self.paste_format);
+        self.locale = self.locale.trim().to_string();
+        self.paste_format = self.paste_format.trim().to_string();
     }
 
-    /// ClipMan-mediated takes/copies should write plain text only
-    /// (`takePlain` and `globalPlain`).
     pub fn takes_plain_text(&self) -> bool {
         matches!(self.paste_format.as_str(), "takePlain" | "globalPlain")
     }
 
-    /// Captured rich-text copies should be flattened on the system clipboard
-    /// so a direct paste (without QuickBar) is plain text (`globalPlain` only).
     pub fn strips_rich_text_at_capture(&self) -> bool {
         self.paste_format == "globalPlain"
     }
 }
 
-/// IPC values of the paste-format mode; keep in sync with the `Settings`
-/// union type in `src/lib/types.ts`.
+/// 与 src/lib/types.ts 中的 PasteFormat 保持一致。
 pub const PASTE_FORMATS: [&str; 3] = ["original", "takePlain", "globalPlain"];
 
 fn normalize_paste_format(value: &str) -> String {
@@ -214,8 +221,6 @@ fn normalize_locale(locale: &str) -> String {
     }
 }
 
-/// `0` disables downscaling (the settings page allows it); any other value is
-/// clamped to a sane pixel range.
 fn clamp_max_image_dimension(value: u32) -> u32 {
     if value == 0 {
         0
@@ -224,21 +229,15 @@ fn clamp_max_image_dimension(value: u32) -> u32 {
     }
 }
 
-/// Cap on the number of ignored-app entries a user can configure.
 const MAX_IGNORED_APPS: usize = 100;
 
-/// Trims each entry, drops blanks, deduplicates case-insensitively (keeping
-/// the first occurrence's original casing so it still displays as typed),
-/// and caps the list at `MAX_IGNORED_APPS`. Case-insensitive dedup matches
-/// the matching semantics used at capture time in `clipboard.rs`, so
-/// "Safari" and "safari" never coexist as two entries.
+/// 去除空白及重复项，大小写不敏感，与采集时的应用匹配方式一致。
 fn normalize_ignored_apps(apps: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     apps.into_iter()
         .map(|app| app.trim().to_string())
         .filter(|app| !app.is_empty())
         .filter(|app| seen.insert(app.to_lowercase()))
-        .take(MAX_IGNORED_APPS)
         .collect()
 }
 
@@ -412,7 +411,6 @@ mod tests {
         assert!(normalized.takes_plain_text());
         assert!(normalized.strips_rich_text_at_capture());
 
-        // Unknown values (hand-edited file) fall back to original.
         let coerced = Settings {
             paste_format: "richerezza".to_string(),
             ..Settings::default()
@@ -420,7 +418,6 @@ mod tests {
         .normalize_for_load();
         assert_eq!("original", coerced.paste_format);
 
-        // The update path funnels through the same normalization.
         let updated = Settings {
             paste_format: " takePlain ".to_string(),
             ..Settings::default()
@@ -429,25 +426,40 @@ mod tests {
         .unwrap();
         assert_eq!("takePlain", updated.paste_format);
 
-        // A persisted payload missing the key deserializes to "" (serde field
-        // default) and normalizes to original.
         let missing_key = serde_json::from_value::<Settings>(serde_json::json!({
             "globalShortcut": "CommandOrControl+Shift+V"
         }))
         .unwrap();
-        assert_eq!("original", missing_key.normalize_for_load().paste_format);
+        assert_eq!("original", missing_key.paste_format);
     }
 
     #[test]
-    fn settings_normalization_clamps_tray_text_length_to_frontend_minimum() {
-        let settings = Settings {
-            tray_text_length: 0,
-            ..Settings::default()
-        };
-
-        let normalized = settings.validate_and_normalize().unwrap();
-
-        assert_eq!(10, normalized.tray_text_length);
+    fn saving_rejects_out_of_range_numbers_and_accepts_boundaries() {
+        for (name, min, max) in [
+            ("maxHistoryItems", 1, 10_000),
+            ("trayTextLength", 10, 200),
+            ("maxPinnedInTray", 0, 50),
+            ("maxRecentInTray", 0, 100),
+            ("maxTextBytes", 4096, 50_000_000),
+        ] {
+            for value in [min, max, max + 1] {
+                let mut settings = serde_json::to_value(Settings::default()).unwrap();
+                settings[name] = serde_json::json!(value);
+                let result = serde_json::from_value::<Settings>(settings)
+                    .unwrap()
+                    .validate_and_normalize();
+                assert_eq!(result.is_ok(), value <= max, "{name}={value}");
+            }
+            if min > 0 {
+                let mut settings = serde_json::to_value(Settings::default()).unwrap();
+                settings[name] = serde_json::json!(min - 1);
+                assert!(serde_json::from_value::<Settings>(settings)
+                    .unwrap()
+                    .validate_and_normalize()
+                    .unwrap_err()
+                    .contains(name));
+            }
+        }
     }
 
     #[test]
@@ -506,63 +518,31 @@ mod tests {
     }
 
     #[test]
-    fn settings_normalization_clamps_max_text_bytes_to_supported_range() {
-        let too_small = Settings {
-            max_text_bytes: 10,
-            ..Settings::default()
-        };
-        assert_eq!(
-            4096,
-            too_small.validate_and_normalize().unwrap().max_text_bytes
-        );
-
-        let too_large = Settings {
-            max_text_bytes: 100_000_000,
-            ..Settings::default()
-        };
-        assert_eq!(
-            50_000_000,
-            too_large.validate_and_normalize().unwrap().max_text_bytes
-        );
+    fn saving_rejects_unknown_locale_and_paste_format() {
+        for settings in [
+            Settings {
+                locale: "fr-FR".into(),
+                ..Settings::default()
+            },
+            Settings {
+                paste_format: "unknown".into(),
+                ..Settings::default()
+            },
+        ] {
+            assert!(settings.validate_and_normalize().is_err());
+        }
     }
 
     #[test]
-    fn settings_normalization_clamps_max_image_dimension_but_allows_zero_to_disable() {
-        let disabled = Settings {
-            max_image_dimension: 0,
-            ..Settings::default()
-        };
-        assert_eq!(
-            0,
-            disabled
-                .validate_and_normalize()
-                .unwrap()
-                .max_image_dimension
-        );
-
-        let too_small = Settings {
-            max_image_dimension: 10,
-            ..Settings::default()
-        };
-        assert_eq!(
-            512,
-            too_small
-                .validate_and_normalize()
-                .unwrap()
-                .max_image_dimension
-        );
-
-        let too_large = Settings {
-            max_image_dimension: 100_000,
-            ..Settings::default()
-        };
-        assert_eq!(
-            16384,
-            too_large
-                .validate_and_normalize()
-                .unwrap()
-                .max_image_dimension
-        );
+    fn saving_checks_image_dimension_and_allows_zero_to_disable() {
+        for value in [0, 1, 511, 512, 16384, 16385] {
+            let result = Settings {
+                max_image_dimension: value,
+                ..Settings::default()
+            }
+            .validate_and_normalize();
+            assert_eq!(result.is_ok(), value == 0 || (512..=16384).contains(&value));
+        }
     }
 
     #[test]
@@ -570,7 +550,7 @@ mod tests {
         let settings = Settings {
             ignored_apps: vec![
                 " 1Password ".to_string(),
-                "1password".to_string(), // case-insensitive duplicate of the entry above
+                "1password".to_string(),
                 "".to_string(),
                 "   ".to_string(),
                 "Bitwarden".to_string(),
@@ -587,18 +567,43 @@ mod tests {
     }
 
     #[test]
-    fn settings_normalization_caps_ignored_apps_at_one_hundred_entries() {
+    fn saving_rejects_excess_ignored_apps_and_load_keeps_the_legacy_limit() {
         let apps: Vec<String> = (0..150).map(|i| format!("App {i}")).collect();
         let settings = Settings {
             ignored_apps: apps,
             ..Settings::default()
         };
 
-        let normalized = settings.validate_and_normalize().unwrap().ignored_apps;
+        assert!(settings
+            .clone()
+            .validate_and_normalize()
+            .unwrap_err()
+            .contains("ignoredApps"));
+        let normalized = settings.normalize_for_load().ignored_apps;
 
         assert_eq!(100, normalized.len());
         assert_eq!("App 0", normalized[0]);
         assert_eq!("App 99", normalized[99]);
+    }
+
+    #[test]
+    fn loading_legacy_numbers_keeps_supported_limits() {
+        let settings = Settings {
+            max_history_items: 0,
+            tray_text_length: 0,
+            max_pinned_in_tray: 100,
+            max_recent_in_tray: 200,
+            max_text_bytes: 0,
+            max_image_dimension: 1,
+            ..Settings::default()
+        }
+        .normalize_for_load();
+        assert_eq!(settings.max_history_items, 1);
+        assert_eq!(settings.tray_text_length, 10);
+        assert_eq!(settings.max_pinned_in_tray, 50);
+        assert_eq!(settings.max_recent_in_tray, 100);
+        assert_eq!(settings.max_text_bytes, 4096);
+        assert_eq!(settings.max_image_dimension, 512);
     }
 
     #[test]

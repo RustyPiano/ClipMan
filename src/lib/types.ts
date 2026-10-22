@@ -1,34 +1,24 @@
-// Shared type definitions for ClipMan frontend
-
 import type { Locale } from './i18n';
 
-/**
- * Clipboard item content types
- */
 type ContentType = 'text' | 'image' | 'files';
 
-/**
- * Clipboard item from backend
- */
 export interface ClipItem {
   id: string;
-  /** Base64 encoded content or data URL for images */
+  /** 文本和文件摘要使用 Base64，图片缩略图使用 data URL。 */
   content: string;
   contentType: ContentType;
-  /** Unix seconds, including the fractional part for chronological ordering. */
+  /** Unix 秒数，保留小数以区分同一秒内的记录。 */
   timestamp: number;
   isPinned: boolean;
   pinOrder: number | null;
   label: string | null;
-  /** App that was frontmost when the clip was captured (copy source). */
   sourceApp: string | null;
-  /** Whether a text clip carries an HTML (rich-text) companion. */
   hasHtml: boolean;
   contentBytes: number;
   fileCount: number;
 }
 
-/** Bounded, decoded content fetched only for a selected preview. */
+/** 预览按需读取的解码内容，大小受后端限制。 */
 export interface ClipDetail {
   id: string;
   contentType: ContentType;
@@ -37,16 +27,9 @@ export interface ClipDetail {
   truncated: boolean;
 }
 
-/**
- * How text clips are pasted. Backend values (settings.rs PASTE_FORMATS):
- * original (as copied), takePlain (ClipMan-mediated takes are plain),
- * globalPlain (captured rich text is flattened system-wide).
- */
+/** 与 settings.rs 的 PASTE_FORMATS 保持一致。 */
 export type PasteFormat = 'original' | 'takePlain' | 'globalPlain';
 
-/**
- * Application settings
- */
 export interface Settings {
   globalShortcut: string;
   autoPaste: boolean;
@@ -60,29 +43,22 @@ export interface Settings {
   customDataPath: string | null;
   enableAutostart: boolean;
   locale: Locale;
-  /** App names whose copies are never captured (matched case-insensitively). */
+  /** 按应用名或 bundle identifier 排除采集，忽略大小写。 */
   ignoredApps: string[];
-  /** Skip capturing Text clips that look like a high-confidence secret. */
   skipSecrets: boolean;
-  /** Text/Files clips larger than this many bytes are skipped at capture time. */
+  /** 超过此字节数的文本或文件路径列表不参与采集。 */
   maxTextBytes: number;
-  /** Images whose longest side exceeds this many pixels are downsampled; 0 disables downscaling. */
+  /** 图片最长边的像素上限；0 表示不缩小。 */
   maxImageDimension: number;
-  /** Capture is fully paused (toggled from the tray menu; not shown in Settings UI). */
+  /** 由托盘菜单控制，设置页面不修改此项。 */
   capturePaused: boolean;
 }
 
-// The frontend only ever issues 'default' (honor the auto-paste setting) or
-// 'opposite' (⌘Enter swap). The Rust `PasteMode` enum additionally accepts
-// 'paste'/'copy', but nothing in the UI emits them — narrowing here makes the
-// paste/copy failure toast branch on a real, exhaustive set of modes.
+// default 遵循自动粘贴设置，opposite 对本次操作取反。
 export type PasteMode = 'default' | 'opposite';
 
 export type ReorderDirection = 'up' | 'down';
 
-/**
- * Update check result
- */
 export interface UpdateInfo {
   available: boolean;
   current_version: string;
@@ -90,26 +66,14 @@ export interface UpdateInfo {
   body?: string;
 }
 
-/**
- * Theme options
- */
 export type Theme = 'light' | 'dark' | 'light-pink' | 'system';
 
-/**
- * Toast notification types
- */
 export type ToastType = 'success' | 'error' | 'info';
 
-/**
- * Toast notification item
- */
 export interface Toast {
   id: number;
   message: string;
   type: ToastType;
 }
 
-/**
- * Settings page tabs
- */
 export type SettingsTab = 'general' | 'clipboard' | 'tray' | 'storage' | 'about' | 'appearance';

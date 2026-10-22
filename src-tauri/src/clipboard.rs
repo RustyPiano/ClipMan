@@ -278,7 +278,9 @@ fn strip_live_rich_text(app_handle: &AppHandle, text: &str, html: &str, sequence
     if !unchanged {
         return;
     }
-    if let Err(e) = crate::paste::strip_rich_text_from_clipboard(text, &state.last_copied_by_us) {
+    if let Err(e) =
+        crate::paste::write_plain_text_to_system_clipboard(text, &state.last_copied_by_us)
+    {
         log::warn!("Failed to strip rich text from clipboard: {}", e);
     }
 }

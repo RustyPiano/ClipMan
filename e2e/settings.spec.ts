@@ -65,7 +65,11 @@ test.beforeEach(async ({ page }) => {
           if (w.failLoad) throw new Error('load unavailable');
           return w.settings;
         }
-        if (cmd === 'get_current_data_path') return '/qa/data';
+        if (cmd === 'get_current_data_path') {
+          if (w.failDataPath) throw new Error('data path unavailable');
+          return '/qa/data';
+        }
+        if (cmd === 'open_folder' && w.failOpenFolder) throw new Error('folder unavailable');
         if (cmd === 'plugin:dialog|open') return '/qa/new-data';
         if (cmd === 'update_settings') {
           if (w.failSave) throw new Error('save unavailable');
@@ -126,6 +130,71 @@ test('reset delegates defaults to backend and keeps draft intact on failure', as
       (window as any).calls.filter((c: any) => c.cmd === 'update_settings').map((c: any) => c.args)
     )
   ).toEqual([{ settings: null }, { settings: null }]);
+});
+
+test('data path errors allow retry and folder errors are shown', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).failDataPath = true;
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Storage', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('data path unavailable');
+  const openFolder = page.getByRole('button', { name: 'Open folder', exact: true });
+  await expect(openFolder).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).failDataPath = false;
+    (window as any).failOpenFolder = true;
+  });
+  await page.getByRole('button', { name: 'Re-check', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText('/qa/data', { exact: true })).toBeVisible();
+  await openFolder.click();
+  await expect(page.getByRole('status')).toContainText('folder unavailable');
+});
+
+test('size inputs keep typed values and invalid fields prevent saving', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Clipboard', exact: true }).click();
+  const textSize = page.locator('#max-text-bytes');
+  const imageSize = page.locator('#max-image-dimension');
+  const save = page.getByRole('button', { name: 'Save', exact: true });
+  await textSize.fill('51');
+  await save.click();
+  await expect(textSize).toHaveValue('51');
+  expect(
+    await page.evaluate(() =>
+      (window as any).calls.some((call: any) => call.cmd === 'update_settings')
+    )
+  ).toBe(false);
+  await textSize.fill('1.5');
+  await imageSize.fill('12');
+  await expect(imageSize).toHaveValue('12');
+  await imageSize.fill('');
+  await save.click();
+  expect(
+    await page.evaluate(() =>
+      (window as any).calls.some((call: any) => call.cmd === 'update_settings')
+    )
+  ).toBe(false);
+  await imageSize.fill('0');
+  await save.click();
+  expect(
+    await page.evaluate(() => {
+      const call = (window as any).calls.find((entry: any) => entry.cmd === 'update_settings');
+      return [call.args.settings.maxTextBytes, call.args.settings.maxImageDimension];
+    })
+  ).toEqual([1500000, 0]);
+});
+
+test('shortcut recording ignores a modifier alone and records the main key', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Record', exact: true }).click();
+  await page.keyboard.down('Control');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  await page.keyboard.press('k');
+  await page.keyboard.up('Control');
+  await expect(page.getByRole('button', { name: 'Record', exact: true })).toBeVisible();
+  await expect(page.locator('#shortcut-input')).toHaveValue('CommandOrControl+K');
 });
 
 test('leaving settings restores shortcuts even while disable is pending', async ({ page }) => {

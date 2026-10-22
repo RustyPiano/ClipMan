@@ -84,12 +84,11 @@
   // 元信息行。元信息在每行的位置相同，操作按钮与它等高对齐，不会盖住内容。
   const visiblePaths = $derived(item.label ? paths.slice(0, 1) : paths.slice(0, 2));
   const code = $derived(looksLikeCode(text));
-  // 图标按内容种类区分，而不是所有文本都用同一个文档图标
   const kind = $derived(
     item.contentType === 'image'
       ? 'image'
       : item.contentType === 'files'
-        ? paths.length > 1
+        ? item.fileCount > 1
           ? 'files'
           : looksLikeDirectory(paths[0] ?? '')
             ? 'folder'
@@ -329,16 +328,16 @@
                 <span class="truncate text-[13px] leading-5 text-foreground"
                   >{fileBasename(path) || path}</span
                 >
-                {#if index === visiblePaths.length - 1 && paths.length > visiblePaths.length}
+                {#if index === visiblePaths.length - 1 && item.fileCount > visiblePaths.length}
                   <span
                     class="flex-none rounded bg-muted/60 px-1.5 text-[10px] font-semibold leading-4 text-muted-foreground"
                     title={i18n.format(t.fileCount, { n: item.fileCount })}
-                    >+{paths.length - visiblePaths.length}</span
+                    >+{item.fileCount - visiblePaths.length}</span
                   >
                 {/if}
               </span>
             {/each}
-            {#if paths.length === 1 && fileDirname(paths[0])}
+            {#if item.fileCount === 1 && !item.label && fileDirname(paths[0])}
               <span class="truncate text-[11px] leading-4 text-muted-foreground"
                 >{fileDirname(paths[0])}</span
               >

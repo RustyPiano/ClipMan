@@ -197,7 +197,14 @@
   }
 
   function handleKey(event: KeyboardEvent) {
-    if (isSettingsWindow || event.defaultPrevented || event.isComposing || confirmStore.open)
+    // 输入法确认时可能已结束组字，keyCode 229 仍表示该按键由输入法处理。
+    if (
+      isSettingsWindow ||
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      confirmStore.open
+    )
       return;
     const target = event.target as HTMLElement;
     if (target.closest('[data-row-editor]')) return;
