@@ -6,16 +6,16 @@
 
 ## 当前状态
 
-v2.4.5 标签已推送，发布提交为 `4142f4d`，尚未公开 Release。源码固定为 `6171173` 和 `57df30e` 两次修复，发布目录未包含其他工作区改动。发布说明见 `release_notes_2.4.5.md`。
+v2.4.5 草稿和四个平台的安装包已生成，发布提交为 `4142f4d`，尚未公开 Release。源码固定为 `6171173` 和 `57df30e` 两次修复，发布目录未包含其他工作区改动。发布说明见 `release_notes_2.4.5.md`。
 
 文件摘要最多提供两个路径，允许重复路径正常显示，界面使用实际文件总数；设置保存拒绝非法值，存储目录读取失败可重新读取；纯文本写入共用，重复判断、异常包装、注释和文档已精简。QuickBar 忽略输入法确认按键，避免回车确认中文时触发粘贴。
 
 ## 最近验证
 
-- 本机（2026-10-22，当前工作区）：Rust 107 项、前端 64 项、Chromium/WebKit 66 项、发布校验 6 项全部通过；lint、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。性能基准按配置跳过，原生桌面交互及 Windows/Linux 运行未实测。
-- main 的 CI（`4142f4d`）五个作业全部通过，包括前端与 macOS、Windows、Linux Rust 检查。
+- 本机（2026-10-22）：Rust 107 项、前端 64 项、Chromium/WebKit 66 项、发布校验 6 项全部通过；lint、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。性能基准按配置跳过，Windows/Linux 桌面运行未实测。
 - v2.4.5 的生产前端构建通过 6 项定向测试；原生自动粘贴验证等待 ClipMan QA 重新获得辅助功能授权。
-- Release 运行 `39782418292` 的 Linux 依赖安装长时间未结束，取消后作业已停止，但 GitHub 仍将所属流程标记为运行中并拒绝重新运行；安装包构建与验签尚未完成。
+- Release 运行 `39782418292` 的全部质量检查、四个平台构建和产物校验通过。
+- 本机独立验证通过：更新公钥与 v2.4.4 一致，7 份 updater 签名有效；macOS 双架构镜像、版本、架构及严格代码签名正确，签名证书与当前安装版本一致。
 - 本机 PATH 没有 `minisign`，运行发布校验测试和 `verify-release.py` 时用 `src-tauri/target/release-verification/tools/minisign`。
 - 图片缩略图 `self-start`、类型图标和应用图标的实际观感需要用正式包在系统 WKWebView 中目测。
 - Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。
