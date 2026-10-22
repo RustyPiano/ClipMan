@@ -47,10 +47,10 @@ ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is 
 
 Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
 
-- **Windows**: `ClipMan_2.4.4_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.4.4_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.4.4_x64.dmg`
-- **Linux**: `ClipMan_2.4.4_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.5_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.5_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.5_x64.dmg`
+- **Linux**: `ClipMan_2.4.5_amd64.AppImage`
 
 ### macOS Install & Permissions
 

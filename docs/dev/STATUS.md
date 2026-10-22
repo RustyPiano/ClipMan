@@ -6,14 +6,14 @@
 
 ## 当前状态
 
-**v2.4.4 已于 2026-09-30 公开**，产品页已重新部署：QuickBar 多选与光标改为访达式（⇧ 点击选范围、方向键清空多选、删除后光标留在原位等），内容见 `release_notes_2.4.4.md`。v2.4.3 带来了列表重新设计和 macOS 来源应用图标。
+v2.4.5 正在准备发布，内容见 `release_notes_2.4.5.md`。源码固定为 `6171173` 和 `57df30e` 两次修复，发布目录未包含其他工作区改动。
 
 文件摘要最多提供两个路径，允许重复路径正常显示，界面使用实际文件总数；设置保存拒绝非法值，存储目录读取失败可重新读取；纯文本写入共用，重复判断、异常包装、注释和文档已精简。QuickBar 忽略输入法确认按键，避免回车确认中文时触发粘贴。
 
 ## 最近验证
 
 - 本机（2026-10-22，当前工作区）：Rust 107 项、前端 64 项、Chromium/WebKit 66 项、发布校验 6 项全部通过；lint、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。性能基准按配置跳过，原生桌面交互及 Windows/Linux 运行未实测。
-- main 的 CI（`7d6f386`）五个作业全部通过，包括 Windows 和 Linux 编译与测试。
+- main 的 CI（`57df30e`）五个作业全部通过，包括前端与 macOS、Windows、Linux Rust 检查。
 - 本机 PATH 没有 `minisign`，运行发布校验测试和 `verify-release.py` 时用 `src-tauri/target/release-verification/tools/minisign`。
 - 图片缩略图 `self-start`、类型图标和应用图标的实际观感需要用正式包在系统 WKWebView 中目测。
 - Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。

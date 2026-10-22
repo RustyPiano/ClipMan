@@ -47,10 +47,10 @@ ClipMan 是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史�
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.4.4_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.4.4_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.4.4_x64.dmg`
-- **Linux**: `ClipMan_2.4.4_amd64.AppImage`
+- **Windows**: `ClipMan_2.4.5_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipMan_2.4.5_aarch64.dmg`
+- **macOS (Intel)**: `ClipMan_2.4.5_x64.dmg`
+- **Linux**: `ClipMan_2.4.5_amd64.AppImage`
 
 ### macOS 安装与权限
 
