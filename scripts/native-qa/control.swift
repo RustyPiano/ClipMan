@@ -56,6 +56,39 @@ case "state":
   }
 case "tree": tree(AXUIElementCreateApplication(app(args[2]).processIdentifier))
 case "focus": print(app(args[2]).activate(options: [.activateAllWindows]))
+case "panel":
+  // QuickBar 不激活 ClipMan，只能从屏幕上的窗口判断它是否打开；高度过滤掉菜单栏图标。
+  let pid = app(args[2]).processIdentifier
+  let windows =
+    CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+  print(
+    windows.contains { w in
+      (w[kCGWindowOwnerPID as String] as? pid_t) == pid
+        && ((w[kCGWindowBounds as String] as? NSDictionary).flatMap {
+          CGRect(dictionaryRepresentation: $0 as CFDictionary)
+        }?.height ?? 0) > 200
+    })
+case "click-panel":
+  let pid = app(args[2]).processIdentifier
+  let windows =
+    CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+  let panels = windows.compactMap { w -> CGRect? in
+    guard (w[kCGWindowOwnerPID as String] as? pid_t) == pid,
+      let bounds = w[kCGWindowBounds as String] as? NSDictionary,
+      let frame = CGRect(dictionaryRepresentation: bounds), frame.height > 200
+    else { return nil }
+    return frame
+  }
+  guard panels.count == 1 else { fatalError("Expected one visible QA panel") }
+  let originalPosition = CGEvent(source: nil)!.location
+  defer { CGWarpMouseCursorPosition(originalPosition) }
+  // 点击面板顶部空白处，保留搜索内容和当前记录，检查原生鼠标激活行为。
+  let position = CGPoint(x: panels[0].midX, y: panels[0].minY + 12)
+  for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: position,
+            mouseButton: .left)!.post(tap: .cghidEventTap)
+  }
+  Thread.sleep(forTimeInterval: 0.2)
 case "key":
   let expected = args[2]
   let actual = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""

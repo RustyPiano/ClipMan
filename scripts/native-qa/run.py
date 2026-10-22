@@ -42,6 +42,16 @@ def main():
     def front(app):
         return 'front=' + app + '\n' in ctl('state')
 
+    def open_quickbar_over(target):
+        # QuickBar 是 non-activating panel：打开后目标应用必须仍在前台，按键发给 QuickBar。
+        ctl('key', target, 9, 'cmd', 'shift')
+        wait(lambda: ctl('panel', QA).strip() == 'true', 'Global shortcut did not open QuickBar')
+        if not front(target):
+            raise AssertionError('Opening QuickBar activated ClipMan instead of keeping the target active')
+        ctl('click-panel', QA)
+        if not front(target):
+            raise AssertionError('Clicking QuickBar activated ClipMan instead of keeping the target active')
+
     state = ctl('state')
     if 'AX=true' not in state: raise RuntimeError('Grant the terminal/agent Accessibility permission first')
     if any(line.startswith('app ') and not line.startswith(f'app {TARGET} ') for line in state.splitlines()):
@@ -100,16 +110,40 @@ def main():
             ctl('focus', TARGET)
             wait(lambda: front(TARGET), 'Wrong target foreground')
             ctl('key', TARGET, 0, 'cmd')
-            ctl('key', TARGET, 9, 'cmd', 'shift')
-            wait(lambda: front(QA), 'Global shortcut did not open QuickBar')
+            open_quickbar_over(TARGET)
             if index % 2:
-                ctl('search-enter', QA, f'{work.name}_MATCH_{index}')
+                ctl('search-enter', TARGET, f'{work.name}_MATCH_{index}')
             else:
-                ctl('key', QA, 36)
+                ctl('key', TARGET, 36)
             wait(lambda: ctl('read-receiver', receiver.name) == value,
                  'TextEdit content mismatch; verify QA Accessibility permission and visible dialogs')
             wait(lambda: front(TARGET), 'Paste did not restore TextEdit focus')
             results.append({'iteration': index, 'search': bool(index % 2), 'passed': True})
+            print(results[-1], flush=True)
+
+        if not storage_only:
+            # 访达改名框必须在 QuickBar 打开期间保持编辑状态，否则 ⌘V 会在文件夹里生成 textClipping 文件。
+            finder = 'com.apple.finder'
+            renamed = f'CLIPMAN_QA_{work.name}_RENAMED'
+            document = work / 'rename-target.txt'
+            document.write_text('')
+            ctl('copy', renamed)
+            wait(lambda: captured(renamed), 'Rename text was not captured')
+            subprocess.run(['open', '-R', str(document)], check=True)
+            wait(lambda: front(finder), 'Finder did not reveal the rename target')
+            time.sleep(.5)  # 访达刚选中文件时按回车不会进入改名，固定等待
+            ctl('key', finder, 36)
+            time.sleep(.3)
+            open_quickbar_over(finder)
+            ctl('key', finder, 36)
+            wait(lambda: ctl('panel', QA).strip() == 'false', 'QuickBar did not close after Enter')
+            time.sleep(.5)
+            ctl('key', finder, 36)  # 提交改名
+            wait(lambda: (work / f'{renamed}.txt').exists(), 'Finder rename did not receive the pasted text')
+            ctl('key', finder, 13, 'cmd')
+            ctl('focus', TARGET)
+            wait(lambda: front(TARGET), 'TextEdit did not return to the foreground')
+            results.append({'finderRenamePaste': True})
             print(results[-1], flush=True)
 
         # Small image must preserve pixels and reuse PNG bytes for its thumbnail.

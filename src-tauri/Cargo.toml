@@ -65,6 +65,7 @@ objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", features = [
     "libc",
     "NSApplication",
+    "NSPanel",
     "NSPasteboard",
     "NSRunningApplication",
     "NSWindow",

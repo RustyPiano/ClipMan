@@ -267,10 +267,44 @@ fn quickbar_logical_size(work_width: f64, work_height: f64) -> (f64, f64) {
     (width, height)
 }
 
+// NonactivatingPanel 只对 NSPanel 生效。tao 创建的是 NSWindow 子类，只设样式时 QuickBar
+// 成为 key window 会激活 ClipMan，目标应用失去激活（访达会结束改名编辑）。
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    #[unsafe(super(
+        objc2_app_kit::NSPanel,
+        objc2_app_kit::NSWindow,
+        objc2_app_kit::NSResponder,
+        objc2::runtime::NSObject
+    ))]
+    #[thread_kind = objc2::MainThreadOnly]
+    #[name = "ClipManQuickBarPanel"]
+    struct QuickBarNsPanel;
+
+    impl QuickBarNsPanel {
+        // 无边框窗口默认不能成为 key window，搜索框需要接收键盘输入。
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool {
+            true
+        }
+    }
+);
+
 #[cfg(target_os = "macos")]
 fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
+    use objc2::ClassType;
     use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
+    // SAFETY: NSPanel 与 NSWindow 的实例大小相同（macOS 26 上均为 528 字节），新类不加实例
+    // 变量。tao 的 TaoWindow 只多一个 focusable 变量，以及 canBecomeKey/MainWindow 和用于
+    // 背景拖动的 sendEvent: 覆盖；QuickBar 不调用 set_focusable，也不拖动窗口。必须在设置
+    // NonactivatingPanel 样式之前换类，由 NSPanel 的 setStyleMask: 处理这个样式。
+    unsafe {
+        objc2::ffi::object_setClass(
+            window.ns_window().map_err(to_string)?.cast(),
+            QuickBarNsPanel::class(),
+        );
+    }
     let ns_window = ns_window(window)?;
 
     // macOS-only native shadow: the window server draws it around the opaque
@@ -285,6 +319,10 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
         .set_visible_on_all_workspaces(true)
         .map_err(to_string)?;
     ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+    // 后设样式不会更新 WindowServer 的激活标记，需要通过 AppKit 私有接口同步。
+    unsafe {
+        let _: () = objc2::msg_send![ns_window, _setPreventsActivation: true];
+    }
     ns_window.setLevel(NSStatusWindowLevel);
     ns_window.setHidesOnDeactivate(false);
     ns_window.setCollectionBehavior(
@@ -453,10 +491,10 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let ns_window = ns_window(window)?;
+    // 不调用 window.set_focus()：tao 会顺带 activateIgnoringOtherApps，让目标应用失去激活。
     ns_window.orderFrontRegardless();
     ns_window.makeKeyAndOrderFront(None);
-
-    window.set_focus().map_err(to_string)
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
