@@ -16,27 +16,14 @@
 
   const t = $derived(i18n.t);
 
-  // Tabs with icons - labels are computed from i18n
   const tabConfig = [
-    { id: 'general' as const, icon: SettingsIcon },
-    { id: 'appearance' as const, icon: Palette },
-    { id: 'clipboard' as const, icon: ClipboardList },
-    { id: 'tray' as const, icon: Menu },
-    { id: 'storage' as const, icon: Database },
-    { id: 'about' as const, icon: Info },
-  ];
-
-  function getTabLabel(id: SettingsTab): string {
-    const labels: Record<SettingsTab, string> = {
-      general: t.settingsGeneral,
-      appearance: t.settingsAppearance,
-      clipboard: t.settingsClipboard,
-      tray: t.settingsTray,
-      storage: t.settingsStorage,
-      about: t.settingsAbout,
-    };
-    return labels[id];
-  }
+    { id: 'general', labelKey: 'settingsGeneral', icon: SettingsIcon },
+    { id: 'appearance', labelKey: 'settingsAppearance', icon: Palette },
+    { id: 'clipboard', labelKey: 'settingsClipboard', icon: ClipboardList },
+    { id: 'tray', labelKey: 'settingsTray', icon: Menu },
+    { id: 'storage', labelKey: 'settingsStorage', icon: Database },
+    { id: 'about', labelKey: 'settingsAbout', icon: Info },
+  ] as const;
 </script>
 
 <aside class="w-64 border-r border-border bg-muted/30 p-4 flex flex-col">
@@ -50,7 +37,7 @@
         onclick={() => (activeTab = tab.id)}
       >
         <tab.icon class="h-4 w-4" />
-        {getTabLabel(tab.id)}
+        {t[tab.labelKey]}
       </button>
     {/each}
   </nav>

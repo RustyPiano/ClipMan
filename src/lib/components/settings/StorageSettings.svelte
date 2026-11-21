@@ -44,7 +44,6 @@
       <div class="flex items-center justify-between">
         <label for="data-path" class="text-sm font-medium">{t.currentLocation}</label>
         <Button
-          type="button"
           variant="ghost"
           size="sm"
           onclick={openDataFolder}
@@ -70,12 +69,7 @@
         <div class="space-y-0.5">
           <span class="text-sm font-medium">{t.changeLocation}</span>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          onclick={changeDataLocation}
-          disabled={changingDataPath}
-        >
+        <Button variant="secondary" onclick={changeDataLocation} disabled={changingDataPath}>
           {#if changingDataPath}
             <Loader2 class="h-4 w-4 animate-spin mr-2" /> {t.loading}
           {:else}

@@ -1,4 +1,3 @@
-// Tauri commands module
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -12,8 +11,6 @@ use crate::storage::{ClipStorage, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, AppState};
 
-/// Run a blocking storage operation on the blocking thread pool, locking the
-/// shared `ClipStorage` for the duration.
 async fn with_storage<T, F>(storage: Arc<Mutex<ClipStorage>>, op: F) -> Result<T, String>
 where
     F: FnOnce(&ClipStorage) -> Result<T, String> + Send + 'static,
@@ -24,13 +21,14 @@ where
         .map_err(|e| e.to_string())?
 }
 
-type MainThreadAction = Box<dyn FnOnce() -> Result<(), String> + Send>;
-
-fn run_action_on_main_thread(
+pub(crate) fn run_action_on_main_thread<F>(
     app: &AppHandle,
     command_name: &'static str,
-    action: MainThreadAction,
-) -> Result<(), String> {
+    action: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+{
     let (sender, receiver) = mpsc::channel();
 
     app.run_on_main_thread(move || {
@@ -43,35 +41,15 @@ fn run_action_on_main_thread(
         .map_err(|e| format!("Timed out waiting for {command_name} on main thread: {e}"))?
 }
 
-fn run_window_command_on_main_thread<F>(
-    app: &AppHandle,
-    command_name: &'static str,
-    action: F,
-) -> Result<(), String>
-where
-    F: FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
-{
-    // Frontend IPC handlers can run off the event-loop thread; macOS window
-    // focus/activation touches AppKit and must be dispatched back to main.
-    let app_for_action = app.clone();
-    run_action_on_main_thread(app, command_name, Box::new(move || action(app_for_action)))
-}
-
 #[tauri::command]
 pub async fn get_recent_clips(
     state: State<'_, AppState>,
-    limit: Option<usize>,
+    limit: usize,
     before_timestamp: Option<f64>,
     before_id: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
-    let limit = limit.unwrap_or(100);
-
     with_storage(state.storage.clone(), move |storage| {
-        // 游标的两个字段同时存在才翻页；首页请求两个都不传。
-        let before = match (before_timestamp, before_id.as_deref()) {
-            (Some(timestamp), Some(id)) => Some((timestamp, id)),
-            _ => None,
-        };
+        let before = before_timestamp.zip(before_id.as_deref());
         let items = storage
             .get_recent_clip_previews_page(limit, before)
             .map_err(|e| e.to_string())?;
@@ -175,7 +153,6 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
     Ok(state.settings.get())
 }
 
-/// 能读取剪贴板（包括剪贴板里没有文本）时返回 Ok，其他读取错误原样返回。
 #[tauri::command]
 pub async fn check_clipboard_permission() -> Result<(), String> {
     use arboard::{Clipboard, Error};
@@ -188,15 +165,11 @@ pub async fn check_clipboard_permission() -> Result<(), String> {
     }
 }
 
-/// Whether ClipMan currently holds the macOS Accessibility permission needed to
-/// simulate Cmd+V. Always `true` on non-macOS platforms.
 #[tauri::command]
 pub async fn check_accessibility_permission() -> Result<bool, String> {
     Ok(crate::accessibility::is_trusted())
 }
 
-/// Open System Settings → Privacy & Security → Accessibility so the user can
-/// (re-)grant ClipMan. No-op on non-macOS platforms.
 #[tauri::command]
 pub async fn open_accessibility_settings() -> Result<(), String> {
     crate::accessibility::open_settings()
@@ -216,7 +189,6 @@ pub async fn clear_non_pinned_history(
     state.icon_cache.clear();
     update_tray_menu(&app);
 
-    // Emit event to notify frontend
     if let Err(e) = app.emit("history-cleared", ()) {
         log::error!("Failed to emit history-cleared event: {}", e);
     }
@@ -224,19 +196,13 @@ pub async fn clear_non_pinned_history(
     Ok(())
 }
 
-/// Copy a clip to the system clipboard (used by the tray menu and the in-window
-/// Copy button). Reuses the paste module's clipboard writer so there is a single
-/// implementation of "write clipboard, then update history".
 pub async fn copy_clip_to_clipboard_internal(
     app: &AppHandle,
     clip_id: &str,
-    show_notification: bool,
 ) -> Result<crate::paste::UseOutcome, String> {
     let state = app.state::<AppState>();
-    // Copy-only writes follow the paste-format mode so a manual paste into
-    // the target app also lands without formatting (takePlain/globalPlain).
     let plain = state.settings.get().takes_plain_text();
-    let outcome = crate::paste::use_clips(
+    crate::paste::use_clips(
         app,
         state.inner(),
         crate::paste::UseRequest {
@@ -247,16 +213,11 @@ pub async fn copy_clip_to_clipboard_internal(
             hide: false,
         },
     )
-    .await?;
-    if show_notification {
-        notify_copied(app);
-    }
-
-    Ok(outcome)
+    .await
 }
 
 #[cfg(not(target_os = "linux"))]
-fn notify_copied(app: &AppHandle) {
+pub(crate) fn notify_copied(app: &AppHandle) {
     let chinese = app.state::<AppState>().settings.get().locale == "zh-CN";
     let body = if chinese {
         "内容已复制到剪贴板"
@@ -272,18 +233,16 @@ fn notify_copied(app: &AppHandle) {
 }
 
 #[cfg(target_os = "linux")]
-fn notify_copied(_app: &AppHandle) {}
+pub(crate) fn notify_copied(_app: &AppHandle) {}
 
 #[tauri::command]
 pub async fn copy_to_system_clipboard(
     app: AppHandle,
     clip_id: String,
 ) -> Result<crate::paste::UseOutcome, String> {
-    // Use unified function, no notification for window copy
-    copy_clip_to_clipboard_internal(&app, &clip_id, false).await
+    copy_clip_to_clipboard_internal(&app, &clip_id).await
 }
 
-/// `plain` 由前端决定：回车按粘贴格式模式，⌥回车对这一次取反。
 #[tauri::command]
 pub async fn paste_clip(
     app: AppHandle,
@@ -306,7 +265,6 @@ pub async fn paste_clip(
     .await
 }
 
-/// 按 `ids` 顺序把多条合并为一段换行分隔的纯文本写入，再按 `mode` 粘贴；图片会被跳过。
 #[tauri::command]
 pub async fn paste_clips(
     app: AppHandle,
@@ -346,17 +304,15 @@ pub fn register_quickbar_shortcut(
 
             let app_for_action = app_clone.clone();
             let foreground_store = foreground_store.clone();
-            if let Err(e) = run_action_on_main_thread(
-                &app_clone,
-                "show_quickbar_from_shortcut",
-                Box::new(move || {
+            if let Err(e) =
+                run_action_on_main_thread(&app_clone, "show_quickbar_from_shortcut", move || {
                     crate::window::show_quickbar_with_panel(
                         &app_for_action,
                         &foreground_store,
                         panel,
                     )
-                }),
-            ) {
+                })
+            {
                 log::error!("Failed to show QuickBar: {}", e);
             }
         })
@@ -401,8 +357,9 @@ pub async fn reorder_pinned(
 
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
-    run_window_command_on_main_thread(&app, "open_settings_window", |app| {
-        crate::window::open_settings_window(&app)
+    let app_for_action = app.clone();
+    run_action_on_main_thread(&app, "open_settings_window", move || {
+        crate::window::open_settings_window(&app_for_action)
     })
 }
 
@@ -415,14 +372,12 @@ pub async fn hide_quickbar(app: AppHandle) -> Result<(), String> {
 pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let foreground_store = state.quickbar_foreground_window.clone();
 
-    run_window_command_on_main_thread(&app, "show_quickbar", move |app| {
-        crate::window::show_quickbar(&app, &foreground_store)
+    let app_for_action = app.clone();
+    run_action_on_main_thread(&app, "show_quickbar", move || {
+        crate::window::show_quickbar(&app_for_action, &foreground_store)
     })
 }
 
-/// Acquire the updater and check the remote endpoint once. Shared by
-/// `check_for_updates` and `install_update` so both surface identical
-/// "no updater" / "check failed" errors.
 async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
 
@@ -487,28 +442,6 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
-fn unregister_shortcut_if_active(app: &AppHandle, shortcut: &str, label: &str) {
-    if let Err(e) = app.global_shortcut().unregister(shortcut) {
-        log::warn!(
-            "Failed to unregister {label} shortcut '{}': {}",
-            shortcut,
-            e
-        );
-    }
-}
-
-fn restore_shortcut(
-    app: &AppHandle,
-    shortcut: &str,
-    foreground_store: crate::window::ForegroundWindowStore,
-    panel: crate::window::QuickBarPanel,
-    label: &str,
-) {
-    if let Err(e) = register_quickbar_shortcut(app, shortcut, foreground_store, panel) {
-        log::warn!("Failed to restore {label} shortcut '{}': {}", shortcut, e);
-    }
-}
-
 fn apply_shortcut_changes(
     app: &AppHandle,
     foreground_store: crate::window::ForegroundWindowStore,
@@ -517,75 +450,48 @@ fn apply_shortcut_changes(
     new_shortcut: &str,
     new_pinned_shortcut: Option<&str>,
 ) -> Result<(), String> {
-    let main_changed = old_shortcut != new_shortcut;
-    let pinned_changed = old_pinned_shortcut != new_pinned_shortcut;
+    let changes: Vec<_> = [
+        (
+            Some(old_shortcut),
+            Some(new_shortcut),
+            crate::window::QuickBarPanel::Recent,
+        ),
+        (
+            old_pinned_shortcut,
+            new_pinned_shortcut,
+            crate::window::QuickBarPanel::Pinned,
+        ),
+    ]
+    .into_iter()
+    .filter(|(old, new, _)| old != new)
+    .collect();
 
-    if !main_changed && !pinned_changed {
-        return Ok(());
-    }
-
-    // Unregister every changed old binding first (frees the keys, so swapping
-    // main and pinned needs no special casing), then register the new ones.
-    if main_changed {
-        unregister_shortcut_if_active(app, old_shortcut, "old main");
-    }
-    if pinned_changed {
-        if let Some(old_pinned) = old_pinned_shortcut {
-            unregister_shortcut_if_active(app, old_pinned, "old pinned");
-        }
-    }
-
-    let result = (|| -> Result<(), String> {
-        if main_changed {
-            register_quickbar_shortcut(
-                app,
-                new_shortcut,
-                foreground_store.clone(),
-                crate::window::QuickBarPanel::Recent,
-            )?;
-        }
-        if pinned_changed {
-            if let Some(new_pinned) = new_pinned_shortcut {
-                register_quickbar_shortcut(
-                    app,
-                    new_pinned,
-                    foreground_store.clone(),
-                    crate::window::QuickBarPanel::Pinned,
-                )?;
+    for &(old, _, panel) in &changes {
+        if let Some(old) = old {
+            if let Err(e) = app.global_shortcut().unregister(old) {
+                log::warn!("Failed to unregister old {panel:?} shortcut '{old}': {e}");
             }
         }
-        Ok(())
-    })();
+    }
+
+    let result = changes.iter().try_for_each(|&(_, new, panel)| match new {
+        Some(new) => register_quickbar_shortcut(app, new, foreground_store.clone(), panel),
+        None => Ok(()),
+    });
 
     if result.is_err() {
-        // 先注销已注册的新快捷键（对调主/置顶快捷键时它们占用彼此的旧按键），再恢复旧的。
-        // 这里的失败只记录日志，调用方收到原始错误。
-        if main_changed {
-            let _ = app.global_shortcut().unregister(new_shortcut);
-        }
-        if pinned_changed {
-            if let Some(new_pinned) = new_pinned_shortcut {
-                let _ = app.global_shortcut().unregister(new_pinned);
+        for &(_, new, _) in &changes {
+            if let Some(new) = new {
+                let _ = app.global_shortcut().unregister(new);
             }
         }
-        if main_changed {
-            restore_shortcut(
-                app,
-                old_shortcut,
-                foreground_store.clone(),
-                crate::window::QuickBarPanel::Recent,
-                "old main",
-            );
-        }
-        if pinned_changed {
-            if let Some(old_pinned) = old_pinned_shortcut {
-                restore_shortcut(
-                    app,
-                    old_pinned,
-                    foreground_store,
-                    crate::window::QuickBarPanel::Pinned,
-                    "old pinned",
-                );
+        for &(old, _, panel) in &changes {
+            if let Some(old) = old {
+                if let Err(e) =
+                    register_quickbar_shortcut(app, old, foreground_store.clone(), panel)
+                {
+                    log::warn!("Failed to restore old {panel:?} shortcut '{old}': {e}");
+                }
             }
         }
     }
@@ -629,28 +535,24 @@ fn update_settings_blocking(
     state: &AppState,
     settings: Option<Settings>,
 ) -> Result<SettingsUpdateResult, String> {
-    // An explicit null resets through the same validation and rollback path.
     let mut settings = settings.unwrap_or_default().validate_and_normalize()?;
     let _settings_write_guard = state.settings_write_lock.lock().unwrap();
     log::info!("Updating settings: {:?}", settings);
 
     let old = state.settings.get();
 
-    // Two fields are owned by other subsystems, not the settings page, so a
-    // stale/reset settings object must never write over them here:
-    //   * `custom_data_path` is owned exclusively by `migrate_data_location`,
-    //     which relocates the database alongside changing the path. A settings
-    //     save (or a reset payload sending `null`) that repointed it here would
-    //     silently switch the app to a different/empty directory and strand the
-    //     existing database. Keep whatever migration last set.
-    //   * `capture_paused` is owned exclusively by the tray "Pause Capture"
-    //     toggle. A stale settings window saving would otherwise clobber the
-    //     tray's current pause state.
     settings.custom_data_path = old.custom_data_path.clone();
     settings.capture_paused = old.capture_paused;
 
     let autostart_changed = old.enable_autostart != settings.enable_autostart;
     let foreground_store = state.quickbar_foreground_window.clone();
+    let rollback_autostart = |reason: &str| {
+        if autostart_changed {
+            if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
+                log::warn!("Failed to roll back autostart after {reason}: {rollback_error}");
+            }
+        }
+    };
 
     if autostart_changed {
         apply_autostart_setting(app, settings.enable_autostart)?;
@@ -672,14 +574,7 @@ fn update_settings_blocking(
         &settings.global_shortcut,
         settings.pinned_shortcut.as_deref(),
     ) {
-        if autostart_changed {
-            if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
-                log::warn!(
-                    "Failed to roll back autostart after shortcut update failed: {}",
-                    rollback_error
-                );
-            }
-        }
+        rollback_autostart("shortcut update failed");
         return Err(e);
     }
 
@@ -697,21 +592,13 @@ fn update_settings_blocking(
                 rollback_error
             );
         }
-        if autostart_changed {
-            if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
-                log::warn!(
-                    "Failed to roll back autostart after settings save failed: {}",
-                    rollback_error
-                );
-            }
-        }
+        rollback_autostart("settings save failed");
         return Err(e);
     }
 
     state.settings.set(settings.clone());
     let _ = app.emit("settings-changed", ());
 
-    // Rebuild tray menu if visible tray settings changed.
     if old.tray_text_length != settings.tray_text_length
         || old.max_pinned_in_tray != settings.max_pinned_in_tray
         || old.max_recent_in_tray != settings.max_recent_in_tray
@@ -813,10 +700,9 @@ pub async fn enable_global_shortcut(
     log::info!("Global shortcut '{}' re-enabled", current_shortcut);
 
     if let Some(pinned_shortcut) = settings.pinned_shortcut {
-        if pinned_shortcut != current_shortcut
-            && !app
-                .global_shortcut()
-                .is_registered(pinned_shortcut.as_str())
+        if !app
+            .global_shortcut()
+            .is_registered(pinned_shortcut.as_str())
         {
             register_quickbar_shortcut(
                 &app,
@@ -881,8 +767,6 @@ fn migrate_data_location_blocking(
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
     {
-        // 备份和替换期间一直持有存储锁：这段时间的采集会等待这把锁，拿到锁时写入的
-        // 已经是新数据库，不会丢记录，也不会写进旧库。
         let mut storage = state.storage.lock().unwrap();
         storage
             .backup_to_path(&new_db_path)
@@ -900,7 +784,6 @@ fn migrate_data_location_blocking(
         state.settings.set(new_settings);
     }
 
-    // 旧连接已经关闭，Windows 这时才允许删除旧数据库文件。
     let warning = delete_old
         .then(|| migration::remove_data_files(&old_path).err())
         .flatten()

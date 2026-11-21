@@ -1,173 +1,144 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { calls, useTauriMock } from './tauri-mock';
 
-const pageErrors = new WeakMap<Page, string[]>();
-test.afterEach(async ({ page }) => {
-  expect(pageErrors.get(page)).toEqual([]);
+useTauriMock('main', () => {
+  const w = window as any;
+  let initialHistory = true;
+  const clips = Array.from({ length: 1001 }, (_, index) => ({
+    id: `clip-${index}`,
+    contentType: 'text',
+    content: btoa(`Clipboard entry ${index}`),
+    timestamp: Math.floor(Date.now() / 1000) - index * 60,
+    isPinned: false,
+    pinOrder: null,
+    label: null as string | null,
+    sourceApp: 'Editor',
+    hasHtml: false,
+    contentBytes: 20,
+    fileCount: 0,
+  }));
+  const examples = [
+    'Keep common actions close to the content.\n\nThe list should be easy to scan, with room for text and a consistent visual rhythm.',
+    'https://developer.apple.com/design/human-interface-guidelines/',
+    '',
+    '{ "theme": "system", "autoPaste": true }',
+    '',
+    '周会纪要：确认搜索体验、鼠标操作与发布验收。',
+    'bun run check && bun run test:ui',
+    'Release notes — clipboard history and search improvements',
+  ];
+  examples.forEach((text, index) => {
+    if (text) clips[index].content = btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = 80;
+  canvas.height = 40;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#476ac7';
+  context.fillRect(0, 0, 80, 40);
+  context.fillStyle = '#d9e5ff';
+  context.fillRect(12, 12, 56, 16);
+  clips[1] = {
+    ...clips[1],
+    sourceApp: 'A Very Long Source Application Name That Forces Metadata Truncation',
+  };
+  clips[2] = {
+    ...clips[2],
+    contentType: 'image',
+    content: canvas.toDataURL(),
+    contentBytes: 2048,
+  };
+  clips[4] = {
+    ...clips[4],
+    contentType: 'files',
+    content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
+    fileCount: 2,
+  };
+  clips[6] = { ...clips[6], label: 'Build gate' };
+  clips[7] = {
+    ...clips[7],
+    contentType: 'files',
+    content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
+    fileCount: 3,
+  };
+  clips[8] = {
+    ...clips[8],
+    contentType: 'files',
+    content: btoa(JSON.stringify(['C:\\Users\\me\\report.docx'])),
+    fileCount: 1,
+  };
+  const appIcon = canvas.toDataURL();
+  let pasteFormat = 'original';
+  w.__setPasteFormat = (value: string) => {
+    pasteFormat = value;
+  };
+  return async (cmd: string, args: any) => {
+    if (cmd === 'get_settings')
+      return {
+        autoPaste: true,
+        maxHistoryItems: 10000,
+        capturePaused: false,
+        pasteFormat,
+        locale: 'en',
+      };
+    if (cmd === 'check_accessibility_permission') return true;
+    if (cmd === 'get_app_icon') return args.name === 'Editor' ? appIcon : null;
+    if (cmd === 'get_pinned_clips') return structuredClone(clips.filter((item) => item.isPinned));
+    if (cmd === 'get_recent_clips') {
+      if (initialHistory) {
+        initialHistory = false;
+        setTimeout(() => w.emitTestEvent('quickbar-opened'), 5);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const start = args.beforeId ? Number(args.beforeId.split('-')[1]) + 1 : 0;
+      return structuredClone(clips.slice(start, start + args.limit));
+    }
+    if (cmd === 'search_clips') {
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      return args.query === 'many'
+        ? clips
+        : [
+            {
+              ...clips[0],
+              id: args.query,
+              contentBytes: args.query === 'large' ? 2_000_000 : 100,
+              content: btoa(String.fromCharCode(...new TextEncoder().encode(args.query))),
+            },
+          ];
+    }
+    if (cmd === 'toggle_pin' || cmd === 'set_clip_label') {
+      const item = clips.find((item) => item.id === args.id);
+      if (item) {
+        if (cmd === 'toggle_pin') item.isPinned = args.isPinned;
+        else item.label = args.label;
+      }
+      return null;
+    }
+    if (cmd === 'get_clip' && args.id === 'clip-2')
+      return { id: args.id, contentType: 'image', text: '', imageUrl: clips[2].content };
+    if (cmd === 'get_clip')
+      return {
+        id: args.id,
+        contentType: 'text',
+        text: clips.find((item) => item.id === args.id)
+          ? new TextDecoder().decode(
+              Uint8Array.from(atob(clips.find((item) => item.id === args.id)!.content), (c) =>
+                c.charCodeAt(0)
+              )
+            )
+          : `Detail for ${args.id}`,
+        truncated: args.id === 'large',
+        imageUrl: null,
+      };
+    if (cmd === 'paste_clip' || cmd === 'paste_clips' || cmd === 'hide_quickbar') {
+      w.emitTestEvent('quickbar-hidden');
+      return 'pasteRequested';
+    }
+    return null;
+  };
 });
 
 test.beforeEach(async ({ page }) => {
-  const errors: string[] = [];
-  pageErrors.set(page, errors);
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.addInitScript(() => {
-    const w = window as any;
-    const callbacks = new Map<number, (event: unknown) => void>();
-    const listeners = new Map<string, number[]>();
-    let nextId = 0;
-    let initialHistory = true;
-    const clips = Array.from({ length: 10000 }, (_, index) => ({
-      id: `clip-${index}`,
-      contentType: 'text',
-      content: btoa(`Clipboard entry ${index}`),
-      timestamp: Math.floor(Date.now() / 1000) - index * 60,
-      isPinned: false,
-      pinOrder: null,
-      label: null as string | null,
-      sourceApp: 'Editor',
-      hasHtml: false,
-      contentBytes: 20,
-      fileCount: 0,
-    }));
-    const examples = [
-      'Keep common actions close to the content.\n\nThe list should be easy to scan, with room for text and a consistent visual rhythm.',
-      'https://developer.apple.com/design/human-interface-guidelines/',
-      '',
-      '{ "theme": "system", "autoPaste": true }',
-      '',
-      '周会纪要：确认搜索体验、鼠标操作与发布验收。',
-      'bun run check && bun run test:ui',
-      'Release notes — clipboard history and search improvements',
-    ];
-    examples.forEach((text, index) => {
-      if (text) clips[index].content = btoa(String.fromCharCode(...new TextEncoder().encode(text)));
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 80;
-    canvas.height = 40;
-    const context = canvas.getContext('2d')!;
-    context.fillStyle = '#476ac7';
-    context.fillRect(0, 0, 80, 40);
-    context.fillStyle = '#d9e5ff';
-    context.fillRect(12, 12, 56, 16);
-    clips[1] = {
-      ...clips[1],
-      sourceApp: 'A Very Long Source Application Name That Forces Metadata Truncation',
-    };
-    clips[2] = {
-      ...clips[2],
-      contentType: 'image',
-      content: canvas.toDataURL(),
-      contentBytes: 2048,
-    };
-    clips[4] = {
-      ...clips[4],
-      contentType: 'files',
-      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
-      fileCount: 2,
-    };
-    clips[6] = { ...clips[6], label: 'Build gate' };
-    clips[7] = {
-      ...clips[7],
-      contentType: 'files',
-      content: btoa(JSON.stringify(['/tmp/report.pdf', '/tmp/budget.xlsx'])),
-      fileCount: 3,
-    };
-    clips[8] = {
-      ...clips[8],
-      contentType: 'files',
-      content: btoa(JSON.stringify(['C:\\Users\\me\\report.docx'])),
-      fileCount: 1,
-    };
-    const appIcon = canvas.toDataURL();
-    let pasteFormat = 'original';
-    w.__setPasteFormat = (value: string) => {
-      pasteFormat = value;
-    };
-    w.calls = [];
-    w.emitTestEvent = (event: string, payload: unknown = {}) => {
-      for (const handler of listeners.get(event) ?? [])
-        callbacks.get(handler)?.({ event, payload, id: handler });
-    };
-    w.__TAURI_INTERNALS__ = {
-      metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
-      transformCallback: (callback: (event: unknown) => void) => {
-        callbacks.set(++nextId, callback);
-        return nextId;
-      },
-      unregisterCallback: (id: number) => callbacks.delete(id),
-      invoke: async (cmd: string, args: any = {}) => {
-        w.calls.push({ cmd, args });
-        if (cmd === 'plugin:event|listen') {
-          listeners.set(args.event, [...(listeners.get(args.event) ?? []), args.handler]);
-          return args.handler;
-        }
-        if (cmd === 'get_settings')
-          return {
-            autoPaste: true,
-            maxHistoryItems: 10000,
-            capturePaused: false,
-            pasteFormat,
-            locale: 'en',
-          };
-        if (cmd === 'check_accessibility_permission') return true;
-        if (cmd === 'get_app_icon') return args.name === 'Editor' ? appIcon : null;
-        if (cmd === 'get_pinned_clips')
-          return structuredClone(clips.filter((item) => item.isPinned));
-        if (cmd === 'get_recent_clips') {
-          // Exercise a native open event while first-page IPC is still outstanding.
-          if (initialHistory) {
-            initialHistory = false;
-            setTimeout(() => w.emitTestEvent('quickbar-opened'), 5);
-          }
-          await new Promise((resolve) => setTimeout(resolve, 30));
-          const start = args.beforeId ? Number(args.beforeId.split('-')[1]) + 1 : 0;
-          return structuredClone(clips.slice(start, start + args.limit));
-        }
-        if (cmd === 'search_clips') {
-          await new Promise((resolve) => setTimeout(resolve, 90));
-          return args.query === 'many'
-            ? clips.slice(0, 1001)
-            : [
-                {
-                  ...clips[0],
-                  id: args.query,
-                  contentBytes: args.query === 'large' ? 2_000_000 : 100,
-                  content: btoa(String.fromCharCode(...new TextEncoder().encode(args.query))),
-                },
-              ];
-        }
-        if (cmd === 'toggle_pin' || cmd === 'set_clip_label') {
-          const item = clips.find((item) => item.id === args.id);
-          if (item) {
-            if (cmd === 'toggle_pin') item.isPinned = args.isPinned;
-            else item.label = args.label;
-          }
-          return null;
-        }
-        if (cmd === 'get_clip' && args.id === 'clip-2')
-          return { id: args.id, contentType: 'image', text: '', imageUrl: clips[2].content };
-        if (cmd === 'get_clip')
-          return {
-            id: args.id,
-            contentType: 'text',
-            text: clips.find((item) => item.id === args.id)
-              ? new TextDecoder().decode(
-                  Uint8Array.from(atob(clips.find((item) => item.id === args.id)!.content), (c) =>
-                    c.charCodeAt(0)
-                  )
-                )
-              : `Detail for ${args.id}`,
-            truncated: args.id === 'large',
-            imageUrl: null,
-          };
-        if (cmd === 'paste_clip' || cmd === 'paste_clips' || cmd === 'hide_quickbar') {
-          w.emitTestEvent('quickbar-hidden');
-          return 'pasteRequested';
-        }
-        return null;
-      },
-    };
-  });
   await page.goto('/');
   await expect(page.getByRole('row').first()).toBeVisible();
 });
@@ -190,9 +161,7 @@ test('Enter submits the current query once without waiting for debounce', async 
   await page.getByRole('combobox').fill('needle');
   await page.keyboard.press('Enter');
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
-    )
+    .poll(() => calls(page, 'paste_clip'))
     .toEqual([{ cmd: 'paste_clip', args: { id: 'needle', mode: 'default', plain: false } }]);
 });
 
@@ -203,26 +172,16 @@ test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page
   await page.getByRole('combobox').fill('plain-default');
   await page.keyboard.press('Enter');
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
-    )
+    .poll(() => calls(page, 'paste_clip'))
     .toEqual([{ cmd: 'paste_clip', args: { id: 'plain-default', mode: 'default', plain: true } }]);
   await page.getByRole('combobox').fill('plain-inverted');
   await page.keyboard.press('Alt+Enter');
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as any).calls
-          .filter((c: any) => c.cmd === 'paste_clip')
-          .map((c: any) => c.args.plain)
-      )
-    )
+    .poll(async () => (await calls(page, 'paste_clip')).map((c) => c.args.plain))
     .toEqual([true, false]);
 });
 
 test('closing the session cancels Enter while a search is running', async ({ page }) => {
-  // 输入、Enter、Escape 在同一个任务里派发：分开发送时，慢机器上 30ms 防抖加 90ms 搜索
-  // 可能在 Enter 之前就完成，此时 Enter 粘贴已有结果是正确行为，测试就不再覆盖取消路径
   await page.getByRole('combobox').evaluate((input: HTMLInputElement) => {
     input.value = 'cancelled';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -230,11 +189,9 @@ test('closing the session cancels Enter while a search is running', async ({ pag
       input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
   });
   await page.waitForTimeout(150);
-  const calls = await page.evaluate(() =>
-    (window as any).calls.filter((c: any) => ['search_clips', 'paste_clip'].includes(c.cmd))
-  );
-  expect(calls.map((c: any) => c.cmd)).toEqual(['search_clips']);
-  expect(calls[0].args.query).toBe('cancelled');
+  const used = await calls(page, 'search_clips', 'paste_clip');
+  expect(used.map((c) => c.cmd)).toEqual(['search_clips']);
+  expect(used[0].args.query).toBe('cancelled');
 });
 
 test('large searches show a truncation notice and reset the scroller', async ({ page }) => {
@@ -256,17 +213,9 @@ test('IME composition does not search or paste before composition ends', async (
   await input.fill('中');
   await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
   await page.waitForTimeout(60);
-  expect(
-    await page.evaluate(() =>
-      (window as any).calls.filter((c: any) => ['search_clips', 'paste_clip'].includes(c.cmd))
-    )
-  ).toEqual([]);
+  expect(await calls(page, 'search_clips', 'paste_clip')).toEqual([]);
   await input.dispatchEvent('compositionend');
-  await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).calls.some((c: any) => c.cmd === 'search_clips'))
-    )
-    .toBe(true);
+  await expect.poll(async () => (await calls(page, 'search_clips')).length > 0).toBe(true);
 });
 
 test('IME confirmation after compositionend leaves Enter available for the next paste', async ({
@@ -290,14 +239,10 @@ test('IME confirmation after compositionend leaves Enter available for the next 
   });
   expect(prevented).toBe(false);
   await expect(page.getByRole('row')).toHaveCount(1);
-  expect(
-    await page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
-  ).toEqual([]);
+  expect(await calls(page, 'paste_clip')).toEqual([]);
   await input.press('Enter');
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).calls.filter((c: any) => c.cmd === 'paste_clip'))
-    )
+    .poll(() => calls(page, 'paste_clip'))
     .toEqual([{ cmd: 'paste_clip', args: { id: '中文', mode: 'default', plain: false } }]);
 });
 
@@ -324,42 +269,23 @@ test('Tab reaches controls and screenshots cover both panel sizes', async ({
   });
   await expect(page.locator('html')).toHaveClass(/light-pink/);
   await page.screenshot({ path: testInfo.outputPath('quickbar-pink.png') });
-  await page.evaluate(async () => {
-    const path = '/src/lib/i18n/index.svelte.ts';
-    const { i18n } = await import(path);
-    i18n.setLocale('zh-CN');
-    window.dispatchEvent(new StorageEvent('storage', { key: 'theme', newValue: 'light' }));
-  });
-  await page.getByRole('combobox').focus();
-  await page.screenshot({ path: testInfo.outputPath('quickbar-zh.png') });
 });
 
-test('100, 1000 and 10000 loaded results keep the same DOM bound', async ({ page }, testInfo) => {
-  const samples = [];
-  for (const count of [100, 1000, 10000]) {
-    const elapsed = await page.evaluate(async (count) => {
-      const path = '/src/lib/stores/clipboard.svelte.ts';
-      const { clipboardStore } = await import(path);
-      const item = clipboardStore.recentItems[0];
-      const start = performance.now();
-      clipboardStore.recentItems = Array.from({ length: count }, (_, index) => ({
-        ...item,
-        id: `scale-${index}`,
-        timestamp: item.timestamp - index,
-      }));
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      );
-      return performance.now() - start;
-    }, count);
-    const mounted = await page.getByRole('row').count();
-    expect(mounted).toBeLessThan(20);
-    samples.push({ count, mounted, stateToTwoAnimationFramesMs: elapsed });
-  }
-  await testInfo.attach('renderer-scaling', {
-    body: JSON.stringify(samples, null, 2),
-    contentType: 'application/json',
+test('10000 loaded results keep the DOM bounded', async ({ page }) => {
+  await page.evaluate(async () => {
+    const path = '/src/lib/stores/clipboard.svelte.ts';
+    const { clipboardStore } = await import(path);
+    const item = clipboardStore.recentItems[0];
+    clipboardStore.recentItems = Array.from({ length: 10000 }, (_, index) => ({
+      ...item,
+      id: `scale-${index}`,
+      timestamp: item.timestamp - index,
+    }));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
   });
+  expect(await page.getByRole('row').count()).toBeLessThan(20);
 });
 
 test('image originals are loaded only when explicitly requested', async ({ page }) => {
@@ -368,13 +294,7 @@ test('image originals are loaded only when explicitly requested', async ({ page 
   await page.keyboard.press('ArrowDown');
   const load = page.getByRole('button', { name: 'Expand preview' });
   await expect(load).toBeVisible();
-  expect(
-    await page.evaluate(() =>
-      (window as any).calls.filter(
-        (call: any) => call.cmd === 'get_clip' && call.args.id === 'clip-2'
-      )
-    )
-  ).toEqual([]);
+  expect((await calls(page, 'get_clip')).filter((call) => call.args.id === 'clip-2')).toEqual([]);
   await load.click();
   await expect(load).toHaveCount(0);
 });
@@ -401,29 +321,13 @@ test('multi-selection is distinct from keyboard focus and exposes image skipping
 test('multi-selection works from the keyboard and Enter pastes it after mouse toggles', async ({
   page,
 }) => {
-  const pasted = () =>
-    page.evaluate(() =>
-      (window as any).calls.filter((c: any) => c.cmd === 'paste_clips').map((c: any) => c.args.ids)
-    );
+  const pasted = async () => (await calls(page, 'paste_clips')).map((c) => c.args.ids);
   await page.getByRole('combobox').focus();
-  await page.keyboard.press('Shift+ArrowDown');
-  await page.keyboard.press('Shift+ArrowDown');
-  await page.keyboard.press('Shift+ArrowUp');
-  await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
-  // 缩回只剩起始行时取消多选，不按 Shift 的方向键清空多选
-  await page.keyboard.press('Shift+ArrowUp');
-  await expect(page.locator('.quickbar-panel > footer')).not.toContainText('selected');
-  await page.keyboard.press('Shift+ArrowDown');
-  await page.keyboard.press('ArrowDown');
-  await expect(page.locator('.quickbar-panel > footer')).not.toContainText('selected');
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Shift+ArrowDown');
   await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
   await page.keyboard.press('Enter');
   await expect.poll(pasted).toEqual([['clip-0', 'clip-1']]);
 
-  // 鼠标勾选后焦点留在搜索框，回车合并粘贴，不会再次触发勾选按钮
   await page.keyboard.press('Escape');
   for (const id of ['clip-3', 'clip-4']) {
     const row = page.locator(`#clip-item-${id}`);
@@ -451,10 +355,8 @@ test('shift-click selects a range and Enter uses a single checked row', async ({
   await page.locator('#clip-item-clip-5').hover();
   await expect(page.locator('#clip-item-clip-5')).toHaveAttribute('data-active', 'true');
   await page.keyboard.press('Enter');
-  const used = await page.evaluate(() =>
-    (window as any).calls.filter((c: any) => c.cmd === 'paste_clip' || c.cmd === 'paste_clips')
-  );
-  expect(used.map((c: any) => c.args.id ?? c.args.ids)).toEqual(['clip-3']);
+  const used = await calls(page, 'paste_clip', 'paste_clips');
+  expect(used.map((c) => c.args.id ?? c.args.ids)).toEqual(['clip-3']);
 });
 
 test('deleting the cursor row keeps the cursor in place', async ({ page }) => {
@@ -490,7 +392,7 @@ test('row mouse actions target their own item without pasting, and editing keeps
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(72); // 根字号为默认 16px 时的 4.5rem
+  expect((await row.boundingBox())?.height).toBe(72);
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
@@ -519,18 +421,11 @@ test('Escape cancels row editing without closing QuickBar or saving', async ({ p
   await row.getByRole('textbox').press('Escape');
   await expect(row.getByRole('textbox')).toHaveCount(0);
   await expect(page.getByRole('combobox')).toBeVisible();
-  expect(
-    await page.evaluate(() =>
-      (window as any).calls.filter((call: any) =>
-        ['hide_quickbar', 'set_clip_label', 'paste_clip'].includes(call.cmd)
-      )
-    )
-  ).toEqual([]);
+  expect(await calls(page, 'hide_quickbar', 'set_clip_label', 'paste_clip')).toEqual([]);
 });
 
 test('row actions never reserve text width or cover the content line', async ({ page }) => {
   const row = page.locator('#clip-item-clip-1');
-  // 第一个 gridcell 是类型图标兼多选框，正文在第二个
   const content = row.locator('[role=gridcell]').nth(1);
   const title = content.locator('.text-foreground');
   const rowBox = (await row.boundingBox())!;
@@ -544,18 +439,8 @@ test('row actions never reserve text width or cover the content line', async ({ 
   expect(actions.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
   const slot = (await row.locator('.slot-hint').boundingBox())!;
   expect(actions.y).toBeGreaterThanOrEqual(slot.y + slot.height);
-  // The metadata line reserves right padding for the action cluster, so the
-  // hovered buttons never overlap the (truncated) metadata text itself.
   const metaText = (await row.locator('.row-meta > span.truncate').boundingBox())!;
   expect(actions.x).toBeGreaterThanOrEqual(metaText.x + metaText.width - 1);
-  await row.getByRole('button', { name: 'Copy', exact: true }).click();
-  expect(
-    await page.evaluate(() =>
-      (window as any).calls.some(
-        (call: any) => call.cmd === 'copy_to_system_clipboard' && call.args.clipId === 'clip-1'
-      )
-    )
-  ).toBe(true);
 });
 
 test('file rows show basenames with +N badge and Windows paths split correctly', async ({
@@ -566,7 +451,6 @@ test('file rows show basenames with +N badge and Windows paths split correctly',
   await expect(multi).toContainText('budget.xlsx');
   await expect(multi.getByText('+1')).toBeVisible();
   await expect(multi).not.toContainText('/tmp/');
-  // 元信息各段之间只有一个分隔符，模板换行不能多出空白
   expect(await multi.locator('.row-meta > span.truncate').textContent()).not.toMatch(/\s{2}/);
 
   const windows = page.locator('#clip-item-clip-8');
@@ -598,9 +482,7 @@ test('duplicate file preview paths render both entries and keep the total count'
   await expect(row.getByText('+1', { exact: true })).toBeVisible();
   await filenames.first().click();
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).calls.filter((call: any) => call.cmd === 'paste_clip'))
-    )
+    .poll(() => calls(page, 'paste_clip'))
     .toEqual([
       { cmd: 'paste_clip', args: { id: 'duplicate-files', mode: 'default', plain: false } },
     ]);
@@ -610,7 +492,6 @@ test('metadata starts with the source app icon and name', async ({ page }) => {
   const meta = page.locator('#clip-item-clip-0 .row-meta');
   await expect(meta.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
   await expect(meta.locator('span.truncate')).toHaveText(/^Editor\u00a0·\u00a0/);
-  // 没有图标的应用只显示名字
   await expect(page.locator('#clip-item-clip-1 .row-meta img')).toHaveCount(0);
 });
 

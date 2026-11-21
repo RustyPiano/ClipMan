@@ -18,31 +18,8 @@
 
   const t = $derived(i18n.t);
 
-  const shortcutPresets = [
-    {
-      label: isMac ? '⌘⇧V' : 'Ctrl+Shift+V',
-      value: 'CommandOrControl+Shift+V',
-    },
-    {
-      label: isMac ? '⌘⇧C' : 'Ctrl+Shift+C',
-      value: 'CommandOrControl+Shift+C',
-    },
-    {
-      label: isMac ? '⌥V' : 'Alt+V',
-      value: 'Alt+V',
-    },
-  ];
-
-  const pinnedShortcutPresets = [
-    {
-      label: isMac ? '⌘⇧P' : 'Ctrl+Shift+P',
-      value: 'CommandOrControl+Shift+P',
-    },
-    {
-      label: isMac ? '⌘⌥V' : 'Ctrl+Alt+V',
-      value: 'CommandOrControl+Alt+V',
-    },
-  ];
+  const shortcutPresets = ['CommandOrControl+Shift+V', 'CommandOrControl+Shift+C', 'Alt+V'];
+  const pinnedShortcutPresets = ['CommandOrControl+Shift+P', 'CommandOrControl+Alt+V'];
 
   function formatShortcut(shortcut: string): string[] {
     if (!shortcut) return [];
@@ -78,14 +55,6 @@
   let shortcutTask = Promise.resolve();
   let recordingRevision = 0;
 
-  function unlistenQuietly(unlisten: () => void) {
-    try {
-      void Promise.resolve(unlisten()).catch(() => {});
-    } catch {
-      // The native window may already be gone during teardown.
-    }
-  }
-
   function startRecording() {
     if (isRecording) return shortcutTask;
     const revision = ++recordingRevision;
@@ -97,7 +66,6 @@
       .catch((error) => {
         if (revision === recordingRevision) {
           isRecording = false;
-          recordingWarning = t.disableHotkeyFailed;
         }
         toastStore.add(String(error), 'error');
       });
@@ -112,7 +80,6 @@
     isRecording = false;
     recordedKeys = [];
     recordingWarning = '';
-    // 等待禁用操作结束后再恢复快捷键，关闭窗口或卸载组件时也按这个顺序执行。
     shortcutTask = shortcutTask
       .then(() => invoke<void>('enable_global_shortcut'))
       .catch((error) => {
@@ -127,12 +94,12 @@
     void listen('settings-hidden', () => {
       void stopRecording();
     }).then((stop) => {
-      if (disposed) unlistenQuietly(stop);
+      if (disposed) stop();
       else unlisten = stop;
     });
     return () => {
       disposed = true;
-      if (unlisten) unlistenQuietly(unlisten);
+      unlisten?.();
     };
   });
 
@@ -225,12 +192,12 @@
           </p>
         </div>
         {#if !isRecording}
-          <Button type="button" variant="outline" size="sm" onclick={startRecording} class="gap-2">
+          <Button variant="outline" size="sm" onclick={startRecording} class="gap-2">
             <Keyboard class="h-4 w-4" />
             {t.recording}
           </Button>
         {:else}
-          <Button type="button" variant="outline" size="sm" onclick={stopRecording} class="gap-2">
+          <Button variant="outline" size="sm" onclick={stopRecording} class="gap-2">
             <X class="h-4 w-4" />
             {t.cancel}
           </Button>
@@ -295,14 +262,13 @@
 
       <div class="flex flex-wrap gap-2 pt-1">
         <span class="text-xs text-muted-foreground self-center">{t.commonHotkeys}</span>
-        {#each shortcutPresets as preset (preset.value)}
+        {#each shortcutPresets as preset (preset)}
           <Button
-            type="button"
-            variant={settings.globalShortcut === preset.value ? 'default' : 'outline'}
+            variant={settings.globalShortcut === preset ? 'default' : 'outline'}
             size="sm"
-            onclick={() => (settings.globalShortcut = preset.value)}
+            onclick={() => (settings.globalShortcut = preset)}
           >
-            {preset.label}
+            {formatShortcut(preset).join(isMac ? '' : '+')}
           </Button>
         {/each}
       </div>
@@ -316,7 +282,6 @@
         <div class="mt-2">
           <Input
             id="shortcut-input"
-            type="text"
             bind:value={settings.globalShortcut}
             placeholder="CommandOrControl+Shift+V"
             class="text-sm font-mono"
@@ -336,14 +301,12 @@
       <div class="flex gap-2">
         <Input
           id="pinned-shortcut-input"
-          type="text"
           value={settings.pinnedShortcut ?? ''}
           oninput={handlePinnedShortcutInput}
           placeholder="CommandOrControl+Shift+P"
           class="text-sm font-mono"
         />
         <Button
-          type="button"
           variant="outline"
           onclick={() => (settings.pinnedShortcut = null)}
           disabled={!settings.pinnedShortcut}
@@ -354,14 +317,13 @@
 
       <div class="flex flex-wrap gap-2 pt-1">
         <span class="text-xs text-muted-foreground self-center">{t.commonHotkeys}</span>
-        {#each pinnedShortcutPresets as preset (preset.value)}
+        {#each pinnedShortcutPresets as preset (preset)}
           <Button
-            type="button"
-            variant={settings.pinnedShortcut === preset.value ? 'default' : 'outline'}
+            variant={settings.pinnedShortcut === preset ? 'default' : 'outline'}
             size="sm"
-            onclick={() => (settings.pinnedShortcut = preset.value)}
+            onclick={() => (settings.pinnedShortcut = preset)}
           >
-            {preset.label}
+            {formatShortcut(preset).join(isMac ? '' : '+')}
           </Button>
         {/each}
       </div>

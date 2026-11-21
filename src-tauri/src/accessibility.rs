@@ -1,13 +1,3 @@
-//! macOS Accessibility (AXIsProcessTrusted) permission helpers.
-//!
-//! ClipMan simulates Cmd+V to auto-paste. On macOS that requires the
-//! Accessibility permission. Crucially, when the permission is missing the
-//! `CGEventPost` used by `enigo` fails **silently** — no error is returned — so
-//! we cannot detect the problem from the paste result. Instead we proactively
-//! query `AXIsProcessTrusted()` before pasting and guide the user to re-grant
-//! the permission when it has been lost (commonly after an app update, because
-//! the macOS privacy database keys the grant to the code signature).
-
 #[cfg(target_os = "macos")]
 mod imp {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,13 +12,10 @@ mod imp {
         fn AXIsProcessTrusted() -> bool;
     }
 
-    /// Whether this process currently holds the macOS Accessibility permission.
     pub fn is_trusted() -> bool {
-        // Safe: `AXIsProcessTrusted` takes no arguments and returns a Boolean.
         unsafe { AXIsProcessTrusted() }
     }
 
-    /// Open System Settings → Privacy & Security → Accessibility.
     pub fn open_settings() -> Result<(), String> {
         std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
@@ -37,15 +24,11 @@ mod imp {
             .map_err(|e| format!("Failed to open Accessibility settings: {e}"))
     }
 
-    // Prevents stacking multiple dialogs when several pastes fail in a row.
     static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
 
-    /// Show a native, app-modal dialog explaining that the Accessibility
-    /// permission is required and offering to open System Settings. Safe to call
-    /// from any thread — the dialog is dispatched to the main thread.
     pub fn guide_reauthorization(app: &AppHandle) {
         if DIALOG_OPEN.swap(true, Ordering::SeqCst) {
-            return; // a dialog is already on screen
+            return;
         }
 
         let zh = app
@@ -106,8 +89,6 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::{guide_reauthorization, is_trusted, open_settings};
 
-// Non-macOS platforms have no equivalent permission gate for input simulation;
-// report trusted and make opening settings a no-op so callers stay platform-agnostic.
 #[cfg(not(target_os = "macos"))]
 pub fn is_trusted() -> bool {
     true

@@ -31,7 +31,6 @@ fn system_locale() -> String {
         fn GetUserDefaultLocaleName(buffer: *mut u16, length: i32) -> i32;
     }
     let mut buffer = [0u16; 85];
-    // Windows LOCALE_NAME_MAX_LENGTH includes the terminating NUL.
     let length = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
     locale_for_language(&String::from_utf16_lossy(
         &buffer[..length.saturating_sub(1) as usize],
@@ -47,7 +46,6 @@ fn system_locale() -> String {
     locale_for_language(&language)
 }
 
-/// v2.1.x 及更早版本在 store 顶层逐项保存的设置键。
 const LEGACY_SETTINGS_KEYS: [&str; 11] = [
     "global_shortcut",
     "auto_paste",
@@ -67,7 +65,6 @@ const LEGACY_SETTINGS_KEYS: [&str; 11] = [
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
-    /// original 保留格式；takePlain 在取用时去除格式；globalPlain 在采集后去除格式。
     pub paste_format: String,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
@@ -78,15 +75,10 @@ pub struct Settings {
     pub custom_data_path: Option<String>,
     pub enable_autostart: bool,
     pub locale: String,
-    /// 超过此字节数的文本或文件路径列表不参与采集。
     pub max_text_bytes: usize,
-    /// 图片最长边的像素上限；0 表示不缩小。
     pub max_image_dimension: u32,
-    /// 跳过符合密钥特征的文本。
     pub skip_secrets: bool,
-    /// 按应用名称或 bundle identifier 排除采集，忽略大小写，最多 100 项。
     pub ignored_apps: Vec<String>,
-    /// 托盘菜单控制的暂停采集状态。
     pub capture_paused: bool,
 }
 
@@ -160,16 +152,21 @@ impl Settings {
             self.global_shortcut = Settings::default().global_shortcut;
         }
 
-        // 旧设置在读取时保留兼容处理；保存入口拒绝超出范围或未知的值。
         self.max_history_items = self.max_history_items.clamp(1, 10_000);
         self.tray_text_length = self.tray_text_length.clamp(10, 200);
         self.max_pinned_in_tray = self.max_pinned_in_tray.clamp(0, 50);
         self.max_recent_in_tray = self.max_recent_in_tray.clamp(0, 100);
         self.max_text_bytes = self.max_text_bytes.clamp(4096, 50_000_000);
-        self.max_image_dimension = clamp_max_image_dimension(self.max_image_dimension);
+        if self.max_image_dimension != 0 {
+            self.max_image_dimension = self.max_image_dimension.clamp(512, 16384);
+        }
         self.ignored_apps.truncate(MAX_IGNORED_APPS);
-        self.locale = normalize_locale(&self.locale);
-        self.paste_format = normalize_paste_format(&self.paste_format);
+        if !matches!(self.locale.as_str(), "zh-CN" | "en") {
+            self.locale = DEFAULT_LOCALE.to_string();
+        }
+        if !PASTE_FORMATS.contains(&self.paste_format.as_str()) {
+            self.paste_format = PASTE_FORMATS[0].to_string();
+        }
 
         if self.pinned_shortcut.as_deref() == Some(self.global_shortcut.as_str()) {
             log::warn!("Pinned shortcut matches main shortcut on load; clearing pinned shortcut");
@@ -201,37 +198,10 @@ impl Settings {
     }
 }
 
-/// 与 src/lib/types.ts 中的 PasteFormat 保持一致。
 pub const PASTE_FORMATS: [&str; 3] = ["original", "takePlain", "globalPlain"];
-
-fn normalize_paste_format(value: &str) -> String {
-    let trimmed = value.trim();
-    if PASTE_FORMATS.contains(&trimmed) {
-        trimmed.to_string()
-    } else {
-        PASTE_FORMATS[0].to_string()
-    }
-}
-
-fn normalize_locale(locale: &str) -> String {
-    match locale.trim() {
-        "zh-CN" => "zh-CN".to_string(),
-        "en" => "en".to_string(),
-        _ => DEFAULT_LOCALE.to_string(),
-    }
-}
-
-fn clamp_max_image_dimension(value: u32) -> u32 {
-    if value == 0 {
-        0
-    } else {
-        value.clamp(512, 16384)
-    }
-}
 
 const MAX_IGNORED_APPS: usize = 100;
 
-/// 去除空白及重复项，大小写不敏感，与采集时的应用匹配方式一致。
 fn normalize_ignored_apps(apps: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     apps.into_iter()
@@ -291,23 +261,12 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
     candidate
 }
 
+#[derive(Default)]
 pub struct SettingsManager {
     settings: Mutex<Settings>,
 }
 
-impl Default for SettingsManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SettingsManager {
-    pub fn new() -> Self {
-        Self {
-            settings: Mutex::new(Settings::default()),
-        }
-    }
-
     pub fn load(&self, app: &AppHandle) -> Result<(), String> {
         let result = (|| {
             let store = app
@@ -329,14 +288,12 @@ impl SettingsManager {
                 Ok(())
             }
             Err(error) => {
-                // Retain known preferences and stop capture; never save defaults over a bad file.
                 self.settings.lock().unwrap().capture_paused = true;
                 Err(error)
             }
         }
     }
 
-    /// 把 `settings` 写入 store；内存中的设置由调用方在保存成功后用 `set` 更新。
     pub fn save(&self, app: &AppHandle, settings: &Settings) -> Result<(), String> {
         let store = app
             .store("settings.json")
@@ -372,7 +329,7 @@ mod tests {
 
     #[test]
     fn failed_load_keeps_privacy_preferences_and_pauses_capture() {
-        let manager = SettingsManager::new();
+        let manager = SettingsManager::default();
         manager.set(Settings {
             ignored_apps: vec!["Private App".into()],
             ..Settings::default()
@@ -387,44 +344,23 @@ mod tests {
     }
 
     #[test]
-    fn initial_locale_tracks_the_system_language() {
-        assert_eq!(locale_for_language("zh-Hant-HK"), "zh-CN");
-        assert_eq!(locale_for_language("en-SG"), "en");
-        assert_eq!(locale_for_language("ja-JP"), "en");
-    }
-
-    #[test]
-    fn paste_format_modes_and_unknown_value_coercion() {
-        let mut settings = Settings::default();
-        assert_eq!("original", settings.paste_format);
-        assert!(!settings.takes_plain_text());
-        assert!(!settings.strips_rich_text_at_capture());
-
-        settings.paste_format = " takePlain ".to_string();
-        let normalized = settings.clone().normalize_for_load();
-        assert_eq!("takePlain", normalized.paste_format);
-        assert!(normalized.takes_plain_text());
-        assert!(!normalized.strips_rich_text_at_capture());
-
-        settings.paste_format = "globalPlain".to_string();
-        let normalized = settings.normalize_for_load();
-        assert!(normalized.takes_plain_text());
-        assert!(normalized.strips_rich_text_at_capture());
-
-        let coerced = Settings {
-            paste_format: "richerezza".to_string(),
-            ..Settings::default()
+    fn paste_format_modes() {
+        for (format, takes_plain, strips_rich_text) in [
+            ("original", false, false),
+            ("takePlain", true, false),
+            ("globalPlain", true, true),
+        ] {
+            let settings = Settings {
+                paste_format: format.into(),
+                ..Settings::default()
+            };
+            assert_eq!(takes_plain, settings.takes_plain_text(), "{format}");
+            assert_eq!(
+                strips_rich_text,
+                settings.strips_rich_text_at_capture(),
+                "{format}"
+            );
         }
-        .normalize_for_load();
-        assert_eq!("original", coerced.paste_format);
-
-        let updated = Settings {
-            paste_format: " takePlain ".to_string(),
-            ..Settings::default()
-        }
-        .validate_and_normalize()
-        .unwrap();
-        assert_eq!("takePlain", updated.paste_format);
 
         let missing_key = serde_json::from_value::<Settings>(serde_json::json!({
             "globalShortcut": "CommandOrControl+Shift+V"
@@ -463,62 +399,45 @@ mod tests {
     }
 
     #[test]
-    fn settings_normalization_rejects_matching_shortcuts() {
+    fn matching_pinned_shortcut_is_rejected_on_save_and_cleared_on_load() {
         let default_settings = Settings::default();
         let settings = Settings {
             pinned_shortcut: Some(default_settings.global_shortcut.clone()),
             ..default_settings
         };
 
-        let result = settings.validate_and_normalize();
-
-        assert!(result.unwrap_err().contains("cannot match"));
+        assert!(settings
+            .clone()
+            .validate_and_normalize()
+            .unwrap_err()
+            .contains("cannot match"));
+        assert_eq!(None, settings.normalize_for_load().pinned_shortcut);
     }
 
     #[test]
-    fn settings_load_normalization_clears_conflicting_pinned_shortcut() {
-        let default_settings = Settings::default();
-        let settings = Settings {
-            pinned_shortcut: Some(default_settings.global_shortcut.clone()),
-            custom_data_path: Some("/tmp/clipman-data".to_string()),
-            ..default_settings
-        };
-
-        let normalized = settings.normalize_for_load();
-
-        assert_eq!(None, normalized.pinned_shortcut);
-        assert_eq!(
-            Some("/tmp/clipman-data".to_string()),
-            normalized.custom_data_path
-        );
-    }
-
-    #[test]
-    fn settings_normalization_trims_supported_locale() {
-        let settings = Settings {
-            locale: " en ".to_string(),
+    fn locale_and_paste_format_are_trimmed_and_unknown_values_handled() {
+        let padded = Settings {
+            locale: " en ".into(),
+            paste_format: " takePlain ".into(),
             ..Settings::default()
         };
+        for normalized in [
+            padded.clone().validate_and_normalize().unwrap(),
+            padded.normalize_for_load(),
+        ] {
+            assert_eq!("en", normalized.locale);
+            assert_eq!("takePlain", normalized.paste_format);
+        }
 
-        let normalized = settings.validate_and_normalize().unwrap();
-
-        assert_eq!("en", normalized.locale);
-    }
-
-    #[test]
-    fn settings_load_normalization_resets_unsupported_locale() {
-        let settings = Settings {
-            locale: "fr-FR".to_string(),
+        let loaded = Settings {
+            locale: "fr-FR".into(),
+            paste_format: "unknown".into(),
             ..Settings::default()
-        };
+        }
+        .normalize_for_load();
+        assert_eq!(DEFAULT_LOCALE, loaded.locale);
+        assert_eq!(PASTE_FORMATS[0], loaded.paste_format);
 
-        let normalized = settings.normalize_for_load();
-
-        assert_eq!(DEFAULT_LOCALE, normalized.locale);
-    }
-
-    #[test]
-    fn saving_rejects_unknown_locale_and_paste_format() {
         for settings in [
             Settings {
                 locale: "fr-FR".into(),

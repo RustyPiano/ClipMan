@@ -12,7 +12,6 @@ rust-version = "1.96"
 tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
-# Tauri Core
 tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-global-shortcut = "2.3.2"
@@ -22,23 +21,18 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-single-instance = "2"
 
-# Clipboard & System
 arboard = "3.4"
 enigo = { version = "0.3.0", default-features = false, features = ["x11rb"] }
 
-# Storage & Serialization
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Async Runtime
-# Tauri 负责运行时；这里只用 sync 提供剪贴板操作共用的异步锁。
 tokio = { version = "1.40", features = ["sync"] }
 
 data-encoding = "2.6"
 sha2 = "0.10"
 
-# Utilities
 uuid = { version = "1.10", features = ["v4"] }
 chrono = "0.4"
 log = "0.4"
@@ -46,11 +40,9 @@ env_logger = "0.11"
 lru = "0.12"
 regex = "1"
 
-# Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clipboard-master = "4.0.0"
 
-# Windows specific (all `windows::` usage is behind `#[cfg(windows)]`)
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -59,7 +51,6 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading"
 ] }
 
-# macOS specific
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", features = [
@@ -77,8 +68,6 @@ objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSSt
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
-# Dependencies do not need debug info; dropping it cuts target/debug by roughly
-# half. The app crate itself keeps full debuginfo for breakpoint debugging.
 [profile.dev.package."*"]
 debug = false
 

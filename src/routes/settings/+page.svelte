@@ -34,7 +34,6 @@
   let loadingDataPath = $state(true);
   let dataPathError = $state('');
   let changingDataPath = $state(false);
-  let showMigrationDialog = $state(false);
   let newDataPath = $state('');
   let deleteOldData = $state(false);
   let migrationDialog: HTMLDialogElement;
@@ -55,9 +54,7 @@
       settings = await invoke<Settings>('get_settings');
       i18n.setLocale(settings.locale);
     } catch (err) {
-      console.error('Failed to load settings:', err);
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      toastStore.add(`${t.loadSettingsFailed}: ${errorMsg}`, 'error');
+      toastStore.add(`${t.loadSettingsFailed}: ${String(err)}`, 'error');
     } finally {
       loading = false;
     }
@@ -87,9 +84,7 @@
       i18n.setLocale(settings.locale);
       toastStore.add(result.warning ?? t.saved, result.warning ? 'info' : 'success');
     } catch (err) {
-      console.error('Failed to save settings:', err);
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      toastStore.add(`${t.saveSettingsFailed}: ${errorMsg}`, 'error');
+      toastStore.add(`${t.saveSettingsFailed}: ${String(err)}`, 'error');
     } finally {
       saving = false;
     }
@@ -152,7 +147,8 @@
       if (selected && typeof selected === 'string') {
         newDataPath = selected;
         deleteOldData = false;
-        showMigrationDialog = true;
+        migrationDialog.showModal();
+        document.getElementById(MIGRATION_CANCEL_ID)!.focus();
       }
     } catch (err) {
       console.error('Failed to select directory:', err);
@@ -163,7 +159,7 @@
   async function confirmMigration() {
     try {
       changingDataPath = true;
-      showMigrationDialog = false;
+      migrationDialog.close();
 
       const warning = await invoke<string | null>('migrate_data_location', {
         newPath: newDataPath,
@@ -175,29 +171,12 @@
         toastStore.add(warning, 'info');
       }
     } catch (err) {
-      console.error('Migration failed:', err);
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      toastStore.add(`${t.migrationFailed}: ${errorMsg}`, 'error');
+      toastStore.add(`${t.migrationFailed}: ${String(err)}`, 'error');
     } finally {
-      // 迁移只改变数据路径；不重新读取其他设置，保留用户尚未保存的修改。
       await loadDataPath();
       changingDataPath = false;
     }
   }
-
-  function closeMigrationDialog() {
-    showMigrationDialog = false;
-  }
-
-  // showModal 让背景不可交互、支持 Esc 取消；打开时把焦点放到取消按钮上。
-  $effect(() => {
-    if (showMigrationDialog) {
-      migrationDialog.showModal();
-      document.getElementById(MIGRATION_CANCEL_ID)!.focus();
-    } else if (migrationDialog.open) {
-      migrationDialog.close();
-    }
-  });
 
   async function handleBack() {
     try {
@@ -206,14 +185,12 @@
       await invoke('show_quickbar');
       await win.hide();
     } catch (err) {
-      console.error('Failed to handle back navigation:', err);
       toastStore.add(String(err), 'error');
     }
   }
 </script>
 
 <div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-  <!-- 顶部标题栏 -->
   <header
     class="flex-none flex items-center justify-between px-6 py-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10"
   >
@@ -258,10 +235,8 @@
   </header>
 
   <div class="flex-1 flex overflow-hidden">
-    <!-- 侧边栏导航 -->
     <Sidebar bind:activeTab />
 
-    <!-- 主内容区域 -->
     <main inert={saving || changingDataPath} class="flex-1 overflow-y-auto p-8 bg-muted/10">
       {#if loading}
         <div class="flex items-center justify-center h-full">
@@ -314,12 +289,10 @@
   </div>
 </div>
 
-<!-- 数据迁移确认对话框 -->
 <dialog
   bind:this={migrationDialog}
   aria-labelledby={MIGRATION_DIALOG_TITLE_ID}
   aria-describedby={MIGRATION_DIALOG_DESCRIPTION_ID}
-  oncancel={closeMigrationDialog}
   class="m-auto w-[calc(100%-2rem)] max-w-md space-y-4 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg backdrop:bg-background/80 backdrop:backdrop-blur-sm"
 >
   <h3 id={MIGRATION_DIALOG_TITLE_ID} class="text-lg font-semibold">{t.confirmMigration}</h3>
@@ -339,7 +312,7 @@
   </div>
 
   <div class="flex justify-end gap-3 pt-2">
-    <Button id={MIGRATION_CANCEL_ID} variant="outline" onclick={closeMigrationDialog}>
+    <Button id={MIGRATION_CANCEL_ID} variant="outline" onclick={() => migrationDialog.close()}>
       {t.cancel}
     </Button>
     <Button onclick={confirmMigration} disabled={changingDataPath}>{t.startMigration}</Button>

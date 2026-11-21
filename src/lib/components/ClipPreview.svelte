@@ -25,7 +25,6 @@
   $effect(() => {
     const current = item;
     const revision = ++generation;
-    // Highlight changes immediately; the expensive body follows a settled selection.
     const timer = setTimeout(() => {
       settled = current;
       detail = current ? (clipboardStore.getCachedFullClip(current.id) ?? null) : null;
@@ -45,14 +44,12 @@
   const text = $derived(
     full?.text ??
       (settled?.contentType === 'text'
-        ? decodeClipText(settled, t.emptyContent, t.decodeFailed)
+        ? decodeClipText(settled, t.emptyContent)
         : settled
           ? decodeFilePaths(settled).join('\n')
           : '')
   );
   const imageUrl = $derived(full?.imageUrl || settled?.content || '');
-  // 预览头部的一行元信息：来源、完整时间，以及文本字符数或文件数。超过预览上限的文本只读到
-  // 前 1 MiB，字符数不完整，所以不显示。
   const meta = $derived(
     settled
       ? [
@@ -104,10 +101,10 @@
           : 'font-mono text-[12px]'}">{text}</pre>
     {/if}
   </div>
-  {#if settled && (!full || full?.truncated)}<footer
+  {#if settled && (!full || full.truncated)}<footer
       class="flex flex-none flex-col gap-2 px-5 pb-4 pt-2 text-[11px] text-muted-foreground"
     >
-      {#if settled && !full}
+      {#if !full}
         <Button
           variant="outline"
           disabled={loading || item?.id !== settled.id}
@@ -116,6 +113,6 @@
         >
       {/if}
       {#if full?.truncated}<span>{t.previewLimited}</span>
-      {:else if settled && !full}<span>{t.previewTruncated}</span>{/if}
+      {:else}<span>{t.previewTruncated}</span>{/if}
     </footer>{/if}
 </div>

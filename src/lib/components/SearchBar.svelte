@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
   import Button from '$lib/components/ui/Button.svelte';
@@ -15,16 +15,6 @@
   let debounceTimer: ReturnType<typeof setTimeout>;
   let isComposing = false;
   let discardComposition = false;
-  let unlistenHidden: (() => void) | undefined;
-  let unlistenOpened: (() => void) | undefined;
-  let isDestroyed = false;
-
-  function runSearch(query: string) {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      void clipboardStore.search(query);
-    }, SEARCH_DEBOUNCE_MS);
-  }
 
   function applySearchInput(value: string) {
     if (!value.trim()) {
@@ -34,7 +24,10 @@
     }
 
     clipboardStore.setSearchQuery(value);
-    runSearch(value);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      void clipboardStore.search(value);
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   function handleInput(event: Event) {
@@ -66,48 +59,29 @@
   }
 
   function clearSearch() {
-    clearTimeout(debounceTimer);
-    void clipboardStore.clearSearch();
-
-    const input = document.getElementById(SEARCH_INPUT_ID);
-    if (input instanceof HTMLInputElement) {
-      input.focus();
-    }
+    applySearchInput('');
+    document.getElementById(SEARCH_INPUT_ID)?.focus();
   }
 
-  onMount(async () => {
-    const input = document.getElementById(SEARCH_INPUT_ID);
-    if (input instanceof HTMLInputElement) {
-      input.focus();
-    }
-
-    const uHidden = await listen('quickbar-hidden', () => {
-      const wasComposing = isComposing;
-      isComposing = false;
-      discardComposition = wasComposing;
+  onMount(() => {
+    const unlisteners: (() => void)[] = [];
+    let disposed = false;
+    for (const subscription of [
+      listen('quickbar-hidden', () => {
+        discardComposition = isComposing;
+        isComposing = false;
+        clearTimeout(debounceTimer);
+      }),
+      listen('quickbar-opened', () => {
+        discardComposition = false;
+      }),
+    ])
+      void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
+    return () => {
+      disposed = true;
       clearTimeout(debounceTimer);
-    });
-    if (isDestroyed) {
-      uHidden();
-    } else {
-      unlistenHidden = uHidden;
-    }
-
-    const uOpened = await listen('quickbar-opened', () => {
-      discardComposition = false;
-    });
-    if (isDestroyed) {
-      uOpened();
-    } else {
-      unlistenOpened = uOpened;
-    }
-  });
-
-  onDestroy(() => {
-    isDestroyed = true;
-    clearTimeout(debounceTimer);
-    unlistenHidden?.();
-    unlistenOpened?.();
+      unlisteners.forEach((stop) => stop());
+    };
   });
 </script>
 

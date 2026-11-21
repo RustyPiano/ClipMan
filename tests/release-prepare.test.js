@@ -146,7 +146,6 @@ test('a competing remote tag rejects the entire atomic push', () => {
   const remote = remoteFor(root, repository);
   const original = succeeds(remote, ['git', 'rev-parse', 'refs/heads/main']);
   succeeds(repository, ['bash', 'scripts/release.sh', '1.2.4']);
-  // 标签在预检查后出现，模拟其他发布过程抢先推送。
   succeeds(remote, ['git', 'tag', 'v1.2.4', original]);
   expect(command(repository, ['bash', '-euo', 'pipefail', '-c', commitStep]).status).not.toBe(0);
   expect(succeeds(remote, ['git', 'rev-parse', 'refs/heads/main'])).toBe(original);

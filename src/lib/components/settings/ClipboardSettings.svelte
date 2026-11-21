@@ -5,11 +5,9 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import { Trash2, X, Plus } from 'lucide-svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
-  import { toastStore } from '$lib/stores/toast.svelte';
-  import { confirmStore } from '$lib/stores/confirm.svelte';
-  import type { PasteFormat, Settings } from '$lib/types';
+  import { clipboardStore } from '$lib/stores/clipboard.svelte';
+  import type { Settings } from '$lib/types';
 
   let { settings = $bindable() } = $props<{
     settings: Settings;
@@ -17,11 +15,7 @@
 
   const t = $derived(i18n.t);
 
-  const pasteFormats: {
-    value: PasteFormat;
-    labelKey: 'pasteFormatOriginal' | 'pasteFormatTakePlain' | 'pasteFormatGlobalPlain';
-    descKey: 'pasteFormatOriginalDesc' | 'pasteFormatTakePlainDesc' | 'pasteFormatGlobalPlainDesc';
-  }[] = [
+  const pasteFormats = [
     { value: 'original', labelKey: 'pasteFormatOriginal', descKey: 'pasteFormatOriginalDesc' },
     { value: 'takePlain', labelKey: 'pasteFormatTakePlain', descKey: 'pasteFormatTakePlainDesc' },
     {
@@ -29,33 +23,7 @@
       labelKey: 'pasteFormatGlobalPlain',
       descKey: 'pasteFormatGlobalPlainDesc',
     },
-  ];
-
-  let clearing = $state(false);
-
-  async function clearNonPinnedHistory() {
-    const confirmed = await confirmStore.ask({
-      title: t.clearNonPinned,
-      message: t.confirmClearHistory,
-      confirmLabel: t.clear,
-      destructive: true,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      clearing = true;
-      await invoke('clear_non_pinned_history');
-    } catch (err) {
-      console.error('Failed to clear non-pinned history:', err);
-      toastStore.add(`${t.clearFailed}: ${String(err)}`, 'error');
-    } finally {
-      clearing = false;
-    }
-  }
-
-  const ignoredApps = $derived(settings.ignoredApps);
+  ] as const;
 
   let newIgnoredApp = $state('');
 
@@ -64,17 +32,17 @@
     if (!trimmed) {
       return;
     }
-    const alreadyListed = ignoredApps.some(
+    const alreadyListed = settings.ignoredApps.some(
       (app: string) => app.toLowerCase() === trimmed.toLowerCase()
     );
     if (!alreadyListed) {
-      settings.ignoredApps = [...ignoredApps, trimmed];
+      settings.ignoredApps = [...settings.ignoredApps, trimmed];
     }
     newIgnoredApp = '';
   }
 
   function removeIgnoredApp(app: string) {
-    settings.ignoredApps = ignoredApps.filter((existing: string) => existing !== app);
+    settings.ignoredApps = settings.ignoredApps.filter((existing: string) => existing !== app);
   }
 
   function handleIgnoredAppKeydown(event: KeyboardEvent) {
@@ -244,15 +212,15 @@
           onkeydown={handleIgnoredAppKeydown}
           class="flex-1"
         />
-        <Button type="button" variant="secondary" onclick={addIgnoredApp} class="gap-1.5 shrink-0">
+        <Button variant="secondary" onclick={addIgnoredApp} class="gap-1.5 shrink-0">
           <Plus class="h-4 w-4" />
           {t.addIgnoredApp}
         </Button>
       </div>
 
-      {#if ignoredApps.length > 0}
+      {#if settings.ignoredApps.length > 0}
         <ul class="space-y-1.5">
-          {#each ignoredApps as app (app)}
+          {#each settings.ignoredApps as app (app)}
             <li
               class="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-sm"
             >
@@ -281,15 +249,9 @@
             {t.confirmClearHistory}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="destructive"
-          onclick={clearNonPinnedHistory}
-          disabled={clearing}
-          class="gap-2"
-        >
+        <Button variant="destructive" onclick={() => clipboardStore.clearNonPinned()} class="gap-2">
           <Trash2 class="h-4 w-4" />
-          {clearing ? t.loading : t.clear}
+          {t.clear}
         </Button>
       </div>
     </div>

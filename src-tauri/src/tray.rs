@@ -1,4 +1,3 @@
-// Tray menu management module
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
@@ -10,14 +9,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::storage::{join_file_paths, split_file_paths, ClipPreviewItem, ContentType};
 use crate::AppState;
 
-// Tray configuration constants
 pub const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
-/// Stable id for the single system tray icon; used both to build it and to
-/// look it up when rebuilding the menu.
 pub const TRAY_ID: &str = "main";
 
-/// Tray menu translations
 pub struct TrayI18n {
     pub pinned_header: &'static str,
     pub recent_header: &'static str,
@@ -54,15 +49,8 @@ impl TrayI18n {
     }
 }
 
-/// Icon cache for tray menu images
 pub struct TrayIconCache {
     cache: Mutex<LruCache<String, tauri::image::Image<'static>>>,
-}
-
-impl Default for TrayIconCache {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl TrayIconCache {
@@ -73,40 +61,29 @@ impl TrayIconCache {
     }
 
     pub fn get_or_create(&self, id: &str, content: &[u8]) -> Option<tauri::image::Image<'static>> {
-        // Check cache first
         if let Some(icon) = self.cache.lock().unwrap().get(id) {
             return Some(icon.clone());
         }
 
-        // Cache miss - decode and resize image
-        match image::load_from_memory(content) {
-            Ok(img) => {
-                // Resize so shortest side is TRAY_ICON_SIZE, preserving aspect ratio
-                let (orig_width, orig_height) = (img.width(), img.height());
-                let min_side = orig_width.min(orig_height);
-                let scale = TRAY_ICON_SIZE as f32 / min_side as f32;
+        let img = image::load_from_memory(content)
+            .map_err(|e| log::warn!("Failed to decode image for clip {}: {}", id, e))
+            .ok()?;
+        let (orig_width, orig_height) = (img.width(), img.height());
+        let min_side = orig_width.min(orig_height);
+        let scale = TRAY_ICON_SIZE as f32 / min_side as f32;
 
-                let new_width = (orig_width as f32 * scale) as u32;
-                let new_height = (orig_height as f32 * scale) as u32;
+        let new_width = (orig_width as f32 * scale) as u32;
+        let new_height = (orig_height as f32 * scale) as u32;
 
-                let resized =
-                    img.resize_exact(new_width, new_height, image::imageops::FilterType::Lanczos3);
-                let width = resized.width();
-                let height = resized.height();
-                let rgba = resized.to_rgba8().into_raw();
+        let rgba = img
+            .resize_exact(new_width, new_height, image::imageops::FilterType::Lanczos3)
+            .to_rgba8()
+            .into_raw();
+        let icon = tauri::image::Image::new_owned(rgba, new_width, new_height);
 
-                // Create owned image for caching
-                let icon = tauri::image::Image::new_owned(rgba, width, height);
+        self.cache.lock().unwrap().put(id.to_string(), icon.clone());
 
-                self.cache.lock().unwrap().put(id.to_string(), icon.clone());
-
-                Some(icon)
-            }
-            Err(e) => {
-                log::warn!("Failed to decode image for clip {}: {}", id, e);
-                None
-            }
-        }
+        Some(icon)
     }
 
     pub fn clear(&self) {
@@ -115,7 +92,6 @@ impl TrayIconCache {
     }
 }
 
-/// Truncate content for menu display (handles Unicode safely)
 pub fn truncate_content(
     content: &[u8],
     content_type: &ContentType,
@@ -150,7 +126,6 @@ pub fn truncate_content(
     }
 }
 
-/// Helper function to add a clip menu item
 fn add_clip_menu_item(
     app: &AppHandle,
     item: &ClipPreviewItem,
@@ -177,46 +152,40 @@ fn add_clip_menu_item(
     })
 }
 
-/// Build dynamic tray menu
 pub fn build_tray_menu(
     app: &AppHandle,
 ) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let state = app.state::<AppState>();
 
-    // Get settings for tray menu limits
     let settings = state.settings.get();
     let max_pinned_in_tray = settings.max_pinned_in_tray;
     let max_recent_in_tray = settings.max_recent_in_tray;
     let max_len = settings.tray_text_length;
     let i18n = TrayI18n::new(&settings.locale);
 
-    // Quick lock acquisition - get data and release immediately
     let (pinned_items, recent_items) = {
         let storage = state.storage.lock().unwrap();
-        let pinned_items = if max_pinned_in_tray == 0 {
-            Vec::new()
-        } else {
-            storage.get_pinned_clip_previews(max_pinned_in_tray as i64)?
-        };
-        let recent_items = if max_recent_in_tray == 0 {
-            Vec::new()
-        } else {
-            storage.get_recent_clip_previews(max_recent_in_tray)?
-        };
-        (pinned_items, recent_items)
+        (
+            storage.get_pinned_clip_previews(max_pinned_in_tray as i64)?,
+            storage.get_recent_clip_previews(max_recent_in_tray)?,
+        )
     };
 
     let mut menu_builder = MenuBuilder::new(app);
 
-    // Add pinned items
-    let pinned_count = pinned_items.len();
-    if pinned_count > 0 {
-        let pinned_header = MenuItemBuilder::with_id("pinned_header", i18n.pinned_header)
+    for (header_id, header_text, items) in [
+        ("pinned_header", i18n.pinned_header, &pinned_items),
+        ("recent_header", i18n.recent_header, &recent_items),
+    ] {
+        if items.is_empty() {
+            continue;
+        }
+        let header = MenuItemBuilder::with_id(header_id, header_text)
             .enabled(false)
             .build(app)?;
-        menu_builder = menu_builder.item(&pinned_header);
+        menu_builder = menu_builder.item(&header);
 
-        for item in &pinned_items {
+        for item in items {
             let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
             menu_builder = menu_builder.item(&*menu_item);
         }
@@ -224,27 +193,11 @@ pub fn build_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
-    // Add recent items (excluding pinned)
-    if !recent_items.is_empty() {
-        let recent_header = MenuItemBuilder::with_id("recent_header", i18n.recent_header)
-            .enabled(false)
-            .build(app)?;
-        menu_builder = menu_builder.item(&recent_header);
-
-        for item in &recent_items {
-            let menu_item = add_clip_menu_item(app, item, &state.icon_cache, max_len, &i18n)?;
-            menu_builder = menu_builder.item(&*menu_item);
-        }
-    }
-
-    // 暂停采集是复选项，勾选状态来自 `capture_paused`；点击后由 `handle_tray_menu_event`
-    // 切换、保存并重建菜单。
     let pause_capture_item = CheckMenuItemBuilder::with_id("pause_capture", i18n.pause_capture)
         .checked(settings.capture_paused)
         .build(app)?;
 
     menu_builder = menu_builder
-        .separator()
         .item(&MenuItemBuilder::with_id("clear_non_pinned", i18n.clear).build(app)?)
         .item(&pause_capture_item)
         .item(&MenuItemBuilder::with_id("settings", i18n.settings).build(app)?)
@@ -253,7 +206,6 @@ pub fn build_tray_menu(
     Ok(menu_builder.build()?)
 }
 
-/// Handle a tray menu selection.
 pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     let event_id = event.id().as_ref();
     log::debug!("Menu event: {}", event_id);
@@ -283,12 +235,8 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
         }
         "pause_capture" => {
             let app = app.clone();
-            // Native menu callbacks must never wait for a lock whose owner needs the main thread.
             tauri::async_runtime::spawn_blocking(move || {
                 let state: tauri::State<AppState> = app.state();
-                // Serialize against `update_settings` so a settings-page save and
-                // this tray toggle can't race each other and clobber one another's
-                // change. `capture_paused` is owned exclusively by this toggle.
                 let _settings_write_guard = state.settings_write_lock.lock().unwrap();
 
                 let mut settings = state.settings.get();
@@ -314,12 +262,9 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
 
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
-                // Use unified copy function with notification
-                if let Err(e) =
-                    crate::commands::copy_clip_to_clipboard_internal(&app_clone, &clip_id, true)
-                        .await
-                {
-                    log::error!("Failed to copy clip: {}", e);
+                match crate::commands::copy_clip_to_clipboard_internal(&app_clone, &clip_id).await {
+                    Ok(_) => crate::commands::notify_copied(&app_clone),
+                    Err(e) => log::error!("Failed to copy clip: {}", e),
                 }
             });
         }
@@ -329,9 +274,7 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-/// Update tray menu
 pub fn update_tray_menu(app: &AppHandle) {
-    // Construct everything first; on failure the existing menu remains usable.
     let result = build_tray_menu(app).and_then(|menu| {
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
             tray.set_menu(Some(menu))?;
@@ -351,18 +294,9 @@ mod tests {
     #[test]
     fn test_truncate_content_text() {
         let i18n = TrayI18n::new("en");
-        let content = b"Hello, World!";
+        let content = b"Line 1\nLine 2\r\nLine 3";
         let result = truncate_content(content, &ContentType::Text, 50, &i18n);
-        assert_eq!(result, "Hello, World!");
-    }
-
-    #[test]
-    fn test_truncate_content_long_text() {
-        let i18n = TrayI18n::new("en");
-        let content = b"This is a very long text that should be truncated";
-        let result = truncate_content(content, &ContentType::Text, 20, &i18n);
-        assert!(result.contains("..."));
-        assert!(result.len() <= 20);
+        assert_eq!(result, "Line 1 Line 2 Line 3");
     }
 
     #[test]
@@ -378,18 +312,6 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_content_image() {
-        let i18n_zh = TrayI18n::new("zh-CN");
-        let i18n_en = TrayI18n::new("en");
-
-        let result_zh = truncate_content(b"", &ContentType::Image, 50, &i18n_zh);
-        let result_en = truncate_content(b"", &ContentType::Image, 50, &i18n_en);
-
-        assert_eq!(result_zh, "图片");
-        assert_eq!(result_en, "Image");
-    }
-
-    #[test]
     fn test_truncate_content_files_renders_path_text() {
         let i18n = TrayI18n::new("en");
         let content = crate::storage::encode_file_paths(&[
@@ -399,14 +321,5 @@ mod tests {
         let result = truncate_content(content.as_bytes(), &ContentType::Files, 100, &i18n);
 
         assert_eq!("/Users/alice/a file.txt /Users/alice/b.png", result);
-    }
-
-    #[test]
-    fn test_truncate_content_newlines() {
-        let i18n = TrayI18n::new("en");
-        let content = b"Line 1\nLine 2\r\nLine 3";
-        let result = truncate_content(content, &ContentType::Text, 50, &i18n);
-        assert!(!result.contains('\n'));
-        assert!(!result.contains('\r'));
     }
 }

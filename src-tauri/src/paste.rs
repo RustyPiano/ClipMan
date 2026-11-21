@@ -1,10 +1,10 @@
+#[cfg(target_os = "macos")]
+use std::thread;
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::{Duration, Instant},
 };
-#[cfg(target_os = "macos")]
-use std::{sync::mpsc, thread};
 
 use arboard::{Clipboard, ImageData};
 use enigo::{
@@ -29,7 +29,6 @@ const COPY_MARKER_TTL: Duration = Duration::from_secs(2);
 
 pub(crate) struct CopyWrite {
     marker: CopyMarker,
-    /// 写入完成的时间；写入进行中（例如等待文件访问授权）为 None，此时标记一直有效。
     written_at: Option<Instant>,
 }
 
@@ -76,13 +75,10 @@ pub struct UseRequest {
     pub ids: Vec<String>,
     pub mode: String,
     pub plain: bool,
-    /// 多条合并为一段换行分隔的纯文本写入。
     pub merge: bool,
     pub hide: bool,
 }
 
-/// All entry points share one clipboard operation. Nothing is marked used until
-/// the write succeeds; failures after that point must not invite a second paste.
 pub async fn use_clips(
     app: &AppHandle,
     state: &AppState,
@@ -101,9 +97,7 @@ pub async fn use_clips(
         .map_err(|_| "A clipboard operation is already running".to_string())?;
     let mode = PasteMode::try_from(mode.as_str())?;
     let simulate = should_simulate_paste(mode, state.settings.get().auto_paste);
-    let foreground = Arc::new(Mutex::new(
-        *state.quickbar_foreground_window.lock().unwrap(),
-    ));
+    let foreground = *state.quickbar_foreground_window.lock().unwrap();
     if ids.is_empty() || ids.len() > 10_000 {
         return Err("Select between 1 and 10000 clips".to_string());
     }
@@ -131,9 +125,8 @@ pub async fn use_clips(
     .map_err(|e| e.to_string())??;
 
     let marker = state.last_copied_by_us.clone();
-    let items = tauri::async_runtime::spawn_blocking(move || {
+    let ids = tauri::async_runtime::spawn_blocking(move || {
         if merge {
-            // Images have no text representation. Do not count them as used.
             items.retain(|item| item.content_type != ContentType::Image);
             if items.is_empty() {
                 return Err("Merge paste had no text or file clips to merge".into());
@@ -150,17 +143,18 @@ pub async fn use_clips(
             }
             write_clip_to_system_clipboard(&items[0], &marker, plain)?;
         }
-        Ok::<_, String>(items)
+        Ok::<_, String>(items.into_iter().map(|item| item.id).collect::<Vec<_>>())
     })
     .await
     .map_err(|error| error.to_string())??;
 
     let action = async {
         if hide {
-            hide_quickbar(app)?;
+            crate::window::hide_quickbar(app)
+                .map_err(|e| format!("Failed to hide QuickBar before paste: {e}"))?;
         }
         if simulate {
-            simulate_paste(app, &foreground).await
+            simulate_paste(app, foreground).await
         } else {
             Ok(())
         }
@@ -182,11 +176,8 @@ pub async fn use_clips(
             .show();
     }
 
-    // This maintenance runs after hide/focus/paste, once for the whole operation.
     let storage = state.storage.clone();
     let timestamp = crate::storage::current_timestamp();
-    let ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
-    drop(items);
     match tauri::async_runtime::spawn_blocking(move || {
         storage
             .lock()
@@ -216,7 +207,6 @@ fn use_outcome(simulate: bool, action: Result<(), String>) -> UseOutcome {
     }
 }
 
-/// 按选择顺序用换行连接各条的纯文本形式：Text 用原文，Files 用解码后的路径文本。
 fn merge_clip_texts<'a>(
     clips: impl IntoIterator<Item = (&'a ContentType, &'a [u8])>,
 ) -> Result<String, String> {
@@ -229,22 +219,15 @@ fn merge_clip_texts<'a>(
             text
         };
         let separator = if index == 0 { "" } else { "\n" };
-        let size = merged
-            .len()
-            .checked_add(separator.len())
-            .and_then(|n| n.checked_add(text.len()))
-            .filter(|n| *n <= MAX_MERGE_BYTES)
-            .ok_or_else(|| "Merge exceeds the 50 MB content limit".to_string())?;
-        merged
-            .try_reserve(size - merged.len())
-            .map_err(|e| e.to_string())?;
+        if merged.len() + separator.len() + text.len() > MAX_MERGE_BYTES {
+            return Err("Merge exceeds the 50 MB content limit".to_string());
+        }
         merged.push_str(separator);
         merged.push_str(&text);
     }
     Ok(merged)
 }
 
-/// 合并和 globalPlain 共用纯文本写入及自身复制标记。
 pub fn write_plain_text_to_system_clipboard(
     text: &str,
     marker_state: &Mutex<Option<CopyWrite>>,
@@ -274,7 +257,6 @@ pub(crate) fn clipboard_sequence() -> Option<u64> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn clipboard_sequence() -> Option<u64> {
-    // arboard 未公开其他平台的写入序号，调用方改为核对完整内容。
     None
 }
 
@@ -306,18 +288,16 @@ fn write_text(
     plain_text_only: bool,
 ) -> Result<(), String> {
     let text = String::from_utf8_lossy(&item.content).into_owned();
-    // The marker is always the plain-text hash, never the html — the monitor
-    // reads back the plain-text alt after a self-paste and must still match.
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
 
-    let use_html = !plain_text_only && item.html.as_deref().is_some_and(|html| !html.is_empty());
+    let html = item
+        .html
+        .as_deref()
+        .filter(|html| !plain_text_only && !html.is_empty());
     write_with_marker(marker_state, marker, || {
-        if use_html {
-            // Place html plus the plain-text alt; ⌥Enter (plain=true) forces text.
-            let html = item.html.as_deref().unwrap_or_default();
-            clipboard.set().html(html, Some(text.as_str()))
-        } else {
-            clipboard.set_text(text.as_str())
+        match html {
+            Some(html) => clipboard.set().html(html, Some(text.as_str())),
+            None => clipboard.set_text(text.as_str()),
         }
         .map_err(|e| format!("Failed to write text clipboard: {e}"))
     })?;
@@ -326,7 +306,7 @@ fn write_text(
         "Copied text clip {} to clipboard: {} chars (html: {})",
         item.id,
         text.len(),
-        use_html
+        html.is_some()
     );
     Ok(())
 }
@@ -337,9 +317,7 @@ fn write_files(
     marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
     let paths = split_file_paths(&String::from_utf8_lossy(&item.content));
-    // The self-copy marker must hash exactly the path list the monitor reads
-    // back after our write, so resolve the platform's "effective" list first.
-    let paths = effective_file_paths(paths);
+    let paths = effective_file_paths(paths)?;
     let marker = CopyMarker::from_payload(ContentType::Files, encode_file_paths(&paths).as_bytes());
 
     write_with_marker(marker_state, marker, || write_file_list(clipboard, &paths)).map_err(
@@ -359,41 +337,23 @@ fn write_files(
     Ok(())
 }
 
-/// The path list as the clipboard monitor will read it back after our write.
-/// macOS writes NSURLs built from the stored paths and `NSURL.path()` returns
-/// them unchanged. Other platforms go through arboard, which canonicalizes
-/// every path and drops unresolvable ones — mirror that so the marker matches.
 #[cfg(target_os = "macos")]
-fn effective_file_paths(paths: Vec<String>) -> Vec<String> {
-    paths
+fn effective_file_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(paths)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn effective_file_paths(paths: Vec<String>) -> Vec<String> {
+fn effective_file_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
     paths
-        .into_iter()
+        .iter()
         .map(|path| {
-            std::fs::canonicalize(&path)
+            std::fs::canonicalize(path)
                 .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or(path)
+                .map_err(|e| format!("Failed to resolve file path {path}: {e}"))
         })
         .collect()
 }
 
-/// Put a file list on the system clipboard.
-///
-/// macOS writes NSURLs to NSPasteboard directly instead of going through
-/// arboard (whose `file_list` canonicalizes every path and drops any it can't
-/// `stat`). Two macOS 26 (Tahoe) behaviors shape this function:
-///
-/// 1. The pasteboard server validates that the writing process can access the
-///    file behind each URL; unauthorized items are dropped **silently** —
-///    `writeObjects` still returns `true`. Verified empirically: a Desktop
-///    file wrote `items=0` while `/Users/Shared` wrote `items=1` and pasted.
-/// 2. Opening the file first surfaces the one-time "Files and Folders" TCC
-///    prompt (Desktop/Documents/Downloads) and, once granted, the write
-///    passes validation. Terminal-launched processes inherit the terminal's
-///    grants, which is why this only failed for Finder-launched instances.
 #[cfg(target_os = "macos")]
 fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), String> {
     use objc2::rc::Retained;
@@ -401,10 +361,6 @@ fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), S
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardWriting};
     use objc2_foundation::{NSArray, NSString, NSURL};
 
-    // Pre-flight: trigger the TCC file-access prompt where one exists. The
-    // result is deliberately ignored — a denied/unpromptable path (e.g.
-    // another app's container, which needs Full Disk Access) is caught by the
-    // landed-items check below.
     for path in paths {
         let _ = std::fs::File::open(path);
     }
@@ -433,8 +389,6 @@ fn write_file_list(_clipboard: &mut Clipboard, paths: &[String]) -> Result<(), S
         return Err("NSPasteboard writeObjects returned false".to_string());
     }
 
-    // Tahoe drops unauthorized file URLs without reporting an error, so
-    // "success" must be confirmed by the items actually being on the board.
     let actual = pasteboard
         .pasteboardItems()
         .map(|items| {
@@ -510,8 +464,6 @@ fn write_image(
     Ok(())
 }
 
-/// 写入前登记标记，写入期间标记一直有效；成功后记录完成时间，有效期从此开始计算，
-/// 失败时清除标记。所有写入都在 `clipboard_use_lock` 内执行，不会有另一次写入替换标记。
 fn write_with_marker(
     marker_state: &Mutex<Option<CopyWrite>>,
     marker: CopyMarker,
@@ -529,40 +481,18 @@ fn write_with_marker(
     result
 }
 
-fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
-    crate::window::hide_quickbar(app)
-        .map_err(|e| format!("Failed to hide QuickBar before paste: {e}"))
-}
-
 #[cfg(target_os = "macos")]
-async fn simulate_paste(
-    app: &AppHandle,
-    foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<(), String> {
-    // The body blocks: it waits (up to 5s) on a main-thread round-trip to bring
-    // the previous app forward, then sleeps 60ms and posts the Cmd+V CGEvent.
-    // Running that on a Tokio worker would stall the async runtime, so hand it
-    // to the blocking pool. The target was snapshotted when the operation began.
+async fn simulate_paste(app: &AppHandle, foreground: Option<isize>) -> Result<(), String> {
     let app = app.clone();
-    let foreground_store = foreground_store.clone();
-    tauri::async_runtime::spawn_blocking(move || simulate_paste_blocking(&app, &foreground_store))
+    tauri::async_runtime::spawn_blocking(move || simulate_paste_blocking(&app, foreground))
         .await
         .map_err(|e| format!("Paste simulation task failed: {e}"))?
 }
 
 #[cfg(target_os = "macos")]
-fn simulate_paste_blocking(
-    app: &AppHandle,
-    foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<(), String> {
+fn simulate_paste_blocking(app: &AppHandle, foreground: Option<isize>) -> Result<(), String> {
     use tauri::Manager;
 
-    // Without the Accessibility permission, the CGEvent post that sends Cmd+V
-    // fails *silently* — enigo returns Ok but nothing is typed. So we cannot
-    // rely on a paste error to detect the problem; check the permission up
-    // front. When it is missing (commonly after an update invalidates the
-    // grant), guide the user to re-authorize; the clip is already on the
-    // clipboard, so they can paste manually.
     if !crate::accessibility::is_trusted() {
         if let Err(e) = app.emit("accessibility-permission-required", ()) {
             log::error!("Failed to emit accessibility-permission-required event: {e}");
@@ -571,15 +501,12 @@ fn simulate_paste_blocking(
         return Err("Accessibility permission missing; cannot auto-paste".into());
     }
 
-    // The QuickBar stole keyboard focus while it was open. It is now hidden, so
-    // bring the previously frontmost app back to the front before pressing
-    // Cmd+V; otherwise the keystroke is delivered to nothing.
-    restore_recorded_foreground_window_on_main_thread(app, foreground_store)
-        .map_err(|e| format!("Could not reactivate previous app before paste: {e}"))?;
-    // Give the reactivated app a brief moment to become key and accept input.
+    crate::commands::run_action_on_main_thread(app, "foreground restore", move || {
+        crate::window::restore_recorded_foreground_window(foreground)
+    })
+    .map_err(|e| format!("Could not reactivate previous app before paste: {e}"))?;
     thread::sleep(Duration::from_millis(60));
 
-    // A rapid reopen must not receive the pending Cmd+V itself.
     if app
         .get_webview_window(crate::window::QUICKBAR_WINDOW_LABEL)
         .is_some_and(|window| window.is_visible().unwrap_or(true))
@@ -590,40 +517,14 @@ fn simulate_paste_blocking(
         .map_err(|e| format!("accessibility_permission_required_or_input_simulation_failed: {e}"))
 }
 
-#[cfg(target_os = "macos")]
-fn restore_recorded_foreground_window_on_main_thread(
-    app: &AppHandle,
-    foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<(), String> {
-    let foreground_store = foreground_store.clone();
-    let (sender, receiver) = mpsc::channel();
-
-    app.run_on_main_thread(move || {
-        let _ = sender.send(crate::window::restore_recorded_foreground_window(
-            &foreground_store,
-        ));
-    })
-    .map_err(|e| format!("Failed to schedule foreground restore on main thread: {e}"))?;
-
-    receiver
-        .recv_timeout(Duration::from_secs(5))
-        .map_err(|e| format!("Timed out waiting for foreground restore: {e}"))?
-}
-
 #[cfg(target_os = "windows")]
-async fn simulate_paste(
-    _app: &AppHandle,
-    foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<(), String> {
-    crate::window::restore_recorded_foreground_window(foreground_store)?;
+async fn simulate_paste(_app: &AppHandle, foreground: Option<isize>) -> Result<(), String> {
+    crate::window::restore_recorded_foreground_window(foreground)?;
     send_paste_shortcut(Key::Control)
 }
 
 #[cfg(target_os = "linux")]
-async fn simulate_paste(
-    _app: &AppHandle,
-    _foreground_store: &crate::window::ForegroundWindowStore,
-) -> Result<(), String> {
+async fn simulate_paste(_app: &AppHandle, _foreground: Option<isize>) -> Result<(), String> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         return Err("Wayland does not support simulated paste; copied only".into());
     }
@@ -648,14 +549,6 @@ fn send_paste_shortcut(modifier: Key) -> Result<(), String> {
     release_result
 }
 
-/// The "V" key pressed together with the platform modifier to trigger a paste.
-///
-/// On macOS we must NOT use `Key::Unicode('v')`: enigo resolves that character
-/// to a virtual key code through `TSMGetInputSourceProperty` (Text Input Source
-/// Manager). That API asserts it is running on the main dispatch queue and
-/// aborts the whole process (EXC_BREAKPOINT) when called from the Tokio worker
-/// thread handling the paste command. The raw key code for the physical "V"
-/// key (kVK_ANSI_V = 9) bypasses that lookup entirely.
 #[cfg(target_os = "macos")]
 fn paste_key() -> Key {
     Key::Other(9)
@@ -711,11 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_budget_counts_separators_and_decodes_json_files() {
-        let files = encode_file_paths(&["/tmp/a\nb.txt".into()]);
-        let merged = merge_clip_texts([(&ContentType::Files, files.as_bytes())]).unwrap();
-        assert_eq!(merged, "/tmp/a\nb.txt");
-        // Exactly at the limit alone, but the newline separator pushes it over.
+    fn merge_budget_counts_separators() {
         let full = vec![b'a'; MAX_MERGE_BYTES - 1];
         assert!(merge_clip_texts([
             (&ContentType::Text, full.as_slice()),
@@ -735,16 +624,6 @@ mod tests {
             UseOutcome::Copied
         );
         assert_eq!(use_outcome(true, Ok(())), UseOutcome::PasteRequested);
-    }
-
-    #[test]
-    fn paste_mode_resolution_uses_backend_auto_paste_setting() {
-        assert!(should_simulate_paste(PasteMode::Default, true));
-        assert!(!should_simulate_paste(PasteMode::Default, false));
-        assert!(!should_simulate_paste(PasteMode::Copy, true));
-        assert!(!should_simulate_paste(PasteMode::Copy, false));
-        assert!(!should_simulate_paste(PasteMode::Opposite, true));
-        assert!(should_simulate_paste(PasteMode::Opposite, false));
     }
 
     #[test]

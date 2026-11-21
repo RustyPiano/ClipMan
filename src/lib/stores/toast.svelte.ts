@@ -12,12 +12,8 @@ class ToastStore {
     this.toasts.push(toast);
 
     setTimeout(() => {
-      this.remove(id);
+      this.toasts = this.toasts.filter((t) => t.id !== id);
     }, TOAST_DURATION_MS);
-  }
-
-  remove(id: number) {
-    this.toasts = this.toasts.filter((t) => t.id !== id);
   }
 }
 

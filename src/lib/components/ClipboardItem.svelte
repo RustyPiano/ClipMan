@@ -76,12 +76,8 @@
     onUse: () => void | Promise<void>;
   } = $props();
   const t = $derived(i18n.t);
-  const paths = $derived(item.contentType === 'files' ? decodeFilePaths(item) : []);
-  const text = $derived(
-    item.contentType === 'text' ? decodeClipText(item, t.emptyContent, t.decodeFailed) : ''
-  );
-  // 固定结构：40px 内容区（两行文本 / 文件名 / 缩略图；有标签时标签加一行预览）加 24px
-  // 元信息行。元信息在每行的位置相同，操作按钮与它等高对齐，不会盖住内容。
+  const paths = $derived(decodeFilePaths(item));
+  const text = $derived(decodeClipText(item, t.emptyContent));
   const visiblePaths = $derived(item.label ? paths.slice(0, 1) : paths.slice(0, 2));
   const code = $derived(looksLikeCode(text));
   const kind = $derived(
@@ -107,7 +103,6 @@
     })
   );
 
-  // 用字符串拼接元信息：模板里的换行在 WebKit 下会多渲染一个空格。
   const meta = $derived(
     [
       item.sourceApp,
@@ -118,15 +113,11 @@
       .join('\u00a0·\u00a0')
   );
 
-  // 来源应用在元信息行最前面，带上它的图标
   const appIcon = $derived(item.sourceApp ? appIconStore.get(item.sourceApp) : null);
 
   let editing = $state(false);
   let draft = $state('');
   let saving = $state(false);
-  // Per-instance copy feedback: if the row scrolls out of the virtualized
-  // window before the 1.5s timeout fires, the component unmounts and the
-  // checkmark simply disappears early — acceptable for a transient hint.
   let isCopied = $state(false);
   let copyTimeout: ReturnType<typeof setTimeout>;
   const busy = $derived(clipboardStore.isUsing || clipboardStore.isSearchPending || saving);
@@ -141,8 +132,6 @@
     }
   }
 
-  // 固定的 id 让置顶按钮的文字和图标切换时，keyed each 和键盘焦点保持不变。
-  // 多选由左侧类型图标兼任的勾选框负责，不在操作栏里重复。
   const rowActions = $derived<RowAction[]>([
     {
       id: 'copy',
@@ -184,7 +173,6 @@
     }
   }
 
-  // ⇧ 点击选择范围、⌘ 点击勾选单行，都不粘贴
   function use(event: MouseEvent) {
     if (event.shiftKey) onExtendSelect();
     else if (event.metaKey || event.ctrlKey) onToggleSelect();
@@ -210,13 +198,11 @@
   }}
 >
   {#if selected}
-    <!-- 光标行左侧强调条；纯装饰，不拦截点击 -->
     <div
       class="pointer-events-none absolute bottom-[25%] left-0 top-[25%] w-[3px] rounded-r-full bg-primary"
       aria-hidden="true"
     ></div>
   {/if}
-  <!-- 类型图标兼任多选框：悬停或多选模式下换成圆形勾选框。图标列与 40px 内容区对齐（行内高 68px = 2 + 40 + 24 + 2） -->
   <div role="gridcell" class="flex flex-none self-stretch pb-[26px] pt-0.5">
     <button
       type="button"
@@ -243,7 +229,6 @@
       </span>
       <span class={multiSelected || multiSelecting ? 'hidden' : 'group-hover:hidden'}>
         {#if kind === 'text'}
-          <!-- 多行文字：三条长短不一的线 -->
           <svg class="h-[15px] w-[15px]" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M3 4.5h10M3 8h10M3 11.5h6"
@@ -343,7 +328,6 @@
               >
             {/if}
           {:else if item.content}
-            <!-- 缩略图按自身宽度显示；有标签时缩小 -->
             <img
               src={item.content}
               alt={item.label || t.image}
@@ -403,7 +387,6 @@
 </div>
 
 <style>
-  /* 上下透明边框配合 background-clip，让背景内缩 2px：相邻选中行之间留出缝隙，行高不变 */
   .clip-row {
     --row-surface: var(--qb-surface);
     background: var(--row-surface);
@@ -425,7 +408,6 @@
   .clip-row[data-active='true'] .clip-glyph {
     color: var(--foreground);
   }
-  /* 16px 圆形勾选框：未选中是细描边，选中填充主色 */
   .clip-check {
     width: 16px;
     height: 16px;
@@ -436,8 +418,6 @@
     background: var(--primary);
     box-shadow: none;
   }
-  /* 操作按钮只在悬停或键盘焦点进入该行时出现，覆盖元信息预留的右侧空白
-     （pr-[6.5rem] 对应 4 个 1.5rem 按钮加间距），不会盖住文字 */
   .row-actions {
     background: var(--row-surface);
     opacity: 0;

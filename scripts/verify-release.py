@@ -7,16 +7,13 @@ import shutil
 import subprocess
 from urllib.parse import quote
 
-
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "src-tauri" / "target" / "release-verification"
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
-
 def require(condition, message):
     if not condition:
         raise ValueError(message)
-
 
 def gh_json(endpoint, *arguments):
     result = subprocess.run(
@@ -27,13 +24,11 @@ def gh_json(endpoint, *arguments):
     )
     return json.loads(result.stdout)
 
-
 def decode_tauri(value):
     require(isinstance(value, str) and value.strip(), "签名或公钥不能为空")
     decoded = base64.b64decode(value.strip(), validate=True)
     require(bool(decoded), "签名或公钥解码后不能为空")
     return decoded
-
 
 def previous_release(releases, tag):
     target = tuple(map(int, VERSION.fullmatch(tag).groups()))
@@ -46,7 +41,6 @@ def previous_release(releases, tag):
         if version < target:
             candidates.append((version, release))
     return max(candidates, key=lambda item: item[0])[1] if candidates else None
-
 
 def check_public_key(repo, tag, public_key):
     pages = gh_json(f"repos/{repo}/releases?per_page=100", "--paginate", "--slurp")
@@ -67,7 +61,6 @@ def check_public_key(repo, tag, public_key):
     print(f"updater 公钥与 {previous_tag} 一致。", flush=True)
     return releases
 
-
 def find_release(releases, tag):
     matches = [release for release in releases if release["tag_name"] == tag]
     require(
@@ -76,7 +69,6 @@ def find_release(releases, tag):
         "读取草稿需要仓库 push 权限，Actions token 需要 contents:write。",
     )
     return matches[0]
-
 
 def asset_index(assets):
     by_name = {}
@@ -89,11 +81,9 @@ def asset_index(assets):
         by_url[asset["browser_download_url"]] = asset
     return by_name, by_url
 
-
 def resolve_asset(url, by_url):
     require(url in by_url, f"更新地址不属于当前 Release：{url}")
     return by_url[url]
-
 
 def plan_assets(config, tag, manifest, assets):
     version = config["version"]
@@ -143,14 +133,11 @@ def plan_assets(config, tag, manifest, assets):
                    if re.fullmatch(prefix + architecture + r"\.dmg", name)]
         require(len(matches) == 1, f"缺少或重复 macOS 安装包：{architecture}")
         installers.extend(matches)
-    # 默认平台与安装格式条目指向同一附件，每个附件只验签一次。
     signatures = {asset["id"]: (asset, signature) for asset, signature in resolved.values()}
     return signatures.values(), installers
 
-
 def download_asset(repo, asset, directory):
     destination = directory / f"{asset['id']}-{asset['name']}"
-    # Release 附件替换后 ID 会改变；已下载内容仍需经过下面的验签。
     if not destination.is_file() or destination.stat().st_size != asset["size"]:
         with destination.open("wb") as output:
             subprocess.run(
@@ -162,7 +149,6 @@ def download_asset(repo, asset, directory):
             )
     require(destination.stat().st_size == asset["size"], f"附件下载不完整：{asset['name']}")
     return destination
-
 
 def verify_signature(minisign, artifact, signature_file, public_key_file):
     result = subprocess.run(
@@ -176,7 +162,6 @@ def verify_signature(minisign, artifact, signature_file, public_key_file):
         f"签名验证失败：{artifact.name}；签名：{signature_file.name}；"
         f"公钥：{public_key_file.name}。{result.stderr.strip()}",
     )
-
 
 def main():
     parser = argparse.ArgumentParser(description="校验 ClipMan Release 产物及 updater 公钥")
@@ -228,7 +213,6 @@ def main():
     for installer in installers:
         download_asset(args.repo, installer, directory)
     print(f"{args.tag} 校验通过：四个平台，{verified} 份 updater 签名，macOS 双架构安装包。")
-
 
 if __name__ == "__main__":
     main()

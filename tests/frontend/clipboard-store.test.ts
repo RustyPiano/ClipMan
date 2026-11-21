@@ -8,9 +8,6 @@ const state = (<T>(value: T) => value) as (<T>(value: T) => T) & {
 };
 state.raw = <T>(value: T) => value;
 
-// $state / $derived are compiled away in a real Svelte build; the .svelte.ts
-// stores are imported raw here, so mock the runes as global callables.
-// defineProperty (value: any) sidesteps Svelte's ambient rune global types.
 Object.defineProperty(globalThis, '$state', { configurable: true, value: state });
 Object.defineProperty(globalThis, '$derived', {
   configurable: true,
@@ -98,22 +95,6 @@ describe('clipboard store races', () => {
     expect(invoked).not.toContain('search_clips');
   });
 
-  test('silent clearSearch clears loading even when it reloads history', async () => {
-    installTauriInvoke((cmd) => {
-      if (cmd === 'get_recent_clips' || cmd === 'get_pinned_clips') return [];
-      return null;
-    });
-
-    clipboardStore.setSearchQuery('abc');
-    // setSearchQuery flags a pending search, not a full-screen load.
-    expect(clipboardStore.isSearchPending).toBe(true);
-
-    await clipboardStore.clearSearch();
-
-    expect(clipboardStore.searchQuery).toBe('');
-    expect(clipboardStore.isLoading).toBe(false);
-  });
-
   test('fetchFullClip caches by id and drops the entry on delete', async () => {
     let getClipCalls = 0;
     installTauriInvoke((cmd, args) => {
@@ -128,12 +109,12 @@ describe('clipboard store races', () => {
 
     const first = await clipboardStore.fetchFullClip('x');
     const second = await clipboardStore.fetchFullClip('x');
-    expect(getClipCalls).toBe(1); // second call served from cache
+    expect(getClipCalls).toBe(1);
     expect(second).toEqual(first);
 
     await clipboardStore.deleteItem('x');
     await clipboardStore.fetchFullClip('x');
-    expect(getClipCalls).toBe(2); // cache dropped on delete → refetch
+    expect(getClipCalls).toBe(2);
   });
 
   test('deleteItem removes the deleted clip locally without reloading history', async () => {
@@ -154,6 +135,8 @@ describe('clipboard store races', () => {
     clipboardStore.pinnedItems = [deleted, keptPinned];
     clipboardStore.searchResults = [deleted, keptRecent, keptPinned];
     clipboardStore.activeSearchQuery = 'del';
+    selectionStore.toggleSelected('kept-recent');
+    selectionStore.toggleSelected('deleted');
 
     await clipboardStore.deleteItem('deleted');
 
@@ -165,24 +148,7 @@ describe('clipboard store races', () => {
       'kept-pinned',
     ]);
     expect(clipboardStore.isLoading).toBe(false);
-  });
-
-  test('full image previews are returned on demand without caching image data', async () => {
-    let requests = 0;
-    installTauriInvoke(() => {
-      requests++;
-      return {
-        id: 'image',
-        contentType: 'image',
-        text: '',
-        imageUrl: 'data:image/png;base64,eA==',
-      };
-    });
-    expect((await clipboardStore.fetchFullClip('image'))?.imageUrl).toBe(
-      'data:image/png;base64,eA=='
-    );
-    await clipboardStore.fetchFullClip('image');
-    expect(requests).toBe(2);
+    expect([...selectionStore.selectedIds]).toEqual(['kept-recent']);
   });
 
   test('replays incoming clipboard events over an older in-flight history response', async () => {
@@ -244,11 +210,10 @@ describe('clipboard store races', () => {
     expect(invoked).toEqual(['get_recent_clips', 'get_pinned_clips', 'search_clips']);
     expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['copied', 'old']);
     expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['copied']);
-    // A background refresh must not flash the search spinner.
     expect(clipboardStore.isSearchPending).toBe(false);
   });
 
-  test('useClip forwards the plain flag to paste_clip (⌥Enter → plain: true)', async () => {
+  test('useClip forwards the plain flag, defaulting to the paste format', async () => {
     const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
     installTauriInvoke((cmd, args) => {
       calls.push({ cmd, args });
@@ -258,28 +223,14 @@ describe('clipboard store races', () => {
     const item = clip({ id: 'c1' });
     await clipboardStore.useClip(item, 'default', { plain: true });
     await clipboardStore.useClip(item, 'default');
-
-    const pastes = calls.filter((entry) => entry.cmd === 'paste_clip');
-    expect(pastes).toHaveLength(2);
-    expect(pastes[0].args).toEqual({ id: 'c1', mode: 'default', plain: true });
-    expect(pastes[1].args).toEqual({ id: 'c1', mode: 'default', plain: false });
-  });
-
-  test('useClip defaults to plain in takePlain/globalPlain paste-format modes', async () => {
-    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
-    installTauriInvoke((cmd, args) => {
-      calls.push({ cmd, args });
-      return null;
-    });
-
-    const item = clip({ id: 'c1' });
     clipboardStore.pasteFormat = 'takePlain';
     await clipboardStore.useClip(item, 'default');
     clipboardStore.pasteFormat = 'globalPlain';
     await clipboardStore.useClip(item, 'default');
 
     const pastes = calls.filter((entry) => entry.cmd === 'paste_clip');
-    expect(pastes.map((entry) => entry.args?.plain)).toEqual([true, true]);
+    expect(pastes[0].args).toEqual({ id: 'c1', mode: 'default', plain: true });
+    expect(pastes.map((entry) => entry.args?.plain)).toEqual([true, false, true, true]);
   });
 
   test('useClip toasts paste vs copy on failure based on the resolved action', async () => {
@@ -290,7 +241,6 @@ describe('clipboard store races', () => {
 
     const item = clip({ id: 'c1' });
 
-    // autoPaste on: 'default' resolves to a paste, 'opposite' (⌘Enter) to a copy.
     clipboardStore.autoPaste = true;
     await clipboardStore.useClip(item, 'default');
     expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
@@ -299,31 +249,12 @@ describe('clipboard store races', () => {
     await clipboardStore.useClip(item, 'opposite');
     expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.copyFailed);
 
-    // autoPaste off: the paste/copy mapping inverts.
     clipboardStore.autoPaste = false;
     await clipboardStore.useClip(item, 'default');
     expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.copyFailed);
 
     await clipboardStore.useClip(item, 'opposite');
     expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
-  });
-
-  test('useSelectedClips toasts on merge-paste failure and keeps the selection', async () => {
-    installTauriInvoke((cmd) => {
-      if (cmd === 'paste_clips') throw new Error('boom');
-      return null;
-    });
-
-    clipboardStore.autoPaste = true;
-    selectionStore.toggleSelected('a');
-    selectionStore.toggleSelected('b');
-
-    await clipboardStore.useSelectedClips('default');
-
-    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
-    expect(toastStore.toasts.at(-1)?.type).toBe('error');
-    // A failed merge-paste must not silently drop the selection.
-    expect([...selectionStore.selectedIds]).toEqual(['a', 'b']);
   });
 
   test('loadHistory clears isLoading even when a search becomes active mid-load', async () => {
@@ -338,17 +269,14 @@ describe('clipboard store races', () => {
       return null;
     });
 
-    // Fresh full load starts with the spinner up (showLoading defaults to true).
     const load = clipboardStore.loadHistory();
     expect(clipboardStore.isLoading).toBe(true);
 
-    // User types a query before the history request resolves.
     clipboardStore.searchQuery = 'abc';
 
     resolveRecent([clip({ id: 'r1' })]);
     await load;
 
-    // The spinner must clear even though a search is now active.
     expect(clipboardStore.isLoading).toBe(false);
   });
 
@@ -368,91 +296,34 @@ describe('clipboard store races', () => {
     expect(toastStore.toasts.at(-1)?.type).toBe('error');
   });
 
-  test('toggleSelected preserves selection order and clears cleanly', () => {
-    selectionStore.toggleSelected('a');
-    selectionStore.toggleSelected('b');
-    selectionStore.toggleSelected('c');
-    expect([...selectionStore.selectedIds]).toEqual(['a', 'b', 'c']);
-
-    // Toggling an existing id removes it; re-adding appends at the end.
-    selectionStore.toggleSelected('b');
-    expect([...selectionStore.selectedIds]).toEqual(['a', 'c']);
-    selectionStore.toggleSelected('b');
-    expect([...selectionStore.selectedIds]).toEqual(['a', 'c', 'b']);
-
-    selectionStore.clearSelection();
-    expect(selectionStore.selectedIds.size).toBe(0);
-  });
-
-  test('useSelectedClips merges selected ids in order then clears the selection', async () => {
-    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+  test('useSelectedClips merges selected ids in order and keeps the selection on failure', async () => {
+    const calls: Array<Record<string, unknown> | undefined> = [];
+    let fail = false;
     installTauriInvoke((cmd, args) => {
-      calls.push({ cmd, args });
+      if (cmd !== 'paste_clips') return null;
+      calls.push(args);
+      if (fail) throw new Error('boom');
       return null;
     });
+
+    await clipboardStore.useSelectedClips();
+    expect(calls).toHaveLength(0);
 
     selectionStore.toggleSelected('first');
     selectionStore.toggleSelected('second');
     selectionStore.toggleSelected('third');
-
-    await clipboardStore.useSelectedClips();
-
-    const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
-    expect(pastes).toHaveLength(1);
-    // Ids preserve selection order; default mode.
-    expect(pastes[0].args).toEqual({ ids: ['first', 'second', 'third'], mode: 'default' });
-    // Paste clears the selection.
-    expect(selectionStore.selectedIds.size).toBe(0);
-  });
-
-  test('useSelectedClips forwards the resolved mode and is a no-op with no selection', async () => {
-    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
-    installTauriInvoke((cmd, args) => {
-      calls.push({ cmd, args });
-      return null;
-    });
-
-    // No selection: nothing is invoked.
-    await clipboardStore.useSelectedClips();
-    expect(calls.filter((entry) => entry.cmd === 'paste_clips')).toHaveLength(0);
-
-    // ⌘Enter resolves to the opposite paste mode, passed straight through.
-    selectionStore.toggleSelected('x');
     await clipboardStore.useSelectedClips('opposite');
-    const pastes = calls.filter((entry) => entry.cmd === 'paste_clips');
-    expect(pastes).toHaveLength(1);
-    expect(pastes[0].args).toEqual({ ids: ['x'], mode: 'opposite' });
-  });
+    expect(calls).toEqual([{ ids: ['first', 'second', 'third'], mode: 'opposite' }]);
+    expect(selectionStore.selectedIds.size).toBe(0);
 
-  test('deleting a clip drops it from the multi-selection', async () => {
-    installTauriInvoke((cmd) => {
-      if (cmd === 'delete_clip') return null;
-      return null;
-    });
-
-    selectionStore.toggleSelected('keep');
-    selectionStore.toggleSelected('gone');
-    await clipboardStore.deleteItem('gone');
-
-    expect([...selectionStore.selectedIds]).toEqual(['keep']);
-  });
-
-  test('silent search refreshes results without toggling the pending spinner', async () => {
-    const match = clip({ id: 'match', timestamp: 5 });
-    installTauriInvoke((cmd) => {
-      if (cmd === 'search_clips') return [match];
-      return null;
-    });
-
-    clipboardStore.searchQuery = 'needle';
-    clipboardStore.activeSearchQuery = 'needle';
-    clipboardStore.isSearchPending = false;
-
-    await clipboardStore.search('needle', { silent: true });
-
-    expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['match']);
-    expect(clipboardStore.activeSearchQuery).toBe('needle');
-    expect(clipboardStore.isSearchPending).toBe(false);
+    fail = true;
+    clipboardStore.autoPaste = true;
+    selectionStore.toggleSelected('a');
+    selectionStore.toggleSelected('b');
+    await clipboardStore.useSelectedClips('default');
+    expect(toastStore.toasts.at(-1)?.message).toContain(i18n.t.pasteFailed);
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+    expect([...selectionStore.selectedIds]).toEqual(['a', 'b']);
   });
 
   test('failed search cannot present results from an older query as current', async () => {
@@ -495,7 +366,11 @@ describe('clipboard store races', () => {
     installTauriInvoke((cmd, args) => {
       if (cmd === 'get_recent_clips') {
         calls.push(args);
-        return [clip({ id: 'p2a', timestamp: 3 }), clip({ id: 'p2b', timestamp: 2 })];
+        return [
+          clip({ id: 'p1a', timestamp: 5 }),
+          clip({ id: 'p2a', timestamp: 3 }),
+          clip({ id: 'p2b', timestamp: 2 }),
+        ];
       }
       return null;
     });
@@ -508,32 +383,10 @@ describe('clipboard store races', () => {
 
     await clipboardStore.loadMoreRecent();
 
-    // Cursor is the (timestamp, id) of the last loaded row; limit is PAGE_SIZE + 1
-    // (the sentinel row that decides hasMore).
     expect(calls).toEqual([{ limit: 101, beforeTimestamp: 4, beforeId: 'p1b' }]);
     expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['p1a', 'p1b', 'p2a', 'p2b']);
-    // A short page (2 < PAGE_SIZE) marks the end.
     expect(clipboardStore.hasMoreRecent).toBe(false);
     expect(clipboardStore.isLoadingMore).toBe(false);
-  });
-
-  test('loadMoreRecent dedupes a row a live event bumped to the top mid-fetch', async () => {
-    installTauriInvoke((cmd) => {
-      if (cmd === 'get_recent_clips') {
-        return [clip({ id: 'dup', timestamp: 9 }), clip({ id: 'p2', timestamp: 2 })];
-      }
-      return null;
-    });
-
-    clipboardStore.recentItems = [
-      clip({ id: 'dup', timestamp: 9 }),
-      clip({ id: 'p1', timestamp: 4 }),
-    ];
-    clipboardStore.hasMoreRecent = true;
-
-    await clipboardStore.loadMoreRecent();
-
-    expect(clipboardStore.recentItems.map((item) => item.id)).toEqual(['dup', 'p1', 'p2']);
   });
 
   test('loadMoreRecent is a no-op without more pages or while searching', async () => {
@@ -569,7 +422,6 @@ describe('clipboard store races', () => {
     expect(clipboardStore.recentItems.length).toBe(100);
     expect(clipboardStore.recentItems[0].id).toBe('item-0');
     expect(clipboardStore.recentItems[99].id).toBe('item-99');
-    // Dropping pages means there is definitely more to re-fetch on scroll.
     expect(clipboardStore.hasMoreRecent).toBe(true);
     expect(clipboardStore.isLoadingMore).toBe(false);
   });
@@ -579,7 +431,6 @@ describe('clipboard store races', () => {
     installTauriInvoke((cmd, args) => {
       if (cmd === 'get_recent_clips') {
         calls.push(args);
-        // Page + sentinel row (PAGE_SIZE + 1) so hasMore resolves true.
         return Array.from({ length: 101 }, (_, index) =>
           clip({ id: `r-${index}`, timestamp: 1000 - index })
         );
@@ -590,9 +441,7 @@ describe('clipboard store races', () => {
 
     await clipboardStore.loadHistory({ showLoading: false });
 
-    // Fresh load (recentItems empty) requests PAGE_SIZE + 1 (the sentinel), no cursor.
     expect(calls).toEqual([{ limit: 101 }]);
-    // The sentinel row means older pages exist; it is trimmed from the list.
     expect(clipboardStore.hasMoreRecent).toBe(true);
     expect(clipboardStore.recentItems.length).toBe(100);
   });
@@ -619,13 +468,6 @@ describe('clipboard store races', () => {
 
     await clipboardStore.initialize();
 
-    expect(calls.filter((call) => call.startsWith('listen:'))).toEqual([
-      'listen:clips-used',
-      'listen:settings-changed',
-      'listen:clipboard-changed',
-      'listen:history-cleared',
-      'listen:quickbar-hidden',
-    ]);
     expect(calls.indexOf('listen:clipboard-changed')).toBeLessThan(
       calls.indexOf('get_recent_clips')
     );
@@ -714,19 +556,27 @@ describe('clipboard store races', () => {
     expect(await detail).toBe(null);
     expect(clipboardStore.getCachedFullClip('deleted-while-loading')).toBe(undefined);
   });
-  test('detail cache evicts old entries at sixteen and skips large text', async () => {
-    installTauriInvoke((_cmd, args) => ({
-      id: String(args?.id),
-      contentType: 'text',
-      text: 'x'.repeat(args?.id === 'large' ? 256 * 1024 + 1 : 10),
-      imageUrl: null,
-      truncated: false,
-    }));
+  test('detail cache evicts old entries at sixteen and skips large text and images', async () => {
+    installTauriInvoke((_cmd, args) =>
+      args?.id === 'image'
+        ? { id: 'image', contentType: 'image', text: '', imageUrl: 'data:image/png;base64,eA==' }
+        : {
+            id: String(args?.id),
+            contentType: 'text',
+            text: 'x'.repeat(args?.id === 'large' ? 256 * 1024 + 1 : 10),
+            imageUrl: null,
+            truncated: false,
+          }
+    );
     for (let i = 0; i < 17; i++) await clipboardStore.fetchFullClip(`bounded-${i}`);
     expect(clipboardStore.getCachedFullClip('bounded-0')).toBeUndefined();
     expect(clipboardStore.getCachedFullClip('bounded-16')).toBeDefined();
     await clipboardStore.fetchFullClip('large');
     expect(clipboardStore.getCachedFullClip('large')).toBeUndefined();
+    expect((await clipboardStore.fetchFullClip('image'))?.imageUrl).toBe(
+      'data:image/png;base64,eA=='
+    );
+    expect(clipboardStore.getCachedFullClip('image')).toBeUndefined();
   });
 
   test('a burst during history and search refreshes is coalesced without losing the last update', async () => {

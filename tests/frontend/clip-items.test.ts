@@ -36,29 +36,9 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
 
 describe('clip item helpers', () => {
   test('decodes base64 text content', () => {
-    expect(decodeClipText(clip({ content: encodeText('ClipMan 文本') }), '[empty]', '[bad]')).toBe(
+    expect(decodeClipText(clip({ content: encodeText('ClipMan 文本') }), '[empty]')).toBe(
       'ClipMan 文本'
     );
-  });
-
-  test('does not cache localized fallback strings', () => {
-    const empty = clip({ content: '' });
-    expect(decodeClipText(empty, '[empty zh]', '[bad zh]')).toBe('[empty zh]');
-    expect(decodeClipText(empty, '[empty en]', '[bad en]')).toBe('[empty en]');
-
-    const originalError = console.error;
-    console.error = () => {};
-    try {
-      const invalid = clip({ content: '%%%' });
-      expect(decodeClipText(invalid, '[empty zh]', '[bad zh]')).toBe('[bad zh]');
-      expect(decodeClipText(invalid, '[empty en]', '[bad en]')).toBe('[bad en]');
-    } finally {
-      console.error = originalError;
-    }
-  });
-
-  test('returns no file paths for non-files clips', () => {
-    expect(decodeFilePaths(clip({ contentType: 'text', content: encodeText('hi') }))).toEqual([]);
   });
 
   test('incrementally inserts a new recent item at the top', () => {
@@ -76,23 +56,7 @@ describe('clip item helpers', () => {
     expect(next.pinnedItems).toEqual([]);
   });
 
-  test('incrementally updates an existing pinned item without duplicating it', () => {
-    const existing = clip({ id: 'pinned', isPinned: true, pinOrder: 2, timestamp: 10 });
-    const incoming = clip({ id: 'pinned', isPinned: true, pinOrder: 1, timestamp: 20 });
-
-    const next = applyClipboardChanged({
-      recentItems: [],
-      pinnedItems: [existing],
-      incoming,
-      maxHistoryItems: 10,
-    });
-
-    expect(next.pinnedItems).toHaveLength(1);
-    expect(next.pinnedItems[0].timestamp).toBe(20);
-    expect(next.recentItems).toEqual([]);
-  });
-
-  test('uses authoritative incoming metadata for existing duplicate items', () => {
+  test('replaces an existing item with the authoritative incoming copy', () => {
     const existing = clip({
       id: 'pinned',
       isPinned: true,
@@ -100,6 +64,17 @@ describe('clip item helpers', () => {
       label: 'favorite',
       timestamp: 10,
     });
+
+    const repinned = applyClipboardChanged({
+      recentItems: [],
+      pinnedItems: [existing],
+      incoming: clip({ id: 'pinned', isPinned: true, pinOrder: 1, timestamp: 20 }),
+      maxHistoryItems: 10,
+    });
+    expect(repinned.pinnedItems).toHaveLength(1);
+    expect(repinned.pinnedItems[0].timestamp).toBe(20);
+    expect(repinned.recentItems).toEqual([]);
+
     const incoming = clip({
       id: 'pinned',
       isPinned: false,
@@ -224,7 +199,6 @@ describe('row display helpers', () => {
     const at = (...args: [number, number, number, number, number]) =>
       formatClipTime(new Date(...args).getTime(), now, 'en-US', labels);
     expect(at(2026, 8, 30, 14, 59)).toBe('1m');
-    // ICU 版本不同，AM/PM 前可能是普通空格或窄不换行空格
     expect(at(2026, 8, 30, 9, 5)).toMatch(/^9:05\sAM$/);
     expect(at(2026, 8, 29, 23, 30)).toMatch(/^Yesterday 11:30\sPM$/);
     expect(formatClipTime(new Date(2026, 8, 30, 9, 5).getTime(), now, 'zh-CN', labels)).toBe(

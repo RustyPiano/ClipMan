@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Assert the app version is identical across every manifest that carries it:
-# package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml and the
-# `clipman` entry in src-tauri/Cargo.lock.
-#
-# Usage:
-#   scripts/check-versions.sh            # just assert the four agree
-#   scripts/check-versions.sh 2.2.0      # also assert they equal this value
-#   scripts/check-versions.sh v2.2.0     # leading 'v' is stripped (release tag)
-#
-# Portable: uses only grep/sed (no jq, no awk arrays) so it runs the same on a
-# BSD (macOS) shell and on GitHub's Ubuntu runners.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

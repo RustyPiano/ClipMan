@@ -100,7 +100,6 @@
 
       <div class="flex gap-2 pt-2">
         <Button
-          type="button"
           variant="secondary"
           class="flex-1"
           onclick={checkForUpdates}
@@ -115,7 +114,6 @@
 
         {#if updateInfo?.available}
           <Button
-            type="button"
             class="flex-1 !bg-green-600 hover:!bg-green-700 !text-white"
             onclick={installUpdate}
             disabled={installingUpdate}

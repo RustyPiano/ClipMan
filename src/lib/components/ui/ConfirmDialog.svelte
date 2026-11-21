@@ -9,7 +9,6 @@
   const MESSAGE_ID = 'confirm-dialog-message';
   let dialog: HTMLDialogElement;
 
-  // showModal 让背景不可交互、支持 Esc 取消；打开时把焦点放到确认按钮上。
   $effect(() => {
     if (confirmStore.open) {
       dialog.showModal();

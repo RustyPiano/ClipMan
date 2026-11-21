@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { Attachment } from 'svelte/attachments';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -13,7 +12,7 @@
   import { i18n } from '$lib/i18n';
   import { isMac } from '$lib/utils/platform';
   import { SEARCH_INPUT_ID, ROW_HEIGHT_REM } from '$lib/constants';
-  import type { ClipItem, PasteMode } from '$lib/types';
+  import type { PasteMode } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
   import ClipPreview from '$lib/components/ClipPreview.svelte';
@@ -50,7 +49,6 @@
   let viewportWidth = $state(window.innerWidth);
   let previewEnabled = $state(localStorage.getItem('preview-enabled') !== 'false');
   const showPreview = $derived(previewEnabled && viewportWidth >= 620 && !!selectedItem);
-  // One shared rem-based height keeps CSS, keyboard reveal and virtualization in sync.
   let rowHeight = $state(ROW_HEIGHT_REM * 16);
   const OVERSCAN = 4;
   const startIndex = $derived(
@@ -77,7 +75,6 @@
     }
   });
 
-  // 光标所在行被删除或移出列表时，光标留在原来的位置（落到下一行），不跳回顶部
   let lastSelectedIndex = 0;
   $effect(() => {
     if (selectedItem?.id === selectionStore.selectedId) lastSelectedIndex = selectedIndex;
@@ -134,8 +131,6 @@
     }
   }
 
-  // `plain` is the explicit override (⌥Enter); undefined follows the
-  // paste-format mode inside the store's useClip.
   async function useSelection(mode: PasteMode = 'default', plain?: boolean, slot?: number) {
     if (clipboardStore.isUsing) return;
     const revision = selectionStore.beginUse();
@@ -164,7 +159,6 @@
     if (slot === undefined && selected.length >= 2) {
       await clipboardStore.useSelectedClips(mode);
     } else {
-      // 只勾选了一行时回车使用这一行，而不是光标所在行
       const item =
         slot === undefined && selected.length === 1
           ? displayItems.find((clip) => clip.id === selected[0])
@@ -173,31 +167,12 @@
     }
   }
 
-  async function useItem(item: ClipItem) {
-    if (clipboardStore.isSearchPending) return;
-    await clipboardStore.useClip(item);
-  }
-
   async function clearHistory() {
-    if (
-      await confirmStore.ask({
-        title: t.clearNonPinned,
-        message: t.confirmClearHistory,
-        confirmLabel: t.clear,
-        destructive: true,
-      })
-    ) {
-      try {
-        await clipboardStore.clearNonPinned();
-      } catch (error) {
-        toastStore.add(String(error), 'error');
-      }
-    }
+    await clipboardStore.clearNonPinned();
     focusSearch();
   }
 
   function handleKey(event: KeyboardEvent) {
-    // 输入法确认时可能已结束组字，keyCode 229 仍表示该按键由输入法处理。
     if (
       isSettingsWindow ||
       event.defaultPrevented ||
@@ -281,36 +256,31 @@
     }
   }
 
-  function syncTheme(theme: typeof themeStore.current): Attachment {
-    return () => {
-      const root = document.documentElement;
-      const media = matchMedia('(prefers-color-scheme: dark)');
+  $effect(() => {
+    const theme = themeStore.current;
+    const root = document.documentElement;
+    const media = matchMedia('(prefers-color-scheme: dark)');
 
-      const apply = () => {
-        const isDark = theme === 'dark' || (theme === 'system' && media.matches);
+    const apply = () => {
+      const isDark = theme === 'dark' || (theme === 'system' && media.matches);
 
-        root.classList.remove('dark', 'light-pink');
+      root.classList.remove('dark', 'light-pink');
 
-        if (theme === 'light-pink') {
-          root.classList.add('light-pink');
-        } else if (isDark) {
-          root.classList.add('dark');
-        }
-      };
-
-      apply();
-      localStorage.setItem('theme', theme);
-
-      // In 'system' mode the effective theme tracks the OS appearance, so follow
-      // live light/dark switches; fixed modes need no listener. The attachment is
-      // re-run whenever themeStore.current changes, so this cleanup detaches the
-      // listener as soon as the user leaves 'system'.
-      if (theme === 'system') {
-        media.addEventListener('change', apply);
-        return () => media.removeEventListener('change', apply);
+      if (theme === 'light-pink') {
+        root.classList.add('light-pink');
+      } else if (isDark) {
+        root.classList.add('dark');
       }
     };
-  }
+
+    apply();
+    localStorage.setItem('theme', theme);
+
+    if (theme === 'system') {
+      media.addEventListener('change', apply);
+      return () => media.removeEventListener('change', apply);
+    }
+  });
 
   onMount(() => {
     if (isSettingsWindow) return;
@@ -346,12 +316,9 @@
 <Toast />
 <ConfirmDialog />
 {#if isSettingsWindow}
-  <div class="contents" {@attach syncTheme(themeStore.current)}><SettingsPage /></div>
+  <SettingsPage />
 {:else}
-  <div
-    class="quickbar-panel flex h-screen flex-col overflow-hidden rounded-xl"
-    {@attach syncTheme(themeStore.current)}
-  >
+  <div class="quickbar-panel flex h-screen flex-col overflow-hidden rounded-xl">
     <PermissionCheck />
     <header class="qb-header flex flex-none items-center gap-3 px-3 py-3">
       <div class="min-w-0 flex-1">
@@ -440,7 +407,7 @@
                 onHover={() => {
                   if (hoverSelectArmed) select(position);
                 }}
-                onUse={() => useItem(item)}
+                onUse={() => clipboardStore.useClip(item)}
               />
             {/each}
             <div

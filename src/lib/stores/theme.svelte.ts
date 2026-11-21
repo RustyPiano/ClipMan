@@ -10,7 +10,6 @@ function createThemeStore() {
   const stored = localStorage.getItem('theme');
   let theme = $state<Theme>(isTheme(stored) ? stored : 'system');
 
-  // Sync theme across windows via storage events
   window.addEventListener('storage', (event) => {
     if (event.key === 'theme' && isTheme(event.newValue)) {
       theme = event.newValue;

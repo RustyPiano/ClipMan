@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{Cursor, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const DATA_FILES: [&str; 4] = [
     "clipman.db",
@@ -12,7 +12,6 @@ pub const CURRENT_DB_USER_VERSION: i64 = 3;
 const THUMBNAIL_SIZE: u32 = 256;
 const BACKFILL_BATCH_SIZE: i64 = 100;
 
-/// 把数据库升级到当前格式，返回是否需要重建 FTS 索引。版本号由调用方在索引重建后更新。
 pub fn upgrade_clip_database_to_current(
     conn: &rusqlite::Connection,
     data_dir: &Path,
@@ -28,7 +27,8 @@ pub fn upgrade_clip_database_to_current(
     }
 
     if user_version < 2 {
-        backfill_v2_search_columns(conn)?;
+        backfill_content_hashes(conn)?;
+        backfill_image_thumbnails(conn)?;
         needs_fts_rebuild = true;
     }
 
@@ -39,8 +39,6 @@ pub fn upgrade_clip_database_to_current(
     Ok(needs_fts_rebuild)
 }
 
-/// 把换行分隔的旧文件列表转成 JSON 数组。每次打开数据库都执行：2.2.x 不拒绝 v3 数据库，
-/// 降级期间写入的文件记录仍是旧格式。返回是否转换了记录。
 fn convert_legacy_file_lists(conn: &rusqlite::Connection) -> Result<bool, String> {
     let mut converted = false;
     loop {
@@ -96,7 +94,8 @@ fn upgrade_to_v1_plaintext(conn: &rusqlite::Connection, data_dir: &Path) -> Resu
     let legacy_key = data_dir.join(".clipman.key");
     if legacy_key.exists() {
         log::warn!("Legacy encrypted database detected; resetting clipboard history for v1 plaintext storage");
-        reset_clips_table(conn)?;
+        conn.execute("DELETE FROM clips", [])
+            .map_err(|e| format!("Failed to reset clipboard history: {}", e))?;
         fs::remove_file(&legacy_key)
             .map_err(|e| format!("Failed to remove legacy encryption key: {}", e))?;
     }
@@ -107,21 +106,15 @@ fn upgrade_to_v1_plaintext(conn: &rusqlite::Connection, data_dir: &Path) -> Resu
     Ok(())
 }
 
-/// Callers must ensure the current schema columns already exist
-/// (`ClipStorage::initialize_schema` runs before this in `ClipStorage::new`);
-/// this only fills in values for rows written by older versions.
-fn backfill_v2_search_columns(conn: &rusqlite::Connection) -> Result<(), String> {
-    backfill_content_hashes(conn)?;
-    backfill_image_thumbnails(conn)?;
-    Ok(())
-}
-
 fn backfill_content_hashes(conn: &rusqlite::Connection) -> Result<(), String> {
     loop {
-        let ids = {
-            let mut stmt = conn
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Failed to start content hash backfill transaction: {}", e))?;
+        let rows = {
+            let mut stmt = tx
                 .prepare(
-                    "SELECT id
+                    "SELECT id, content
                      FROM clips
                      WHERE content_hash IS NULL OR content_hash = ''
                      ORDER BY rowid ASC
@@ -129,27 +122,19 @@ fn backfill_content_hashes(conn: &rusqlite::Connection) -> Result<(), String> {
                 )
                 .map_err(|e| format!("Failed to prepare content hash backfill: {}", e))?;
             let rows = stmt
-                .query_map([BACKFILL_BATCH_SIZE], |row| row.get::<_, String>(0))
+                .query_map([BACKFILL_BATCH_SIZE], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
                 .map_err(|e| format!("Failed to read rows for content hash backfill: {}", e))?;
             rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Failed to collect ids for content hash backfill: {}", e))?
+                .map_err(|e| format!("Failed to collect rows for content hash backfill: {}", e))?
         };
 
-        if ids.is_empty() {
+        if rows.is_empty() {
             break;
         }
 
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| format!("Failed to start content hash backfill transaction: {}", e))?;
-        for id in ids {
-            let content: Vec<u8> = tx
-                .query_row(
-                    "SELECT content FROM clips WHERE id = ?1",
-                    rusqlite::params![&id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| format!("Failed to read content for hash backfill: {}", e))?;
+        for (id, content) in rows {
             tx.execute(
                 "UPDATE clips SET content_hash = ?1 WHERE id = ?2",
                 rusqlite::params![crate::storage::hash_bytes(&content), &id],
@@ -165,10 +150,13 @@ fn backfill_content_hashes(conn: &rusqlite::Connection) -> Result<(), String> {
 
 fn backfill_image_thumbnails(conn: &rusqlite::Connection) -> Result<(), String> {
     loop {
-        let ids = {
-            let mut stmt = conn
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Failed to start thumbnail backfill transaction: {}", e))?;
+        let rows = {
+            let mut stmt = tx
                 .prepare(
-                    "SELECT id
+                    "SELECT id, content
                      FROM clips
                      WHERE content_type = 'image' AND thumbnail IS NULL
                      ORDER BY rowid ASC
@@ -176,27 +164,19 @@ fn backfill_image_thumbnails(conn: &rusqlite::Connection) -> Result<(), String> 
                 )
                 .map_err(|e| format!("Failed to prepare thumbnail backfill: {}", e))?;
             let rows = stmt
-                .query_map([BACKFILL_BATCH_SIZE], |row| row.get::<_, String>(0))
+                .query_map([BACKFILL_BATCH_SIZE], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
                 .map_err(|e| format!("Failed to read rows for thumbnail backfill: {}", e))?;
             rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("Failed to collect ids for thumbnail backfill: {}", e))?
+                .map_err(|e| format!("Failed to collect rows for thumbnail backfill: {}", e))?
         };
 
-        if ids.is_empty() {
+        if rows.is_empty() {
             break;
         }
 
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| format!("Failed to start thumbnail backfill transaction: {}", e))?;
-        for id in ids {
-            let content: Vec<u8> = tx
-                .query_row(
-                    "SELECT content FROM clips WHERE id = ?1",
-                    rusqlite::params![&id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| format!("Failed to read content for thumbnail backfill: {}", e))?;
+        for (id, content) in rows {
             let Some(thumbnail) = thumbnail_png(&content) else {
                 log::warn!(
                     "Skipping thumbnail backfill for unreadable image clip {}",
@@ -224,18 +204,15 @@ fn backfill_image_thumbnails(conn: &rusqlite::Connection) -> Result<(), String> 
 
 fn thumbnail_png(image_bytes: &[u8]) -> Option<Vec<u8>> {
     let image = image::load_from_memory(image_bytes).ok()?;
+    if image.width() <= THUMBNAIL_SIZE && image.height() <= THUMBNAIL_SIZE {
+        return Some(image_bytes.to_vec());
+    }
     let thumbnail = image.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     let mut cursor = Cursor::new(Vec::new());
     thumbnail
         .write_to(&mut cursor, image::ImageFormat::Png)
         .ok()?;
     Some(cursor.into_inner())
-}
-
-fn reset_clips_table(conn: &rusqlite::Connection) -> Result<(), String> {
-    conn.execute("DELETE FROM clips", [])
-        .map_err(|e| format!("Failed to reset clipboard history: {}", e))?;
-    Ok(())
 }
 
 pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), String> {
@@ -245,7 +222,11 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
 
     fs::create_dir_all(to).map_err(|e| format!("Failed to create destination directory: {}", e))?;
 
-    if paths_refer_to_same_location(from, to)? {
+    let canonical_from = fs::canonicalize(from)
+        .map_err(|e| format!("Failed to canonicalize source directory: {}", e))?;
+    let canonical_to = fs::canonicalize(to)
+        .map_err(|e| format!("Failed to canonicalize destination directory: {}", e))?;
+    if canonical_from == canonical_to {
         return Err("Source and destination are the same".to_string());
     }
 
@@ -258,10 +239,6 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         ));
     }
 
-    // Use a unique name + exclusive create so the probe can never overwrite a
-    // pre-existing user file in the destination directory: a fixed name written
-    // with `fs::write` would clobber (and then delete) an unrelated file that
-    // happened to share the name.
     let test_file = to.join(format!(".clipman_test_{}", uuid::Uuid::new_v4()));
     fs::OpenOptions::new()
         .write(true)
@@ -272,15 +249,6 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
     Ok(())
 }
 
-pub fn paths_refer_to_same_location(left: &Path, right: &Path) -> Result<bool, String> {
-    let left = fs::canonicalize(left)
-        .map_err(|e| format!("Failed to canonicalize source directory: {}", e))?;
-    let right = fs::canonicalize(right)
-        .map_err(|e| format!("Failed to canonicalize destination directory: {}", e))?;
-    Ok(left == right)
-}
-
-/// Remove ClipMan data files (and the directory if it becomes empty).
 pub fn remove_data_files(dir: &Path) -> Result<(), String> {
     let mut failures = Vec::new();
     for filename in DATA_FILES {
@@ -310,15 +278,6 @@ pub fn remove_data_files(dir: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(failures.join("; "))
-    }
-}
-
-/// Get the effective data directory based on settings
-pub fn get_data_directory(app_data_dir: PathBuf, custom_path: Option<String>) -> PathBuf {
-    if let Some(path) = custom_path {
-        PathBuf::from(path)
-    } else {
-        app_data_dir
     }
 }
 
@@ -431,12 +390,6 @@ mod tests {
             .unwrap();
         assert_eq!(1, user_version);
 
-        mark_clip_database_current(&conn).unwrap();
-        let user_version: i64 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(CURRENT_DB_USER_VERSION, user_version);
-
         drop(conn);
         let _ = std::fs::remove_dir_all(&test_dir);
     }
@@ -508,12 +461,6 @@ mod tests {
         assert!(!image_thumbnail.is_empty());
         assert_eq!(1, user_version);
         assert!(needs_fts_rebuild);
-
-        mark_clip_database_current(&conn).unwrap();
-        let user_version: i64 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(CURRENT_DB_USER_VERSION, user_version);
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&test_dir);

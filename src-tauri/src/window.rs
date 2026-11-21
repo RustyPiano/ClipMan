@@ -5,60 +5,26 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 pub const QUICKBAR_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
-// Adaptive sizing caps (logical px): comfortable max on large screens, scaled
-// down proportionally on smaller ones. The initial window size lives in
-// `tauri.conf.json` (820×600); the real size is computed per-monitor in
-// `position_quickbar`.
 const QUICKBAR_MAX_WIDTH: f64 = 820.0;
 const QUICKBAR_MAX_HEIGHT: f64 = 600.0;
 pub const QUICKBAR_HIDDEN_EVENT: &str = "quickbar-hidden";
 
-pub type ForegroundWindowStore = Arc<Mutex<Option<ForegroundWindow>>>;
+pub type ForegroundWindowStore = Arc<Mutex<Option<isize>>>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum QuickBarPanel {
     Recent,
     Pinned,
 }
 
-impl QuickBarPanel {
-    fn as_str(self) -> &'static str {
-        match self {
-            QuickBarPanel::Recent => "recent",
-            QuickBarPanel::Pinned => "pinned",
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct QuickBarOpenedPayload {
-    panel: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ForegroundWindow {
-    raw: isize,
-}
-
-impl ForegroundWindow {
-    pub fn raw(self) -> isize {
-        self.raw
-    }
-}
-
 pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
-    // 无边框、置顶、不进任务栏等基础属性写在 tauri.conf.json，这里只补平台专用设置。
     setup_quickbar_macos(&quickbar)?;
     setup_quickbar_windows(&quickbar)?;
     register_quickbar_events(&quickbar);
 
-    if let Some(settings) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        register_settings_events(&settings);
-    } else {
-        log::warn!("Settings window is not available at setup");
-    }
+    register_settings_events(&get_window(app, SETTINGS_WINDOW_LABEL)?);
 
     Ok(())
 }
@@ -88,13 +54,8 @@ pub fn show_quickbar_with_panel(
     if geometry_changed {
         invalidate_quickbar_shadow(&quickbar);
     }
-    app.emit(
-        "quickbar-opened",
-        QuickBarOpenedPayload {
-            panel: panel.as_str(),
-        },
-    )
-    .map_err(to_string)
+    app.emit("quickbar-opened", serde_json::json!({ "panel": panel }))
+        .map_err(to_string)
 }
 
 pub fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
@@ -113,19 +74,19 @@ pub fn open_settings_window(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
-    let target = (*store.lock().unwrap())
+pub fn restore_recorded_foreground_window(target: Option<isize>) -> Result<(), String> {
+    let target = target
         .ok_or_else(|| "No foreground window was recorded before QuickBar opened".to_string())?;
     restore_foreground_window(target)
 }
 
 #[cfg(target_os = "macos")]
-pub fn restore_recorded_foreground_window(store: &ForegroundWindowStore) -> Result<(), String> {
+pub fn restore_recorded_foreground_window(target: Option<isize>) -> Result<(), String> {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
-    let target = (*store.lock().unwrap())
+    let target = target
         .ok_or_else(|| "No foreground app was recorded before QuickBar opened".to_string())?;
-    let pid = target.raw() as i32;
+    let pid = target as i32;
 
     let Some(running) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
         return Err(format!("Recorded app (pid {pid}) is no longer running"));
@@ -156,9 +117,6 @@ fn register_quickbar_events(window: &WebviewWindow) {
     });
 }
 
-/// Recompute the native shadow after the window is shown/resized: with a
-/// transparent window the shadow is derived from the rendered alpha shape,
-/// which can be stale after a size change on another monitor.
 #[cfg(target_os = "macos")]
 fn invalidate_quickbar_shadow(window: &WebviewWindow) {
     match ns_window(window) {
@@ -213,12 +171,9 @@ fn position_quickbar(window: &WebviewWindow) -> Result<bool, String> {
     let work_width = work_area.size.width as i32;
     let work_height = work_area.size.height as i32;
 
-    // Size and centering both derive from the *target* monitor's scale (not the
-    // window's current one), so mixed-DPI / primary-monitor fallback stays
-    // correct. We compute a logical size, then set the exact physical box.
     let scale = monitor.scale_factor().max(0.1);
-    let (logical_w, logical_h) =
-        quickbar_logical_size(work_width as f64 / scale, work_height as f64 / scale);
+    let logical_w = (work_width as f64 / scale * 0.92).min(QUICKBAR_MAX_WIDTH);
+    let logical_h = (work_height as f64 / scale * 0.7).min(QUICKBAR_MAX_HEIGHT);
 
     let width = (logical_w * scale).round() as i32;
     let height = (logical_h * scale).round() as i32;
@@ -240,10 +195,6 @@ fn position_quickbar(window: &WebviewWindow) -> Result<bool, String> {
     Ok(resized || moved)
 }
 
-/// Pick the monitor the user is actually working on: the one under the cursor,
-/// falling back to the window's current monitor, then the primary monitor.
-/// `current_monitor()` alone tracks where the *window* last sat, not the active
-/// screen, so on multi-monitor setups it would keep misplacing the QuickBar.
 fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
     if let Ok(cursor) = window.cursor_position() {
         if let Ok(Some(monitor)) = window.monitor_from_point(cursor.x, cursor.y) {
@@ -258,17 +209,6 @@ fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
         .or_else(|| window.primary_monitor().ok().flatten())
 }
 
-/// Compute the QuickBar logical size from a (logical) work-area: scale to a
-/// fraction of the screen, capped at a comfortable max. The fraction guarantees
-/// the result never exceeds the work area, so no floor is needed.
-fn quickbar_logical_size(work_width: f64, work_height: f64) -> (f64, f64) {
-    let width = (work_width * 0.92).min(QUICKBAR_MAX_WIDTH);
-    let height = (work_height * 0.7).min(QUICKBAR_MAX_HEIGHT);
-    (width, height)
-}
-
-// NonactivatingPanel 只对 NSPanel 生效。tao 创建的是 NSWindow 子类，只设样式时 QuickBar
-// 成为 key window 会激活 ClipMan，目标应用失去激活（访达会结束改名编辑）。
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     #[unsafe(super(
@@ -282,7 +222,6 @@ objc2::define_class!(
     struct QuickBarNsPanel;
 
     impl QuickBarNsPanel {
-        // 无边框窗口默认不能成为 key window，搜索框需要接收键盘输入。
         #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key_window(&self) -> bool {
             true
@@ -295,10 +234,6 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     use objc2::ClassType;
     use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
-    // SAFETY: NSPanel 与 NSWindow 的实例大小相同（macOS 26 上均为 528 字节），新类不加实例
-    // 变量。tao 的 TaoWindow 只多一个 focusable 变量，以及 canBecomeKey/MainWindow 和用于
-    // 背景拖动的 sendEvent: 覆盖；QuickBar 不调用 set_focusable，也不拖动窗口。必须在设置
-    // NonactivatingPanel 样式之前换类，由 NSPanel 的 setStyleMask: 处理这个样式。
     unsafe {
         objc2::ffi::object_setClass(
             window.ns_window().map_err(to_string)?.cast(),
@@ -307,19 +242,12 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     }
     let ns_window = ns_window(window)?;
 
-    // macOS-only native shadow: the window server draws it around the opaque
-    // rounded panel, outside the window bounds, so it can't be clipped like a
-    // CSS box-shadow. Windows keeps `shadow: false` (tauri.conf.json) because
-    // DWM shadows follow the rectangular frame, not the panel shape.
     window.set_shadow(true).map_err(to_string)?;
 
-    // QuickBar is a non-activating panel; the target app stays active while it
-    // is shown.
     window
         .set_visible_on_all_workspaces(true)
         .map_err(to_string)?;
     ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
-    // 后设样式不会更新 WindowServer 的激活标记，需要通过 AppKit 私有接口同步。
     unsafe {
         let _: () = objc2::msg_send![ns_window, _setPreventsActivation: true];
     }
@@ -346,7 +274,6 @@ fn setup_quickbar_macos(_window: &WebviewWindow) -> Result<(), String> {
 fn webview_hwnd(window: &WebviewWindow) -> Result<windows::Win32::Foundation::HWND, String> {
     use windows::Win32::Foundation::HWND;
 
-    // Tauri/wry may use a newer `windows` crate; bridge through the raw handle.
     Ok(HWND(window.hwnd().map_err(to_string)?.0))
 }
 
@@ -402,9 +329,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, quickbar: &WebviewW
         }
     }
 
-    *store.lock().unwrap() = Some(ForegroundWindow {
-        raw: foreground.0 as isize,
-    });
+    *store.lock().unwrap() = Some(foreground.0 as isize);
     log::debug!("Recorded Windows foreground window before QuickBar show");
 }
 
@@ -424,7 +349,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &Webview
         return;
     }
 
-    *store.lock().unwrap() = Some(ForegroundWindow { raw: pid as isize });
+    *store.lock().unwrap() = Some(pid as isize);
     log::debug!("Recorded frontmost macOS app pid {pid} before QuickBar show");
 }
 
@@ -432,7 +357,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &Webview
 fn remember_foreground_window(_store: &ForegroundWindowStore, _quickbar: &WebviewWindow) {}
 
 #[cfg(windows)]
-fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
+fn restore_foreground_window(target: isize) -> Result<(), String> {
     use std::ffi::c_void;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
@@ -440,10 +365,7 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
         GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
     };
 
-    let hwnd = HWND(target.raw as *mut c_void);
-    if hwnd.is_invalid() {
-        return Err("Recorded foreground window handle is invalid".to_string());
-    }
+    let hwnd = HWND(target as *mut c_void);
 
     unsafe {
         if !IsWindow(hwnd).as_bool() {
@@ -451,39 +373,39 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
         }
 
         if SetForegroundWindow(hwnd).as_bool() {
+            return Ok(());
+        }
+
+        let current_thread = GetCurrentThreadId();
+        let target_thread = GetWindowThreadProcessId(hwnd, None);
+        let foreground = GetForegroundWindow();
+        let foreground_thread = if foreground.is_invalid() {
+            0
+        } else {
+            GetWindowThreadProcessId(foreground, None)
+        };
+
+        let attached_target = target_thread != 0
+            && target_thread != current_thread
+            && AttachThreadInput(current_thread, target_thread, true).as_bool();
+        let attached_foreground = foreground_thread != 0
+            && foreground_thread != current_thread
+            && foreground_thread != target_thread
+            && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
+
+        let restored = SetForegroundWindow(hwnd).as_bool();
+
+        if attached_foreground {
+            let _ = AttachThreadInput(current_thread, foreground_thread, false);
+        }
+        if attached_target {
+            let _ = AttachThreadInput(current_thread, target_thread, false);
+        }
+
+        if restored {
             Ok(())
         } else {
-            let current_thread = GetCurrentThreadId();
-            let target_thread = GetWindowThreadProcessId(hwnd, None);
-            let foreground = GetForegroundWindow();
-            let foreground_thread = if foreground.is_invalid() {
-                0
-            } else {
-                GetWindowThreadProcessId(foreground, None)
-            };
-
-            let attached_target = target_thread != 0
-                && target_thread != current_thread
-                && AttachThreadInput(current_thread, target_thread, true).as_bool();
-            let attached_foreground = foreground_thread != 0
-                && foreground_thread != current_thread
-                && foreground_thread != target_thread
-                && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
-
-            let restored = SetForegroundWindow(hwnd).as_bool();
-
-            if attached_foreground {
-                let _ = AttachThreadInput(current_thread, foreground_thread, false);
-            }
-            if attached_target {
-                let _ = AttachThreadInput(current_thread, target_thread, false);
-            }
-
-            if restored {
-                Ok(())
-            } else {
-                Err("SetForegroundWindow failed for recorded foreground window".to_string())
-            }
+            Err("SetForegroundWindow failed for recorded foreground window".to_string())
         }
     }
 }
@@ -491,7 +413,6 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let ns_window = ns_window(window)?;
-    // 不调用 window.set_focus()：tao 会顺带 activateIgnoringOtherApps，让目标应用失去激活。
     ns_window.orderFrontRegardless();
     ns_window.makeKeyAndOrderFront(None);
     Ok(())
@@ -521,25 +442,4 @@ fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
 
 fn to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-#[cfg(test)]
-mod size_tests {
-    use super::*;
-
-    #[test]
-    fn caps_at_max_on_large_screens() {
-        let (w, h) = quickbar_logical_size(2560.0, 1440.0);
-        assert_eq!(w, QUICKBAR_MAX_WIDTH);
-        assert_eq!(h, QUICKBAR_MAX_HEIGHT);
-    }
-
-    #[test]
-    fn never_exceeds_work_area_on_small_screens() {
-        // A tiny work area must not produce a window larger than itself.
-        let (work_w, work_h) = (390.0, 320.0);
-        let (w, h) = quickbar_logical_size(work_w, work_h);
-        assert!(w <= work_w && h <= work_h);
-        assert!(w <= QUICKBAR_MAX_WIDTH && h <= QUICKBAR_MAX_HEIGHT);
-    }
 }

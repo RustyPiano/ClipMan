@@ -1,4 +1,5 @@
 import { SvelteSet } from 'svelte/reactivity';
+import { RequestSequencer } from '$lib/utils/request-sequencer';
 
 export type QuickBarPanel = 'recent' | 'pinned';
 type Item = { id: string };
@@ -11,8 +12,7 @@ class SelectionStore {
   panel = $state<QuickBarPanel>('recent');
   selectedId = $state<string | null>(null);
   selectedIds = new SvelteSet<string>();
-  private useRevision = 0;
-  // ⇧↑/↓ 从锚点扩展到光标；单独勾选的行会成为新的锚点
+  private uses = new RequestSequencer();
   private anchorId: string | null = null;
 
   index(items: readonly Item[]) {
@@ -27,14 +27,12 @@ class SelectionStore {
     this.selectedId = items[clampIndex(index, items.length)]?.id ?? null;
   }
 
-  /** 不按 Shift 的 ↑/↓：与访达一致，移动光标并清空多选。 */
   move(delta: number, items: readonly Item[]) {
     this.clearSelection();
     const count = items.length;
     this.setSelectedIndex(count ? (this.index(items) + delta + count) % count : 0, items);
   }
 
-  /** 光标移动一行，并把多选设为锚点到光标之间的连续范围（到边界不回绕）；范围缩回一行时取消多选。 */
   extendSelection(delta: number, items: readonly Item[]) {
     const from = this.index(items);
     if (!this.hasAnchor(items)) this.anchorId = items[from]?.id ?? null;
@@ -42,7 +40,6 @@ class SelectionStore {
     this.selectRange(items);
   }
 
-  /** ⇧ 点击：还没有多选时只勾选这一行并作为锚点，否则选中锚点到这一行的连续范围。 */
   extendTo(id: string, items: readonly Item[]) {
     this.setSelectedIndex(
       items.findIndex((item) => item.id === id),
@@ -88,13 +85,13 @@ class SelectionStore {
   }
 
   cancelUse() {
-    this.useRevision += 1;
+    this.uses.next();
   }
   beginUse() {
-    return ++this.useRevision;
+    return this.uses.next();
   }
   isCurrentUse(revision: number) {
-    return revision === this.useRevision;
+    return this.uses.isCurrent(revision);
   }
 }
 
