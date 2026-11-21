@@ -50,7 +50,6 @@
   let viewportWidth = $state(window.innerWidth);
   let previewEnabled = $state(localStorage.getItem('preview-enabled') !== 'false');
   const showPreview = $derived(previewEnabled && viewportWidth >= 620 && !!selectedItem);
-  // One shared rem-based height keeps CSS, keyboard reveal and virtualization in sync.
   let rowHeight = $state(ROW_HEIGHT_REM * 16);
   const OVERSCAN = 4;
   const startIndex = $derived(
@@ -77,7 +76,6 @@
     }
   });
 
-  // 光标所在行被删除或移出列表时，光标留在原来的位置（落到下一行），不跳回顶部
   let lastSelectedIndex = 0;
   $effect(() => {
     if (selectedItem?.id === selectionStore.selectedId) lastSelectedIndex = selectedIndex;
@@ -134,8 +132,6 @@
     }
   }
 
-  // `plain` is the explicit override (⌥Enter); undefined follows the
-  // paste-format mode inside the store's useClip.
   async function useSelection(mode: PasteMode = 'default', plain?: boolean, slot?: number) {
     if (clipboardStore.isUsing) return;
     const revision = selectionStore.beginUse();
@@ -164,7 +160,6 @@
     if (slot === undefined && selected.length >= 2) {
       await clipboardStore.useSelectedClips(mode);
     } else {
-      // 只勾选了一行时回车使用这一行，而不是光标所在行
       const item =
         slot === undefined && selected.length === 1
           ? displayItems.find((clip) => clip.id === selected[0])
@@ -197,7 +192,6 @@
   }
 
   function handleKey(event: KeyboardEvent) {
-    // 输入法确认时可能已结束组字，keyCode 229 仍表示该按键由输入法处理。
     if (
       isSettingsWindow ||
       event.defaultPrevented ||
@@ -301,10 +295,6 @@
       apply();
       localStorage.setItem('theme', theme);
 
-      // In 'system' mode the effective theme tracks the OS appearance, so follow
-      // live light/dark switches; fixed modes need no listener. The attachment is
-      // re-run whenever themeStore.current changes, so this cleanup detaches the
-      // listener as soon as the user leaves 'system'.
       if (theme === 'system') {
         media.addEventListener('change', apply);
         return () => media.removeEventListener('change', apply);

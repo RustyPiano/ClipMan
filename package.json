@@ -8,7 +8,7 @@
     "build": "bun --bun vite build",
     "preview": "bun --bun vite preview",
     "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
-    "lint": "eslint src/",
+    "lint": "eslint .",
     "test": "bun test tests/",
     "test:types": "tsc -p tests/tsconfig.json --noEmit",
     "format": "prettier --write \"src/**/*.{ts,svelte}\"",

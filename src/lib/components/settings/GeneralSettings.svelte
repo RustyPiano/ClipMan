@@ -112,7 +112,6 @@
     isRecording = false;
     recordedKeys = [];
     recordingWarning = '';
-    // 等待禁用操作结束后再恢复快捷键，关闭窗口或卸载组件时也按这个顺序执行。
     shortcutTask = shortcutTask
       .then(() => invoke<void>('enable_global_shortcut'))
       .catch((error) => {

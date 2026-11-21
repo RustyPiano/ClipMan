@@ -224,7 +224,6 @@ describe('row display helpers', () => {
     const at = (...args: [number, number, number, number, number]) =>
       formatClipTime(new Date(...args).getTime(), now, 'en-US', labels);
     expect(at(2026, 8, 30, 14, 59)).toBe('1m');
-    // ICU 版本不同，AM/PM 前可能是普通空格或窄不换行空格
     expect(at(2026, 8, 30, 9, 5)).toMatch(/^9:05\sAM$/);
     expect(at(2026, 8, 29, 23, 30)).toMatch(/^Yesterday 11:30\sPM$/);
     expect(formatClipTime(new Date(2026, 8, 30, 9, 5).getTime(), now, 'zh-CN', labels)).toBe(

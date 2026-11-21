@@ -14,12 +14,9 @@
   let isChecking = $state(true);
   let errorMessage = $state('');
 
-  // Accessibility permission (macOS only). Auto-paste simulates Cmd+V, which
-  // requires it; the grant is commonly lost after an app update.
   let hasAccessibility = $state(true);
   let isCheckingAccessibility = $state(false);
 
-  // 读取失败时命令抛出错误，横幅显示错误信息。
   async function checkPermission() {
     isChecking = true;
     errorMessage = '';
@@ -56,16 +53,12 @@
     checkPermission();
     checkAccessibility();
 
-    // Re-check when the window regains focus (e.g. after the user toggles the
-    // permission in System Settings and comes back).
     const onFocus = () => {
       checkPermission();
       checkAccessibility();
     };
     window.addEventListener('focus', onFocus);
 
-    // The backend emits this the moment an auto-paste is blocked by a missing
-    // permission, so the banner is already showing next time the QuickBar opens.
     let unlisten: (() => void) | undefined;
     if (isMac) {
       listen('accessibility-permission-required', () => {
@@ -82,9 +75,6 @@
   });
 </script>
 
-<!-- Permission banners: quiet, token-driven cards that sit inside the panel
-     and adapt to all three themes. The amber accent is confined to the icon so
-     the banner reads as a notice, not an alarm. -->
 {#if !hasPermission}
   <div class="mx-3 mt-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
     <div class="flex items-start gap-3">

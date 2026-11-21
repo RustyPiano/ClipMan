@@ -28,20 +28,12 @@ struct ProcessedClipboardImage {
     thumbnail_png: Vec<u8>,
 }
 
-/// A single representative view of the current clipboard, chosen by priority so
-/// one clipboard change yields exactly one record: `Files > Text(+html) > Image`.
-/// Finder's file copies also expose a filename string and an icon image;
-/// taking the file list first discards that derived noise.
 enum ClipboardSnapshot {
     Files(Vec<String>),
     Text { text: String, html: Option<String> },
     Image(ImageData<'static>),
 }
 
-/// Reads the clipboard once and returns its single representative format.
-///
-/// Image decoding copies the full bitmap and is expensive, so it is only
-/// attempted when neither files nor text are present.
 fn read_clipboard_snapshot(clipboard: &mut Clipboard) -> Option<ClipboardSnapshot> {
     if let Ok(paths) = clipboard.get().file_list() {
         let paths: Vec<String> = paths
@@ -56,7 +48,6 @@ fn read_clipboard_snapshot(clipboard: &mut Clipboard) -> Option<ClipboardSnapsho
 
     if let Ok(text) = clipboard.get_text() {
         if !text.is_empty() {
-            // HTML is an optional companion; a missing or empty value is normal.
             let html = clipboard.get().html().ok().filter(|html| !html.is_empty());
             return Some(ClipboardSnapshot::Text { text, html });
         }
@@ -69,9 +60,6 @@ fn read_clipboard_snapshot(clipboard: &mut Clipboard) -> Option<ClipboardSnapsho
     None
 }
 
-/// Self-copy/dedup marker for a snapshot, hashing only the primary content.
-/// Text hashes the plain text (never the html), because after a self-paste the
-/// monitor reads back the plain-text alt and must still recognize our write.
 fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
     match snapshot {
         ClipboardSnapshot::Files(paths) => {
@@ -86,7 +74,6 @@ fn snapshot_marker(snapshot: &ClipboardSnapshot) -> CopyMarker {
     }
 }
 
-/// 同文富文本需要重新经过过滤和保存；自身写入仍推进标记并跳过捕获。
 fn record_marker_and_decide_dispatch(
     marker: &CopyMarker,
     last_marker: &mut Option<CopyMarker>,
@@ -131,8 +118,6 @@ impl ClipboardHandler for Handler {
     }
 }
 
-/// 启动剪贴板监听线程。`Master::new` 的错误返回给调用方；`run()` 只在系统剪贴板
-/// 不可用时返回错误，此时应用无法继续工作，直接 panic。
 pub fn start_monitor(
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
@@ -167,8 +152,6 @@ pub fn start_monitor(
         .map_err(|e| format!("Clipboard monitor failed to start: {e}"))?
 }
 
-/// Read one representative snapshot, dedup against `last_marker`, skip our own
-/// writes, then dispatch a single record for the winning format.
 fn handle_clipboard_event(
     app_handle: &AppHandle,
     last_copied_by_us: &Arc<Mutex<Option<CopyWrite>>>,
@@ -176,8 +159,6 @@ fn handle_clipboard_event(
     last_marker: &mut Option<CopyMarker>,
 ) {
     let settings = app_handle.state::<AppState>().settings.get();
-    // 暂停期间完全不观察剪贴板，`last_marker` 也不推进：恢复后第一次读取的内容与暂停前
-    // 最后记录的内容比较，行为与未暂停时一致。
     if settings.capture_paused {
         return;
     }
@@ -199,11 +180,8 @@ fn handle_clipboard_event(
         return;
     }
 
-    // 前台应用在分派前同步读取：图片在后台任务中处理，来源必须在那之前确定。
     let (source_app, source_id, app_icon) = frontmost_app();
 
-    // 应用排除放在推进 `last_marker` 之后，与自身复制的跳过相同：否则之后的复制会与
-    // 过期的记录比较。
     if [source_id.as_deref(), source_app.as_deref()]
         .into_iter()
         .flatten()
@@ -244,7 +222,6 @@ fn process_text_change(
     }
 }
 
-/// 持锁核对捕获后剪贴板没有被再次写入，避免覆盖保存期间发生的另一次复制或粘贴。
 fn strip_live_rich_text(app_handle: &AppHandle, text: &str, html: &str, sequence: Option<u64>) {
     let state = app_handle.state::<AppState>();
     let Ok(_operation) = state.clipboard_use_lock.try_lock() else {
@@ -260,9 +237,7 @@ fn strip_live_rich_text(app_handle: &AppHandle, text: &str, html: &str, sequence
         return;
     }
     let unchanged = match sequence {
-        // 系统剪贴板序号未变，说明捕获后没有新的写入。
         Some(sequence) => crate::paste::clipboard_sequence() == Some(sequence),
-        // Linux 的 arboard 不提供序号，只能核对完整内容。
         None => {
             let Ok(mut clipboard) = Clipboard::new() else {
                 return;
@@ -327,7 +302,6 @@ fn process_image_change(
     let captured_at = crate::storage::current_timestamp();
     let width = image.width;
     let height = image.height;
-    // arboard 返回的是 `Cow::Owned`，`into_owned` 直接取得缓冲区，不复制。
     let rgba_bytes = image.bytes.into_owned();
     log::info!(
         "Image clipboard changed: {}x{}, {} RGBA bytes",
@@ -379,10 +353,6 @@ fn is_self_copied(
         .is_some_and(|write| write.matches(expected_marker))
 }
 
-/// Persist a captured item. Returns false only when the insert failed —
-/// `Ok(None)` (item fell outside the history limit) still counts as
-/// persisted, since the live-clipboard strip decision must not depend on
-/// history-limit pruning.
 fn save_to_storage(app_handle: &AppHandle, item: ClipItem) -> bool {
     use crate::storage::FrontendClipItem;
     use crate::tray::update_tray_menu;
@@ -396,7 +366,6 @@ fn save_to_storage(app_handle: &AppHandle, item: ClipItem) -> bool {
         storage
             .insert(&item, max_history_items)
             .and_then(|existing_id| {
-                // A delayed old image may already have been pruned; never emit a ghost row.
                 storage
                     .get_preview_by_id(existing_id.as_deref().unwrap_or(&item.id))
                     .map(|item| item.map(FrontendClipItem::from_preview))
@@ -469,10 +438,6 @@ fn encode_png(image: &DynamicImage) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-/// Downsamples an oversized clipboard image so its longest side fits within
-/// `max_dimension`, preserving aspect ratio. `0` disables downscaling (the
-/// settings page allows it). Images already within the limit are returned
-/// untouched.
 fn downscale_if_oversized(image: DynamicImage, max_dimension: u32) -> DynamicImage {
     if max_dimension == 0 {
         return image;
@@ -496,7 +461,6 @@ fn downscale_if_oversized(image: DynamicImage, max_dimension: u32) -> DynamicIma
     )
 }
 
-/// 通过过滤且保存成功后，返回清理时需要核对的原始 HTML。
 fn capture_text(
     text: &str,
     html: Option<String>,
@@ -519,7 +483,6 @@ fn capture_text(
         }
     }
 
-    // 存储大小限制不会改变系统剪贴板，清理时仍需核对完整 HTML。
     let strip_html = settings
         .strips_rich_text_at_capture()
         .then(|| html.clone())
@@ -544,7 +507,6 @@ fn capture_text(
     }
 }
 
-/// 大小写不敏感地匹配排除名单；名单的首尾空白已在 settings.rs 去除。
 fn app_name_matches_ignore_list(app_name: &str, ignored_apps: &[String]) -> bool {
     let app_name = app_name.to_lowercase();
     ignored_apps
@@ -552,10 +514,6 @@ fn app_name_matches_ignore_list(app_name: &str, ignored_apps: &[String]) -> bool
         .any(|ignored| ignored.to_lowercase() == app_name)
 }
 
-/// Drops an html companion that exceeds `max_text_bytes`, keeping only the
-/// plain text. HTML is optional metadata, so an oversized html on an
-/// otherwise-fine text clip degrades to plain text rather than skipping the
-/// whole clip.
 fn clamp_html_to_size_limit(html: Option<String>, max_text_bytes: usize) -> Option<String> {
     html.filter(|html| {
         let within_limit = html.len() <= max_text_bytes;
@@ -691,8 +649,6 @@ fn clipboard_has_sensitive_marker() -> bool {
     false
 }
 
-/// 本次运行中已保存过图标的应用名；每个应用每次启动只渲染一次图标，应用更新后的新图标
-/// 会在下次启动时覆盖旧的。
 static SAVED_APP_ICONS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 
 type FrontApp = (
@@ -701,10 +657,6 @@ type FrontApp = (
     Option<Result<Vec<u8>, String>>,
 );
 
-/// 采集时位于前台的应用（即复制来源）的本地化名称和 bundle id；本次运行还没保存过该应用
-/// 的图标时，一并返回渲染好的图标。ClipMan 自己在前台时各项都是 None。
-// ponytail: reads NSWorkspace off the monitor thread, same as window.rs does
-// off the command thread; AppKit's frontmostApplication tolerates it.
 #[cfg(target_os = "macos")]
 fn frontmost_app() -> FrontApp {
     use objc2_app_kit::NSWorkspace;
@@ -729,7 +681,6 @@ fn frontmost_app() -> FrontApp {
     )
 }
 
-/// 把应用图标画进 64px 位图再编码成 PNG，列表里以 12–16px 显示，足够 2x 屏幕使用。
 #[cfg(target_os = "macos")]
 fn render_app_icon(icon: &objc2_app_kit::NSImage) -> Result<Vec<u8>, String> {
     use objc2::AllocAnyThread;
@@ -740,7 +691,6 @@ fn render_app_icon(icon: &objc2_app_kit::NSImage) -> Result<Vec<u8>, String> {
     use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize};
 
     const SIZE: isize = 64;
-    // SAFETY: 传入空 planes 让 AppKit 自行分配像素内存；颜色空间名是 AppKit 导出的常量。
     let bitmap = unsafe {
         NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
             NSBitmapImageRep::alloc(),
@@ -771,7 +721,6 @@ fn render_app_icon(icon: &objc2_app_kit::NSImage) -> Result<Vec<u8>, String> {
         1.0,
     );
     NSGraphicsContext::restoreGraphicsState_class();
-    // SAFETY: 空属性字典对 PNG 编码有效。
     let png = unsafe {
         bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
     }
@@ -784,7 +733,6 @@ fn frontmost_app() -> FrontApp {
     (None, None, None)
 }
 
-/// 图标只影响显示：渲染或保存失败时记录错误，本次复制照常保存。
 fn save_app_icon(app_handle: &AppHandle, name: &str, icon: Result<Vec<u8>, String>) {
     let saved = icon.and_then(|png| {
         let state = app_handle.state::<AppState>();
@@ -830,8 +778,6 @@ mod tests {
         assert_eq!(500, content.width());
         assert_eq!(250, content.height());
 
-        // The (unrelated) thumbnail pipeline still runs on the downsampled
-        // image and stays within its own 256px bound.
         let thumbnail = image::load_from_memory(&processed.thumbnail_png).unwrap();
         assert!(thumbnail.width() <= 256 && thumbnail.height() <= 256);
     }
@@ -890,15 +836,12 @@ mod tests {
 
     #[test]
     fn snapshot_marker_matches_primary_content_and_ignores_html() {
-        // Files hash the lossless encoded path list.
         let paths = vec!["/a/b.txt".to_string(), "/c/d.png".to_string()];
         assert_eq!(
             CopyMarker::from_payload(ContentType::Files, encode_file_paths(&paths).as_bytes()),
             snapshot_marker(&ClipboardSnapshot::Files(paths.clone()))
         );
 
-        // Text hashes only the plain text: identical text with different html
-        // produces the same marker.
         let plain = snapshot_marker(&ClipboardSnapshot::Text {
             text: "hello".to_string(),
             html: None,
@@ -910,7 +853,6 @@ mod tests {
         assert_eq!(CopyMarker::from_payload(ContentType::Text, b"hello"), plain);
         assert_eq!(plain, rich);
 
-        // Image hashes normalized dimensions + RGBA bytes.
         let bytes = vec![1u8, 2, 3, 4];
         let image = ImageData {
             width: 1,
@@ -928,9 +870,6 @@ mod tests {
         let marker = CopyMarker::from_payload(ContentType::Text, b"hello");
         let mut last_marker = None;
 
-        // The first observation is our own paste: skip dispatch, but still record
-        // the marker so the next genuine copy of *different* content is not
-        // compared against stale None state.
         assert!(!record_marker_and_decide_dispatch(
             &marker,
             &mut last_marker,
@@ -939,8 +878,6 @@ mod tests {
         ));
         assert_eq!(Some(&marker), last_marker.as_ref());
 
-        // Observing the same content again deduplicates without even consulting
-        // the self-copy check.
         assert!(!record_marker_and_decide_dispatch(
             &marker,
             &mut last_marker,
@@ -949,7 +886,6 @@ mod tests {
         ));
         assert_eq!(Some(&marker), last_marker.as_ref());
 
-        // Genuinely new content we did not copy: dispatch and advance.
         let next = CopyMarker::from_payload(ContentType::Text, b"world");
         assert!(record_marker_and_decide_dispatch(
             &next,

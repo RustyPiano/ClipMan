@@ -1,11 +1,3 @@
-//! High-confidence secret detection for the clipboard capture pipeline.
-//!
-//! This deliberately sticks to a short list of high-confidence, low-noise
-//! patterns (PEM private keys, cloud/API tokens). It does *not* attempt
-//! entropy heuristics or mnemonic-phrase detection — both have high false
-//! positive rates against ordinary text, and a false "why wasn't this
-//! captured" is more confusing to users than an occasional missed secret.
-
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -35,9 +27,6 @@ static SLACK_TOKEN: LazyLock<Regex> =
 static OPENAI_STYLE_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bsk-[A-Za-z0-9_-]{20,}\b").unwrap());
 
-/// Returns the kind of secret found in `text` (for logging), or `None` if no
-/// high-confidence pattern matched. Checked in a fixed order; the first match
-/// wins since a caller only needs to know *that* the text should be skipped.
 pub fn detect_secret(text: &str) -> Option<&'static str> {
     if PEM_PRIVATE_KEY.is_match(text) {
         return Some("PEM private key");
@@ -70,8 +59,6 @@ pub fn detect_secret(text: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    // Shared negative samples that must never be flagged by *any* pattern,
-    // regardless of which specific regex is under test.
     const PLAIN_CHINESE_TEXT: &str = "今天天气不错，我们去公园散步吧。";
     const PLAIN_URL: &str = "https://example.com/docs/getting-started?ref=readme";
     const SHA256_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -93,8 +80,6 @@ mod tests {
         let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----";
         assert_eq!(Some("PEM private key"), detect_secret(pem));
 
-        // The empty-prefix alternative (plain "PRIVATE KEY", e.g. PKCS#8) also
-        // matches via the `(RSA |EC |OPENSSH |ENCRYPTED |)` group.
         let pkcs8 = "-----BEGIN PRIVATE KEY-----\nMIIEvQ...\n-----END PRIVATE KEY-----";
         assert_eq!(Some("PEM private key"), detect_secret(pkcs8));
     }
@@ -114,7 +99,6 @@ mod tests {
 
     #[test]
     fn rejects_aws_access_key_with_wrong_suffix_length() {
-        // 15 chars after AKIA instead of the required 16 - must not match.
         let text = "AKIAIOSFODNN7EXAMPL is not a real key";
         assert_eq!(None, detect_secret(text));
     }
@@ -128,8 +112,6 @@ mod tests {
 
     #[test]
     fn rejects_asia_prefixed_word_that_is_not_a_key() {
-        // Lowercase "sia" fails the case-sensitive "ASIA" match entirely,
-        // unlike an all-caps word that happens to be 20 letters long.
         let text = "Asia is a large continent with many countries.";
         assert_eq!(None, detect_secret(text));
     }
@@ -171,8 +153,6 @@ mod tests {
 
     #[test]
     fn detects_slack_token() {
-        // Built at runtime so the literal never looks like a real token to
-        // GitHub's push-protection scanner (same trick as the ghp_ tests).
         let token = format!(
             "xoxb-{}-{}",
             "1234567890123", "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -182,7 +162,6 @@ mod tests {
 
     #[test]
     fn rejects_xox_prefixed_word_with_unknown_kind_letter() {
-        // 'z' is not one of Slack's documented token kinds (b/a/p/r/s).
         let text = "xoxz-1234567890123-abcdefghijklmnopqrstuvwxyz0123456789";
         assert_eq!(None, detect_secret(text));
     }

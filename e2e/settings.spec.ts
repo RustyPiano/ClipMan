@@ -95,7 +95,6 @@ test('failed settings load cannot expose or save invented defaults; retry reads 
     (window as any).failLoad = true;
   });
   await page.goto('/');
-  // 语言来自后端设置；读取失败时界面保持默认中文。
   await expect(page.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
   await expect(page.locator('#pinned-shortcut-input')).toHaveCount(0);
   await page.evaluate(() => {
@@ -275,7 +274,6 @@ test('paste format radios switch modes and persist the choice on save', async ({
     .toBe('globalPlain');
 });
 
-// 模态对话框外的内容不可交互：连续按 Tab，焦点只会停在对话框内，或离开网页（落到 body）。
 async function expectTabStaysInDialog(page: Page, browserName: string) {
   for (let i = 0; i < 4; i++) {
     await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');

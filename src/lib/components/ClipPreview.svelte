@@ -25,7 +25,6 @@
   $effect(() => {
     const current = item;
     const revision = ++generation;
-    // Highlight changes immediately; the expensive body follows a settled selection.
     const timer = setTimeout(() => {
       settled = current;
       detail = current ? (clipboardStore.getCachedFullClip(current.id) ?? null) : null;
@@ -51,8 +50,6 @@
           : '')
   );
   const imageUrl = $derived(full?.imageUrl || settled?.content || '');
-  // 预览头部的一行元信息：来源、完整时间，以及文本字符数或文件数。超过预览上限的文本只读到
-  // 前 1 MiB，字符数不完整，所以不显示。
   const meta = $derived(
     settled
       ? [

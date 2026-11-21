@@ -12,7 +12,6 @@ pub const CURRENT_DB_USER_VERSION: i64 = 3;
 const THUMBNAIL_SIZE: u32 = 256;
 const BACKFILL_BATCH_SIZE: i64 = 100;
 
-/// 把数据库升级到当前格式，返回是否需要重建 FTS 索引。版本号由调用方在索引重建后更新。
 pub fn upgrade_clip_database_to_current(
     conn: &rusqlite::Connection,
     data_dir: &Path,
@@ -39,8 +38,6 @@ pub fn upgrade_clip_database_to_current(
     Ok(needs_fts_rebuild)
 }
 
-/// 把换行分隔的旧文件列表转成 JSON 数组。每次打开数据库都执行：2.2.x 不拒绝 v3 数据库，
-/// 降级期间写入的文件记录仍是旧格式。返回是否转换了记录。
 fn convert_legacy_file_lists(conn: &rusqlite::Connection) -> Result<bool, String> {
     let mut converted = false;
     loop {
@@ -107,9 +104,6 @@ fn upgrade_to_v1_plaintext(conn: &rusqlite::Connection, data_dir: &Path) -> Resu
     Ok(())
 }
 
-/// Callers must ensure the current schema columns already exist
-/// (`ClipStorage::initialize_schema` runs before this in `ClipStorage::new`);
-/// this only fills in values for rows written by older versions.
 fn backfill_v2_search_columns(conn: &rusqlite::Connection) -> Result<(), String> {
     backfill_content_hashes(conn)?;
     backfill_image_thumbnails(conn)?;
@@ -258,10 +252,6 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         ));
     }
 
-    // Use a unique name + exclusive create so the probe can never overwrite a
-    // pre-existing user file in the destination directory: a fixed name written
-    // with `fs::write` would clobber (and then delete) an unrelated file that
-    // happened to share the name.
     let test_file = to.join(format!(".clipman_test_{}", uuid::Uuid::new_v4()));
     fs::OpenOptions::new()
         .write(true)
@@ -280,7 +270,6 @@ pub fn paths_refer_to_same_location(left: &Path, right: &Path) -> Result<bool, S
     Ok(left == right)
 }
 
-/// Remove ClipMan data files (and the directory if it becomes empty).
 pub fn remove_data_files(dir: &Path) -> Result<(), String> {
     let mut failures = Vec::new();
     for filename in DATA_FILES {
@@ -313,7 +302,6 @@ pub fn remove_data_files(dir: &Path) -> Result<(), String> {
     }
 }
 
-/// Get the effective data directory based on settings
 pub fn get_data_directory(app_data_dir: PathBuf, custom_path: Option<String>) -> PathBuf {
     if let Some(path) = custom_path {
         PathBuf::from(path)

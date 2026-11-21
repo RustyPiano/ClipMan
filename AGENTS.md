@@ -20,6 +20,7 @@ ClipMan is a **local-first desktop clipboard manager** (Windows / macOS / Linux)
 | `docs/dev/STATUS.md` | Current state, uncommitted work, TODO queue, known issues | **Update it as soon as `src/` or `src-tauri/` changes or a release/CI state changes, without waiting for a reminder.** Keep ≤100 lines; delete stale entries instead of appending forever. |
 | `AGENTS.md` (this file) | Stable knowledge: architecture, conventions, commands, gotchas | Update in the same session whenever conventions/architecture/commands change. Never let it describe a past state as present. |
 | Other `docs/dev/*.md` | Docs for in-progress work (plans, specs) | Move to `docs/archive/` with a dated banner once the work is finished or superseded. |
+| `docs/adr/` | Design decision records (one decision per file) | Add a new ADR or mark an old one superseded when a decision changes. Code never carries the rationale in comments. |
 | `docs/archive/` | Finished or superseded docs (plans, specs, review records), each with a banner | Read-only. **Never treat archived docs as current guidance.** |
 | `README.md` / `README_EN.md` | Human/user-facing feature docs | Update when user-visible features ship (typically at release time). |
 
@@ -91,7 +92,7 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 
 - TypeScript is strict (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`). Prefix intentionally-unused args with `_`.
 - Rust: standard rustfmt layout (4-space, grouped `use`, early-return error checks).
-- 新写或修改的注释用中文，术语保留英文；注释只说明代码现在为什么这样做，不记录修改历史，也不引用历史计划文档的编号。
+- 代码、测试、脚本和配置里不写注释（`docs/adr/0001-no-code-comments.md`）。不明显的设计决定写进 `docs/adr/`，权宜实现提 GitHub Issue。`bun run lint` 检查 JS/TS/Svelte，`cargo test` 的 `tests/no_comments.rs` 检查 Rust；存量注释的上限在 `eslint-suppressions.json` 和 `src-tauri/tests/comment-suppressions.json`，只能下降。清理流程用 `/delete-comment`。
 
 ## Naming & Conventions
 
@@ -148,7 +149,7 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 - 剪贴板监听由 `clipboard::start_monitor` 在启动时开启一次，之后不停止也不重启。数据迁移依靠 `state.storage` 锁与采集互斥：备份和替换期间采集线程等待这把锁，拿到锁时写入的已是新库。
 - 自身复制识别：`last_copied_by_us` 保存 `CopyWrite`（`CopyMarker` 和写入完成时间）；写入期间标记有效，完成后匹配时检查 2 秒有效期。所有剪贴板写入都在 `clipboard_use_lock` 内执行。Text 的标记只计算纯文本；Files 使用实际写入路径列表的 JSON（macOS 使用存储路径，其他平台使用规范路径）。自身复制或去重跳过仍需推进 `last_marker`。
 - `globalPlain` 的同文富文本必须重新经过应用排除、密钥和大小检查，并在保存成功后才能剥离格式。剥离持有 `clipboard_use_lock`：macOS/Windows 只核对系统剪贴板序号；Linux 的 arboard 不提供序号，改为核对完整文本、HTML 且没有文件列表，因此无法区分外部应用再次复制完全相同的内容。⌥Enter 贴出的富文本保留在系统剪贴板，直到下一次复制。
-- macOS 文件写回不经过 arboard，直接向 `NSPasteboard` 写入 `NSURL`，并核对剪贴板里实际保留的条目，原因见 `paste.rs::write_file_list` 的注释。写入失败时返回错误，不改写为路径文本。
+- macOS 文件写回不经过 arboard，直接向 `NSPasteboard` 写入 `NSURL`，并核对剪贴板里实际保留的条目，原因见 `docs/adr/0013-macos-file-write-nspasteboard.md`。写入失败时返回错误，不改写为路径文本。
 - QuickBar surface/focus tokens (`--qb-*`) live in `src/app.css`, scoped to `.quickbar-panel`. Row action backgrounds use the row surface, avoiding unrelated white/dark toolbar patches.
 - macOS 上的 QuickBar 在启动时用 `object_setClass` 换成 NSPanel 子类（`window.rs` 的 `QuickBarNsPanel`），设置 `NonactivatingPanel` 后调用 AppKit 私有接口 `_setPreventsActivation:` 同步鼠标激活行为。不要调用 `window.set_focus()`：tao 会顺带 `activateIgnoringOtherApps`。原生 QA 断言打开和点击 QuickBar 后目标应用仍在前台，并覆盖访达改名粘贴。
 - QuickBar shadow is the **native macOS window shadow** derived from the window's alpha shape. Do not add CSS drop shadows or translucent pixels around `.quickbar-panel` — they distort the alpha shape and the shadow renders as a gray halo. Windows keeps `shadow: false` (DWM shadows follow the rectangular frame).

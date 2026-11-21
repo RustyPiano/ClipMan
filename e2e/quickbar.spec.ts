@@ -114,7 +114,6 @@ test.beforeEach(async ({ page }) => {
         if (cmd === 'get_pinned_clips')
           return structuredClone(clips.filter((item) => item.isPinned));
         if (cmd === 'get_recent_clips') {
-          // Exercise a native open event while first-page IPC is still outstanding.
           if (initialHistory) {
             initialHistory = false;
             setTimeout(() => w.emitTestEvent('quickbar-opened'), 5);
@@ -221,8 +220,6 @@ test('takePlain paste format makes Enter plain and ⌥Enter rich', async ({ page
 });
 
 test('closing the session cancels Enter while a search is running', async ({ page }) => {
-  // 输入、Enter、Escape 在同一个任务里派发：分开发送时，慢机器上 30ms 防抖加 90ms 搜索
-  // 可能在 Enter 之前就完成，此时 Enter 粘贴已有结果是正确行为，测试就不再覆盖取消路径
   await page.getByRole('combobox').evaluate((input: HTMLInputElement) => {
     input.value = 'cancelled';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -410,7 +407,6 @@ test('multi-selection works from the keyboard and Enter pastes it after mouse to
   await page.keyboard.press('Shift+ArrowDown');
   await page.keyboard.press('Shift+ArrowUp');
   await expect(page.locator('.quickbar-panel > footer')).toContainText('2 selected');
-  // 缩回只剩起始行时取消多选，不按 Shift 的方向键清空多选
   await page.keyboard.press('Shift+ArrowUp');
   await expect(page.locator('.quickbar-panel > footer')).not.toContainText('selected');
   await page.keyboard.press('Shift+ArrowDown');
@@ -423,7 +419,6 @@ test('multi-selection works from the keyboard and Enter pastes it after mouse to
   await page.keyboard.press('Enter');
   await expect.poll(pasted).toEqual([['clip-0', 'clip-1']]);
 
-  // 鼠标勾选后焦点留在搜索框，回车合并粘贴，不会再次触发勾选按钮
   await page.keyboard.press('Escape');
   for (const id of ['clip-3', 'clip-4']) {
     const row = page.locator(`#clip-item-${id}`);
@@ -490,7 +485,7 @@ test('row mouse actions target their own item without pasting, and editing keeps
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(72); // 根字号为默认 16px 时的 4.5rem
+  expect((await row.boundingBox())?.height).toBe(72);
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
@@ -530,7 +525,6 @@ test('Escape cancels row editing without closing QuickBar or saving', async ({ p
 
 test('row actions never reserve text width or cover the content line', async ({ page }) => {
   const row = page.locator('#clip-item-clip-1');
-  // 第一个 gridcell 是类型图标兼多选框，正文在第二个
   const content = row.locator('[role=gridcell]').nth(1);
   const title = content.locator('.text-foreground');
   const rowBox = (await row.boundingBox())!;
@@ -544,8 +538,6 @@ test('row actions never reserve text width or cover the content line', async ({ 
   expect(actions.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
   const slot = (await row.locator('.slot-hint').boundingBox())!;
   expect(actions.y).toBeGreaterThanOrEqual(slot.y + slot.height);
-  // The metadata line reserves right padding for the action cluster, so the
-  // hovered buttons never overlap the (truncated) metadata text itself.
   const metaText = (await row.locator('.row-meta > span.truncate').boundingBox())!;
   expect(actions.x).toBeGreaterThanOrEqual(metaText.x + metaText.width - 1);
   await row.getByRole('button', { name: 'Copy', exact: true }).click();
@@ -566,7 +558,6 @@ test('file rows show basenames with +N badge and Windows paths split correctly',
   await expect(multi).toContainText('budget.xlsx');
   await expect(multi.getByText('+1')).toBeVisible();
   await expect(multi).not.toContainText('/tmp/');
-  // 元信息各段之间只有一个分隔符，模板换行不能多出空白
   expect(await multi.locator('.row-meta > span.truncate').textContent()).not.toMatch(/\s{2}/);
 
   const windows = page.locator('#clip-item-clip-8');
@@ -610,7 +601,6 @@ test('metadata starts with the source app icon and name', async ({ page }) => {
   const meta = page.locator('#clip-item-clip-0 .row-meta');
   await expect(meta.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
   await expect(meta.locator('span.truncate')).toHaveText(/^Editor\u00a0·\u00a0/);
-  // 没有图标的应用只显示名字
   await expect(page.locator('#clip-item-clip-1 .row-meta img')).toHaveCount(0);
 });
 

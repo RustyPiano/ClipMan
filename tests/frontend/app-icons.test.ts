@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test';
 
-// toast store 使用 $state；测试直接导入未编译的 .svelte.ts，把 rune 换成普通函数
 Object.defineProperty(globalThis, '$state', { configurable: true, value: <T>(value: T) => value });
 
 const pending: Array<(icon: string | null) => void> = [];
@@ -21,7 +20,6 @@ test('an icon saved while an older lookup is in flight is not overwritten', asyn
   expect(appIconStore.get('Safari')).toBeNull();
   expect(pending).toHaveLength(1);
 
-  // 后端保存图标并发出 app-icon-saved，此时第一次读取还没返回
   appIconStore.invalidate('Safari');
   appIconStore.get('Safari');
   expect(pending).toHaveLength(2);

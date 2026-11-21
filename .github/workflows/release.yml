@@ -3,10 +3,8 @@ name: 'Release'
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+' # Triggers on tags like v1.0.0, v1.2.3
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
-# Don't cancel an in-flight release build if the same tag is re-pushed; let it
-# finish (distinct tags have distinct refs, so they never share this group).
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -15,7 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  # 版本、说明和公钥检查先完成，再启动各平台质量检查。
   preflight:
     runs-on: ubuntu-latest
     steps:
@@ -74,7 +71,6 @@ jobs:
         with:
           bun-version: latest
 
-      # rustup 按 rust-toolchain.toml 安装固定工具链；两个 macOS 目标也列在该文件中。
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -87,22 +83,11 @@ jobs:
         id: release_notes
         shell: bash
         run: |
-          # preflight 已确认文件存在。
           NOTES=$(cat "release_notes_${GITHUB_REF_NAME#v}.md")
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # macOS code signing with a SELF-SIGNED certificate (no Apple Developer
-      # account). Goal: keep the app's Designated Requirement stable across
-      # releases so users grant Accessibility only once and it survives updates.
-      # We set up the keychain ourselves (rather than let tauri-action import the
-      # cert) because a self-signed cert is untrusted by default and is filtered
-      # out of `security find-identity -v -p codesigning` — which is what the
-      # Tauri bundler uses to resolve the identity ("failed to resolve signing
-      # identity"). Trusting it as a code-signing root fixes that. NOT notarized:
-      # users still see a one-time Gatekeeper prompt on first open. The same cert
-      # MUST be reused for every release, or all users re-grant after the update.
       - name: Set up self-signed code signing (macOS)
         if: matrix.platform == 'macos-latest'
         env:
@@ -117,20 +102,16 @@ jobs:
 
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_P12"
 
-          # Fresh keychain holding the signing identity.
           security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
-          security set-keychain-settings "$KEYCHAIN"            # no auto-lock during the build
+          security set-keychain-settings "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
           security import "$CERT_P12" -P "$APPLE_CERTIFICATE_PASSWORD" -A \
             -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
 
-          # Make it the default and the only keychain in the search list.
           security list-keychains -d user -s "$KEYCHAIN"
           security default-keychain -d user -s "$KEYCHAIN"
 
-          # Trust the self-signed cert as a code-signing root so it counts as a
-          # valid identity (otherwise: "failed to resolve signing identity").
           security find-certificate -c "ClipMan Code Signing" -p "$KEYCHAIN" > "$CERT_PEM"
           sudo security add-trusted-cert -d -r trustRoot -p codeSign \
             -k /Library/Keychains/System.keychain "$CERT_PEM"
@@ -142,23 +123,15 @@ jobs:
             exit 1
           fi
 
-      # Pinned to the exact `dev` branch head (as of 2026-07-07) instead of the
-      # floating `@dev` ref: freezes the action code for reproducible releases
-      # and follows the SHA-pinning supply-chain practice for third-party
-      # actions. Bump deliberately (ideally to a published release tag) when a
-      # newer tauri-action is validated against this release pipeline.
-      - uses: tauri-apps/tauri-action@7f1a1fc1989f3d1e114195e2a9624d147de78612 # dev @ 2026-07-07
+      - uses: tauri-apps/tauri-action@7f1a1fc1989f3d1e114195e2a9624d147de78612
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # The keychain + trusted identity are prepared by the macOS step above;
-          # the Tauri bundler picks this identity up from the default keychain.
-          # No APPLE_CERTIFICATE here on purpose — we manage the keychain ourselves.
           APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'
         with:
-          tagName: ${{ github.ref_name }} # Use the tag name that triggered the workflow
-          releaseName: '${{ github.ref_name }}' # Version number only for Tauri updater compatibility
+          tagName: ${{ github.ref_name }}
+          releaseName: '${{ github.ref_name }}'
           releaseBody: ${{ steps.release_notes.outputs.notes }}
           releaseDraft: true
           prerelease: false
@@ -167,7 +140,6 @@ jobs:
   verify-release:
     needs: publish-tauri
     runs-on: ubuntu-latest
-    # GitHub 仅向具有推送权限的令牌展示草稿；校验脚本只调用读取接口。
     permissions:
       contents: write
     steps:

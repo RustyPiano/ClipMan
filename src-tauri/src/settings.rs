@@ -31,7 +31,6 @@ fn system_locale() -> String {
         fn GetUserDefaultLocaleName(buffer: *mut u16, length: i32) -> i32;
     }
     let mut buffer = [0u16; 85];
-    // Windows LOCALE_NAME_MAX_LENGTH includes the terminating NUL.
     let length = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
     locale_for_language(&String::from_utf16_lossy(
         &buffer[..length.saturating_sub(1) as usize],
@@ -47,7 +46,6 @@ fn system_locale() -> String {
     locale_for_language(&language)
 }
 
-/// v2.1.x 及更早版本在 store 顶层逐项保存的设置键。
 const LEGACY_SETTINGS_KEYS: [&str; 11] = [
     "global_shortcut",
     "auto_paste",
@@ -67,7 +65,6 @@ const LEGACY_SETTINGS_KEYS: [&str; 11] = [
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
-    /// original 保留格式；takePlain 在取用时去除格式；globalPlain 在采集后去除格式。
     pub paste_format: String,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
@@ -78,15 +75,10 @@ pub struct Settings {
     pub custom_data_path: Option<String>,
     pub enable_autostart: bool,
     pub locale: String,
-    /// 超过此字节数的文本或文件路径列表不参与采集。
     pub max_text_bytes: usize,
-    /// 图片最长边的像素上限；0 表示不缩小。
     pub max_image_dimension: u32,
-    /// 跳过符合密钥特征的文本。
     pub skip_secrets: bool,
-    /// 按应用名称或 bundle identifier 排除采集，忽略大小写，最多 100 项。
     pub ignored_apps: Vec<String>,
-    /// 托盘菜单控制的暂停采集状态。
     pub capture_paused: bool,
 }
 
@@ -160,7 +152,6 @@ impl Settings {
             self.global_shortcut = Settings::default().global_shortcut;
         }
 
-        // 旧设置在读取时保留兼容处理；保存入口拒绝超出范围或未知的值。
         self.max_history_items = self.max_history_items.clamp(1, 10_000);
         self.tray_text_length = self.tray_text_length.clamp(10, 200);
         self.max_pinned_in_tray = self.max_pinned_in_tray.clamp(0, 50);
@@ -201,7 +192,6 @@ impl Settings {
     }
 }
 
-/// 与 src/lib/types.ts 中的 PasteFormat 保持一致。
 pub const PASTE_FORMATS: [&str; 3] = ["original", "takePlain", "globalPlain"];
 
 fn normalize_paste_format(value: &str) -> String {
@@ -231,7 +221,6 @@ fn clamp_max_image_dimension(value: u32) -> u32 {
 
 const MAX_IGNORED_APPS: usize = 100;
 
-/// 去除空白及重复项，大小写不敏感，与采集时的应用匹配方式一致。
 fn normalize_ignored_apps(apps: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     apps.into_iter()
@@ -329,14 +318,12 @@ impl SettingsManager {
                 Ok(())
             }
             Err(error) => {
-                // Retain known preferences and stop capture; never save defaults over a bad file.
                 self.settings.lock().unwrap().capture_paused = true;
                 Err(error)
             }
         }
     }
 
-    /// 把 `settings` 写入 store；内存中的设置由调用方在保存成功后用 `set` 更新。
     pub fn save(&self, app: &AppHandle, settings: &Settings) -> Result<(), String> {
         let store = app
             .store("settings.json")

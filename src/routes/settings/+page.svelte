@@ -179,7 +179,6 @@
       const errorMsg = err instanceof Error ? err.message : String(err);
       toastStore.add(`${t.migrationFailed}: ${errorMsg}`, 'error');
     } finally {
-      // 迁移只改变数据路径；不重新读取其他设置，保留用户尚未保存的修改。
       await loadDataPath();
       changingDataPath = false;
     }
@@ -189,7 +188,6 @@
     showMigrationDialog = false;
   }
 
-  // showModal 让背景不可交互、支持 Esc 取消；打开时把焦点放到取消按钮上。
   $effect(() => {
     if (showMigrationDialog) {
       migrationDialog.showModal();
@@ -213,7 +211,6 @@
 </script>
 
 <div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-  <!-- 顶部标题栏 -->
   <header
     class="flex-none flex items-center justify-between px-6 py-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10"
   >
@@ -258,10 +255,8 @@
   </header>
 
   <div class="flex-1 flex overflow-hidden">
-    <!-- 侧边栏导航 -->
     <Sidebar bind:activeTab />
 
-    <!-- 主内容区域 -->
     <main inert={saving || changingDataPath} class="flex-1 overflow-y-auto p-8 bg-muted/10">
       {#if loading}
         <div class="flex items-center justify-center h-full">
@@ -314,7 +309,6 @@
   </div>
 </div>
 
-<!-- 数据迁移确认对话框 -->
 <dialog
   bind:this={migrationDialog}
   aria-labelledby={MIGRATION_DIALOG_TITLE_ID}

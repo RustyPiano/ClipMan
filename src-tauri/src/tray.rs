@@ -1,4 +1,3 @@
-// Tray menu management module
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
@@ -10,14 +9,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::storage::{join_file_paths, split_file_paths, ClipPreviewItem, ContentType};
 use crate::AppState;
 
-// Tray configuration constants
 pub const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
-/// Stable id for the single system tray icon; used both to build it and to
-/// look it up when rebuilding the menu.
 pub const TRAY_ID: &str = "main";
 
-/// Tray menu translations
 pub struct TrayI18n {
     pub pinned_header: &'static str,
     pub recent_header: &'static str,
@@ -54,7 +49,6 @@ impl TrayI18n {
     }
 }
 
-/// Icon cache for tray menu images
 pub struct TrayIconCache {
     cache: Mutex<LruCache<String, tauri::image::Image<'static>>>,
 }
@@ -73,15 +67,12 @@ impl TrayIconCache {
     }
 
     pub fn get_or_create(&self, id: &str, content: &[u8]) -> Option<tauri::image::Image<'static>> {
-        // Check cache first
         if let Some(icon) = self.cache.lock().unwrap().get(id) {
             return Some(icon.clone());
         }
 
-        // Cache miss - decode and resize image
         match image::load_from_memory(content) {
             Ok(img) => {
-                // Resize so shortest side is TRAY_ICON_SIZE, preserving aspect ratio
                 let (orig_width, orig_height) = (img.width(), img.height());
                 let min_side = orig_width.min(orig_height);
                 let scale = TRAY_ICON_SIZE as f32 / min_side as f32;
@@ -95,7 +86,6 @@ impl TrayIconCache {
                 let height = resized.height();
                 let rgba = resized.to_rgba8().into_raw();
 
-                // Create owned image for caching
                 let icon = tauri::image::Image::new_owned(rgba, width, height);
 
                 self.cache.lock().unwrap().put(id.to_string(), icon.clone());
@@ -115,7 +105,6 @@ impl TrayIconCache {
     }
 }
 
-/// Truncate content for menu display (handles Unicode safely)
 pub fn truncate_content(
     content: &[u8],
     content_type: &ContentType,
@@ -150,7 +139,6 @@ pub fn truncate_content(
     }
 }
 
-/// Helper function to add a clip menu item
 fn add_clip_menu_item(
     app: &AppHandle,
     item: &ClipPreviewItem,
@@ -177,20 +165,17 @@ fn add_clip_menu_item(
     })
 }
 
-/// Build dynamic tray menu
 pub fn build_tray_menu(
     app: &AppHandle,
 ) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let state = app.state::<AppState>();
 
-    // Get settings for tray menu limits
     let settings = state.settings.get();
     let max_pinned_in_tray = settings.max_pinned_in_tray;
     let max_recent_in_tray = settings.max_recent_in_tray;
     let max_len = settings.tray_text_length;
     let i18n = TrayI18n::new(&settings.locale);
 
-    // Quick lock acquisition - get data and release immediately
     let (pinned_items, recent_items) = {
         let storage = state.storage.lock().unwrap();
         let pinned_items = if max_pinned_in_tray == 0 {
@@ -208,7 +193,6 @@ pub fn build_tray_menu(
 
     let mut menu_builder = MenuBuilder::new(app);
 
-    // Add pinned items
     let pinned_count = pinned_items.len();
     if pinned_count > 0 {
         let pinned_header = MenuItemBuilder::with_id("pinned_header", i18n.pinned_header)
@@ -224,7 +208,6 @@ pub fn build_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
-    // Add recent items (excluding pinned)
     if !recent_items.is_empty() {
         let recent_header = MenuItemBuilder::with_id("recent_header", i18n.recent_header)
             .enabled(false)
@@ -237,8 +220,6 @@ pub fn build_tray_menu(
         }
     }
 
-    // 暂停采集是复选项，勾选状态来自 `capture_paused`；点击后由 `handle_tray_menu_event`
-    // 切换、保存并重建菜单。
     let pause_capture_item = CheckMenuItemBuilder::with_id("pause_capture", i18n.pause_capture)
         .checked(settings.capture_paused)
         .build(app)?;
@@ -253,7 +234,6 @@ pub fn build_tray_menu(
     Ok(menu_builder.build()?)
 }
 
-/// Handle a tray menu selection.
 pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     let event_id = event.id().as_ref();
     log::debug!("Menu event: {}", event_id);
@@ -283,12 +263,8 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
         }
         "pause_capture" => {
             let app = app.clone();
-            // Native menu callbacks must never wait for a lock whose owner needs the main thread.
             tauri::async_runtime::spawn_blocking(move || {
                 let state: tauri::State<AppState> = app.state();
-                // Serialize against `update_settings` so a settings-page save and
-                // this tray toggle can't race each other and clobber one another's
-                // change. `capture_paused` is owned exclusively by this toggle.
                 let _settings_write_guard = state.settings_write_lock.lock().unwrap();
 
                 let mut settings = state.settings.get();
@@ -314,7 +290,6 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
 
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
-                // Use unified copy function with notification
                 if let Err(e) =
                     crate::commands::copy_clip_to_clipboard_internal(&app_clone, &clip_id, true)
                         .await
@@ -329,9 +304,7 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-/// Update tray menu
 pub fn update_tray_menu(app: &AppHandle) {
-    // Construct everything first; on failure the existing menu remains usable.
     let result = build_tray_menu(app).and_then(|menu| {
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
             tray.set_menu(Some(menu))?;

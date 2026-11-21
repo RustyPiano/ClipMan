@@ -1,4 +1,3 @@
-// Tauri commands module
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -12,8 +11,6 @@ use crate::storage::{ClipStorage, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, AppState};
 
-/// Run a blocking storage operation on the blocking thread pool, locking the
-/// shared `ClipStorage` for the duration.
 async fn with_storage<T, F>(storage: Arc<Mutex<ClipStorage>>, op: F) -> Result<T, String>
 where
     F: FnOnce(&ClipStorage) -> Result<T, String> + Send + 'static,
@@ -51,8 +48,6 @@ fn run_window_command_on_main_thread<F>(
 where
     F: FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 {
-    // Frontend IPC handlers can run off the event-loop thread; macOS window
-    // focus/activation touches AppKit and must be dispatched back to main.
     let app_for_action = app.clone();
     run_action_on_main_thread(app, command_name, Box::new(move || action(app_for_action)))
 }
@@ -67,7 +62,6 @@ pub async fn get_recent_clips(
     let limit = limit.unwrap_or(100);
 
     with_storage(state.storage.clone(), move |storage| {
-        // 游标的两个字段同时存在才翻页；首页请求两个都不传。
         let before = match (before_timestamp, before_id.as_deref()) {
             (Some(timestamp), Some(id)) => Some((timestamp, id)),
             _ => None,
@@ -175,7 +169,6 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
     Ok(state.settings.get())
 }
 
-/// 能读取剪贴板（包括剪贴板里没有文本）时返回 Ok，其他读取错误原样返回。
 #[tauri::command]
 pub async fn check_clipboard_permission() -> Result<(), String> {
     use arboard::{Clipboard, Error};
@@ -188,15 +181,11 @@ pub async fn check_clipboard_permission() -> Result<(), String> {
     }
 }
 
-/// Whether ClipMan currently holds the macOS Accessibility permission needed to
-/// simulate Cmd+V. Always `true` on non-macOS platforms.
 #[tauri::command]
 pub async fn check_accessibility_permission() -> Result<bool, String> {
     Ok(crate::accessibility::is_trusted())
 }
 
-/// Open System Settings → Privacy & Security → Accessibility so the user can
-/// (re-)grant ClipMan. No-op on non-macOS platforms.
 #[tauri::command]
 pub async fn open_accessibility_settings() -> Result<(), String> {
     crate::accessibility::open_settings()
@@ -216,7 +205,6 @@ pub async fn clear_non_pinned_history(
     state.icon_cache.clear();
     update_tray_menu(&app);
 
-    // Emit event to notify frontend
     if let Err(e) = app.emit("history-cleared", ()) {
         log::error!("Failed to emit history-cleared event: {}", e);
     }
@@ -224,17 +212,12 @@ pub async fn clear_non_pinned_history(
     Ok(())
 }
 
-/// Copy a clip to the system clipboard (used by the tray menu and the in-window
-/// Copy button). Reuses the paste module's clipboard writer so there is a single
-/// implementation of "write clipboard, then update history".
 pub async fn copy_clip_to_clipboard_internal(
     app: &AppHandle,
     clip_id: &str,
     show_notification: bool,
 ) -> Result<crate::paste::UseOutcome, String> {
     let state = app.state::<AppState>();
-    // Copy-only writes follow the paste-format mode so a manual paste into
-    // the target app also lands without formatting (takePlain/globalPlain).
     let plain = state.settings.get().takes_plain_text();
     let outcome = crate::paste::use_clips(
         app,
@@ -279,11 +262,9 @@ pub async fn copy_to_system_clipboard(
     app: AppHandle,
     clip_id: String,
 ) -> Result<crate::paste::UseOutcome, String> {
-    // Use unified function, no notification for window copy
     copy_clip_to_clipboard_internal(&app, &clip_id, false).await
 }
 
-/// `plain` 由前端决定：回车按粘贴格式模式，⌥回车对这一次取反。
 #[tauri::command]
 pub async fn paste_clip(
     app: AppHandle,
@@ -306,7 +287,6 @@ pub async fn paste_clip(
     .await
 }
 
-/// 按 `ids` 顺序把多条合并为一段换行分隔的纯文本写入，再按 `mode` 粘贴；图片会被跳过。
 #[tauri::command]
 pub async fn paste_clips(
     app: AppHandle,
@@ -420,9 +400,6 @@ pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result
     })
 }
 
-/// Acquire the updater and check the remote endpoint once. Shared by
-/// `check_for_updates` and `install_update` so both surface identical
-/// "no updater" / "check failed" errors.
 async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
 
@@ -524,8 +501,6 @@ fn apply_shortcut_changes(
         return Ok(());
     }
 
-    // Unregister every changed old binding first (frees the keys, so swapping
-    // main and pinned needs no special casing), then register the new ones.
     if main_changed {
         unregister_shortcut_if_active(app, old_shortcut, "old main");
     }
@@ -558,8 +533,6 @@ fn apply_shortcut_changes(
     })();
 
     if result.is_err() {
-        // 先注销已注册的新快捷键（对调主/置顶快捷键时它们占用彼此的旧按键），再恢复旧的。
-        // 这里的失败只记录日志，调用方收到原始错误。
         if main_changed {
             let _ = app.global_shortcut().unregister(new_shortcut);
         }
@@ -629,23 +602,12 @@ fn update_settings_blocking(
     state: &AppState,
     settings: Option<Settings>,
 ) -> Result<SettingsUpdateResult, String> {
-    // An explicit null resets through the same validation and rollback path.
     let mut settings = settings.unwrap_or_default().validate_and_normalize()?;
     let _settings_write_guard = state.settings_write_lock.lock().unwrap();
     log::info!("Updating settings: {:?}", settings);
 
     let old = state.settings.get();
 
-    // Two fields are owned by other subsystems, not the settings page, so a
-    // stale/reset settings object must never write over them here:
-    //   * `custom_data_path` is owned exclusively by `migrate_data_location`,
-    //     which relocates the database alongside changing the path. A settings
-    //     save (or a reset payload sending `null`) that repointed it here would
-    //     silently switch the app to a different/empty directory and strand the
-    //     existing database. Keep whatever migration last set.
-    //   * `capture_paused` is owned exclusively by the tray "Pause Capture"
-    //     toggle. A stale settings window saving would otherwise clobber the
-    //     tray's current pause state.
     settings.custom_data_path = old.custom_data_path.clone();
     settings.capture_paused = old.capture_paused;
 
@@ -711,7 +673,6 @@ fn update_settings_blocking(
     state.settings.set(settings.clone());
     let _ = app.emit("settings-changed", ());
 
-    // Rebuild tray menu if visible tray settings changed.
     if old.tray_text_length != settings.tray_text_length
         || old.max_pinned_in_tray != settings.max_pinned_in_tray
         || old.max_recent_in_tray != settings.max_recent_in_tray
@@ -881,8 +842,6 @@ fn migrate_data_location_blocking(
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 
     {
-        // 备份和替换期间一直持有存储锁：这段时间的采集会等待这把锁，拿到锁时写入的
-        // 已经是新数据库，不会丢记录，也不会写进旧库。
         let mut storage = state.storage.lock().unwrap();
         storage
             .backup_to_path(&new_db_path)
@@ -900,7 +859,6 @@ fn migrate_data_location_blocking(
         state.settings.set(new_settings);
     }
 
-    // 旧连接已经关闭，Windows 这时才允许删除旧数据库文件。
     let warning = delete_old
         .then(|| migration::remove_data_files(&old_path).err())
         .flatten()

@@ -12,7 +12,6 @@ class ConfirmStore {
   #resolve: ((value: boolean) => void) | null = null;
 
   ask(options: ConfirmOptions): Promise<boolean> {
-    // 新请求替换对话框时，先取消上一个等待中的请求。
     this.#settle(false);
     this.options = options;
     this.open = true;

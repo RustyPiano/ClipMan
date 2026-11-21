@@ -143,14 +143,12 @@ def plan_assets(config, tag, manifest, assets):
                    if re.fullmatch(prefix + architecture + r"\.dmg", name)]
         require(len(matches) == 1, f"缺少或重复 macOS 安装包：{architecture}")
         installers.extend(matches)
-    # 默认平台与安装格式条目指向同一附件，每个附件只验签一次。
     signatures = {asset["id"]: (asset, signature) for asset, signature in resolved.values()}
     return signatures.values(), installers
 
 
 def download_asset(repo, asset, directory):
     destination = directory / f"{asset['id']}-{asset['name']}"
-    # Release 附件替换后 ID 会改变；已下载内容仍需经过下面的验签。
     if not destination.is_file() or destination.stat().st_size != asset["size"]:
         with destination.open("wb") as output:
             subprocess.run(

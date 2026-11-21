@@ -60,7 +60,6 @@ export function decodeClipText(item: ClipItem, emptyContent: string, decodeFaile
   return text;
 }
 
-// ponytail: 启发式判断，只决定用等宽还是比例字体，误判只影响观感
 export function looksLikeCode(text: string): boolean {
   return (
     /^\s*(https?:\/\/|[{[<$]|\/\/)/.test(text) || /(&&|\|\||=>|::|;\s*$|^(\t| {2,})\S)/m.test(text)
@@ -73,7 +72,6 @@ export interface ClipTimeLabels {
   yesterday: string;
 }
 
-/** 列表时间：一小时内用相对时间，今天只显示时刻，昨天加前缀，今年省略年份。 */
 export function formatClipTime(ms: number, now: number, locale: string, labels: ClipTimeLabels) {
   const age = Math.max(0, now - ms);
   if (age < 60_000) return labels.justNow;
@@ -93,12 +91,10 @@ export function formatClipTime(ms: number, now: number, locale: string, labels: 
   );
 }
 
-/** Last separator position, accepting both POSIX and Windows separators. */
 function lastSeparator(path: string): number {
   return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
 }
 
-/** Pure string helpers (no disk access) for rendering Files clips. */
 export function fileBasename(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '');
   const slash = lastSeparator(trimmed);
@@ -111,13 +107,11 @@ export function fileDirname(path: string): string {
   return slash > 0 ? trimmed.slice(0, slash) : '';
 }
 
-// A trailing separator or an extensionless basename reads as a directory.
 export function looksLikeDirectory(path: string): boolean {
   if (path.endsWith('/') || path.endsWith('\\')) return true;
   return !fileBasename(path).includes('.');
 }
 
-/** 后端的文件列表内容是 base64 编码的 JSON 字符串数组。 */
 export function decodeFilePaths(item: ClipItem): string[] {
   if (item.contentType !== 'files') return [];
   return JSON.parse(new TextDecoder().decode(base64Bytes(item.content))) as string[];

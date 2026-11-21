@@ -5,10 +5,6 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 pub const QUICKBAR_WINDOW_LABEL: &str = "main";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
-// Adaptive sizing caps (logical px): comfortable max on large screens, scaled
-// down proportionally on smaller ones. The initial window size lives in
-// `tauri.conf.json` (820×600); the real size is computed per-monitor in
-// `position_quickbar`.
 const QUICKBAR_MAX_WIDTH: f64 = 820.0;
 const QUICKBAR_MAX_HEIGHT: f64 = 600.0;
 pub const QUICKBAR_HIDDEN_EVENT: &str = "quickbar-hidden";
@@ -49,7 +45,6 @@ impl ForegroundWindow {
 
 pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
-    // 无边框、置顶、不进任务栏等基础属性写在 tauri.conf.json，这里只补平台专用设置。
     setup_quickbar_macos(&quickbar)?;
     setup_quickbar_windows(&quickbar)?;
     register_quickbar_events(&quickbar);
@@ -156,9 +151,6 @@ fn register_quickbar_events(window: &WebviewWindow) {
     });
 }
 
-/// Recompute the native shadow after the window is shown/resized: with a
-/// transparent window the shadow is derived from the rendered alpha shape,
-/// which can be stale after a size change on another monitor.
 #[cfg(target_os = "macos")]
 fn invalidate_quickbar_shadow(window: &WebviewWindow) {
     match ns_window(window) {
@@ -213,9 +205,6 @@ fn position_quickbar(window: &WebviewWindow) -> Result<bool, String> {
     let work_width = work_area.size.width as i32;
     let work_height = work_area.size.height as i32;
 
-    // Size and centering both derive from the *target* monitor's scale (not the
-    // window's current one), so mixed-DPI / primary-monitor fallback stays
-    // correct. We compute a logical size, then set the exact physical box.
     let scale = monitor.scale_factor().max(0.1);
     let (logical_w, logical_h) =
         quickbar_logical_size(work_width as f64 / scale, work_height as f64 / scale);
@@ -240,10 +229,6 @@ fn position_quickbar(window: &WebviewWindow) -> Result<bool, String> {
     Ok(resized || moved)
 }
 
-/// Pick the monitor the user is actually working on: the one under the cursor,
-/// falling back to the window's current monitor, then the primary monitor.
-/// `current_monitor()` alone tracks where the *window* last sat, not the active
-/// screen, so on multi-monitor setups it would keep misplacing the QuickBar.
 fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
     if let Ok(cursor) = window.cursor_position() {
         if let Ok(Some(monitor)) = window.monitor_from_point(cursor.x, cursor.y) {
@@ -258,17 +243,12 @@ fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
         .or_else(|| window.primary_monitor().ok().flatten())
 }
 
-/// Compute the QuickBar logical size from a (logical) work-area: scale to a
-/// fraction of the screen, capped at a comfortable max. The fraction guarantees
-/// the result never exceeds the work area, so no floor is needed.
 fn quickbar_logical_size(work_width: f64, work_height: f64) -> (f64, f64) {
     let width = (work_width * 0.92).min(QUICKBAR_MAX_WIDTH);
     let height = (work_height * 0.7).min(QUICKBAR_MAX_HEIGHT);
     (width, height)
 }
 
-// NonactivatingPanel 只对 NSPanel 生效。tao 创建的是 NSWindow 子类，只设样式时 QuickBar
-// 成为 key window 会激活 ClipMan，目标应用失去激活（访达会结束改名编辑）。
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     #[unsafe(super(
@@ -282,7 +262,6 @@ objc2::define_class!(
     struct QuickBarNsPanel;
 
     impl QuickBarNsPanel {
-        // 无边框窗口默认不能成为 key window，搜索框需要接收键盘输入。
         #[unsafe(method(canBecomeKeyWindow))]
         fn can_become_key_window(&self) -> bool {
             true
@@ -295,10 +274,6 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     use objc2::ClassType;
     use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
-    // SAFETY: NSPanel 与 NSWindow 的实例大小相同（macOS 26 上均为 528 字节），新类不加实例
-    // 变量。tao 的 TaoWindow 只多一个 focusable 变量，以及 canBecomeKey/MainWindow 和用于
-    // 背景拖动的 sendEvent: 覆盖；QuickBar 不调用 set_focusable，也不拖动窗口。必须在设置
-    // NonactivatingPanel 样式之前换类，由 NSPanel 的 setStyleMask: 处理这个样式。
     unsafe {
         objc2::ffi::object_setClass(
             window.ns_window().map_err(to_string)?.cast(),
@@ -307,19 +282,12 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     }
     let ns_window = ns_window(window)?;
 
-    // macOS-only native shadow: the window server draws it around the opaque
-    // rounded panel, outside the window bounds, so it can't be clipped like a
-    // CSS box-shadow. Windows keeps `shadow: false` (tauri.conf.json) because
-    // DWM shadows follow the rectangular frame, not the panel shape.
     window.set_shadow(true).map_err(to_string)?;
 
-    // QuickBar is a non-activating panel; the target app stays active while it
-    // is shown.
     window
         .set_visible_on_all_workspaces(true)
         .map_err(to_string)?;
     ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
-    // 后设样式不会更新 WindowServer 的激活标记，需要通过 AppKit 私有接口同步。
     unsafe {
         let _: () = objc2::msg_send![ns_window, _setPreventsActivation: true];
     }
@@ -346,7 +314,6 @@ fn setup_quickbar_macos(_window: &WebviewWindow) -> Result<(), String> {
 fn webview_hwnd(window: &WebviewWindow) -> Result<windows::Win32::Foundation::HWND, String> {
     use windows::Win32::Foundation::HWND;
 
-    // Tauri/wry may use a newer `windows` crate; bridge through the raw handle.
     Ok(HWND(window.hwnd().map_err(to_string)?.0))
 }
 
@@ -491,7 +458,6 @@ fn restore_foreground_window(target: ForegroundWindow) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let ns_window = ns_window(window)?;
-    // 不调用 window.set_focus()：tao 会顺带 activateIgnoringOtherApps，让目标应用失去激活。
     ns_window.orderFrontRegardless();
     ns_window.makeKeyAndOrderFront(None);
     Ok(())
@@ -536,7 +502,6 @@ mod size_tests {
 
     #[test]
     fn never_exceeds_work_area_on_small_screens() {
-        // A tiny work area must not produce a window larger than itself.
         let (work_w, work_h) = (390.0, 320.0);
         let (w, h) = quickbar_logical_size(work_w, work_h);
         assert!(w <= work_w && h <= work_h);

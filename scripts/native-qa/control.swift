@@ -1,4 +1,3 @@
-// macOS-only native QA helper; invoked by run.py. Never bypasses TCC.
 import AppKit
 import ApplicationServices
 
@@ -57,7 +56,6 @@ case "state":
 case "tree": tree(AXUIElementCreateApplication(app(args[2]).processIdentifier))
 case "focus": print(app(args[2]).activate(options: [.activateAllWindows]))
 case "panel":
-  // QuickBar 不激活 ClipMan，只能从屏幕上的窗口判断它是否打开；高度过滤掉菜单栏图标。
   let pid = app(args[2]).processIdentifier
   let windows =
     CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -82,7 +80,6 @@ case "click-panel":
   guard panels.count == 1 else { fatalError("Expected one visible QA panel") }
   let originalPosition = CGEvent(source: nil)!.location
   defer { CGWarpMouseCursorPosition(originalPosition) }
-  // 点击面板顶部空白处，保留搜索内容和当前记录，检查原生鼠标激活行为。
   let position = CGPoint(x: panels[0].midX, y: panels[0].minY + 12)
   for type in [CGEventType.leftMouseDown, .leftMouseUp] {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: position,

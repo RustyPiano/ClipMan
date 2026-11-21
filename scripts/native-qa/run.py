@@ -43,7 +43,6 @@ def main():
         return 'front=' + app + '\n' in ctl('state')
 
     def open_quickbar_over(target):
-        # QuickBar 是 non-activating panel：打开后目标应用必须仍在前台，按键发给 QuickBar。
         ctl('key', target, 9, 'cmd', 'shift')
         wait(lambda: ctl('panel', QA).strip() == 'true', 'Global shortcut did not open QuickBar')
         if not front(target):
@@ -74,7 +73,6 @@ def main():
     results = []
     started = False
     try:
-        # Replace the pasteboard before starting the isolated monitor.
         ctl('copy', 'CLIPMAN_QA_START_' + work.name)
         if not storage_only:
             subprocess.run(['open', '-a', 'TextEdit', str(receiver)], check=True)
@@ -122,7 +120,6 @@ def main():
             print(results[-1], flush=True)
 
         if not storage_only:
-            # 访达改名框必须在 QuickBar 打开期间保持编辑状态，否则 ⌘V 会在文件夹里生成 textClipping 文件。
             finder = 'com.apple.finder'
             renamed = f'CLIPMAN_QA_{work.name}_RENAMED'
             document = work / 'rename-target.txt'
@@ -131,14 +128,14 @@ def main():
             wait(lambda: captured(renamed), 'Rename text was not captured')
             subprocess.run(['open', '-R', str(document)], check=True)
             wait(lambda: front(finder), 'Finder did not reveal the rename target')
-            time.sleep(.5)  # 访达刚选中文件时按回车不会进入改名，固定等待
+            time.sleep(.5)
             ctl('key', finder, 36)
             time.sleep(.3)
             open_quickbar_over(finder)
             ctl('key', finder, 36)
             wait(lambda: ctl('panel', QA).strip() == 'false', 'QuickBar did not close after Enter')
             time.sleep(.5)
-            ctl('key', finder, 36)  # 提交改名
+            ctl('key', finder, 36)
             wait(lambda: (work / f'{renamed}.txt').exists(), 'Finder rename did not receive the pasted text')
             ctl('key', finder, 13, 'cmd')
             ctl('focus', TARGET)
@@ -146,14 +143,12 @@ def main():
             results.append({'finderRenamePaste': True})
             print(results[-1], flush=True)
 
-        # Small image must preserve pixels and reuse PNG bytes for its thumbnail.
         ctl('copyimage')
         def small_image():
             with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as conn:
                 return conn.execute("SELECT content = thumbnail FROM clips WHERE content_type='image' ORDER BY timestamp DESC LIMIT 1").fetchone() == (1,)
         wait(small_image, 'Small image thumbnail differs from original PNG')
         results.append({'smallImageReusesOriginal': True})
-        # Force a read failure only in the isolated QA database, then restore its schema.
         before = {line for line in ctl('tree', QA).splitlines() if 'CLIPMAN_QA_' in line}
         if not before:
             raise RuntimeError('QA entries were not visible in the native menu tree')
@@ -177,14 +172,13 @@ def main():
         raise
     finally:
         (work / 'results.json').write_text(json.dumps(results, ensure_ascii=False, indent=2))
-        # Stop the monitor before restoring private clipboard content, even after failure.
         if started and f'app {QA} ' in ctl('state'):
             ctl('quit', QA)
             wait(lambda: f'app {QA} ' not in ctl('state'), 'QA app still running; clipboard backup retained')
         ctl('restore', backup)
         backup.unlink()
         if not storage_only and front(TARGET):
-            ctl('key', TARGET, 1, 'cmd')  # Save the synthetic receiver for inspection.
+            ctl('key', TARGET, 1, 'cmd')
             ctl('key', TARGET, 13, 'cmd')
         print('Original clipboard restored; QA app stopped. Evidence:', work, flush=True)
 

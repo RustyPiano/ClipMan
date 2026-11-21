@@ -1,4 +1,3 @@
-// Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accessibility;
@@ -31,7 +30,6 @@ use std::sync::{Arc, Mutex};
 use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
-/// Application state shared across commands
 pub struct AppState {
     pub storage: Arc<Mutex<ClipStorage>>,
     pub clipboard_use_lock: tokio::sync::Mutex<()>,
@@ -42,7 +40,6 @@ pub struct AppState {
     pub quickbar_foreground_window: window::ForegroundWindowStore,
 }
 
-/// 一次打开 `dir/clipman.db` 的结果；`is_corrupt` 表示 SQLite 判定数据库已损坏。
 enum StorageAttempt {
     Ready(ClipStorage),
     OpenFailed { message: String, is_corrupt: bool },
@@ -70,9 +67,6 @@ fn try_open_storage(dir: &Path) -> StorageAttempt {
     }
 }
 
-/// 打开当前数据目录（设置了自定义目录就用它）的数据库。SQLite 判定损坏时，
-/// 把旧文件隔离保存后新建空库；其他失败直接返回错误，由调用方退出应用。
-/// 不依赖 `AppHandle`，通知通过闭包注入，便于单元测试。
 fn initialize_storage_core(
     default_dir: &Path,
     custom_data_path: Option<String>,
@@ -116,7 +110,6 @@ fn initialize_storage_core(
     }
 }
 
-/// 解析数据目录并打开数据库；数据库被重置时用对话框告知用户。
 fn resolve_storage(
     app: &tauri::AppHandle,
     custom_data_path: Option<String>,
@@ -141,10 +134,6 @@ fn resolve_storage(
     })
 }
 
-/// Show a non-blocking modal alert. Fire-and-forget from the caller's point
-/// of view — the app keeps running (with the already-recovered storage)
-/// while the user dismisses it whenever the event loop gets to it. Mirrors
-/// the dialog pattern in `accessibility.rs`.
 fn notify_storage_issue(app: &tauri::AppHandle, title: &str, message: &str) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -166,9 +155,6 @@ fn notify_storage_issue(app: &tauri::AppHandle, title: &str, message: &str) {
     }
 }
 
-/// 启动失败时的退出路径（数据存储或剪贴板监听无法初始化）：release 构建是
-/// panic = "abort"，直接崩溃用户看不到原因，这里用对话框说明原因再退出。对话框放在
-/// 后台线程，因为 `setup()` 必须先返回，事件循环才能开始处理并显示对话框。
 fn spawn_fatal_alert(app: &tauri::AppHandle, message: String) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -185,7 +171,6 @@ fn spawn_fatal_alert(app: &tauri::AppHandle, message: String) {
 }
 
 fn main() {
-    // 设置了 RUST_LOG 就按它；否则 debug 构建输出 debug 级别，release 输出 info。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
         if cfg!(debug_assertions) {
             "debug"
@@ -197,17 +182,8 @@ fn main() {
     log::info!("ClipMan starting...");
 
     tauri::Builder::default()
-        // Must be the first plugin: a second launch (double-clicking the app
-        // icon while the tray instance is already running — or worse, after
-        // replacing the bundle with a new build) must never spawn a competing
-        // instance that fights over the global hotkey and clipboard monitor.
-        // Surface the QuickBar in the existing instance instead.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             log::info!("Second app instance launch detected; showing QuickBar");
-            // show_quickbar touches AppKit (NSWorkspace / orderFront /
-            // invalidateShadow), all main-thread-only, but this callback runs
-            // on a tokio worker thread — dispatch the work back to the main
-            // thread instead of calling AppKit off-thread.
             let app_for_main = app.clone();
             if let Err(e) = app.run_on_main_thread(move || {
                 if let Some(state) = app_for_main.try_state::<AppState>() {
@@ -231,13 +207,9 @@ fn main() {
             Some(vec!["--minimized"]),
         ))
         .setup(|app| {
-            // Hide the Dock icon: run as a menu-bar (Accessory) app. This must
-            // happen here, after Tauri/tao has created the NSApplication —
-            // doing it earlier (before the event loop) gets reset to Regular.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // Initialize settings first
             let settings_manager = Arc::new(SettingsManager::new());
             if let Err(e) = settings_manager.load(app.handle()) {
                 log::error!("Failed to load settings; capture paused: {e}");
@@ -250,8 +222,6 @@ fn main() {
                 Ok(storage) => storage,
                 Err(fatal_error) => {
                     log::error!("ClipMan cannot start: {}", fatal_error);
-                    // 隐藏的 webview 加载后会立即调用命令，而此时没有 AppState，
-                    // 取 State 会 panic（release 中即 abort）。先销毁窗口，只留下错误对话框。
                     for (label, window) in app.webview_windows() {
                         if let Err(e) = window.destroy() {
                             log::warn!(
@@ -287,7 +257,6 @@ fn main() {
                 log::error!("Failed to set up QuickBar windows: {}", e);
             }
 
-            // Build tray menu
             let menu = build_tray_menu(app.handle())?;
 
             #[cfg(target_os = "macos")]
@@ -318,7 +287,6 @@ fn main() {
             }
             log::info!("Clipboard monitoring started");
 
-            // Register global shortcuts
             let current_shortcut = settings.global_shortcut;
 
             if let Err(e) = register_quickbar_shortcut(
@@ -396,7 +364,6 @@ mod storage_init_tests {
         std::env::temp_dir().join(format!("clipman_main_init_{}_{}", name, Uuid::new_v4()))
     }
 
-    /// 自定义数据目录无法创建时启动失败，不改用默认目录。
     #[test]
     fn unusable_custom_dir_is_fatal() {
         let root = temp_root("custom_unusable");
@@ -418,7 +385,6 @@ mod storage_init_tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 损坏的数据库被隔离保存，并在原位置新建可用的数据库。
     #[test]
     fn corrupt_database_is_quarantined_and_rebuilt() {
         let root = temp_root("corrupt_db");

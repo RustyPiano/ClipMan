@@ -6,8 +6,6 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Fractional Unix seconds keep captures/uses within one second chronological.
-/// SQLite accepts both legacy INTEGER seconds and new REAL seconds without rewriting rows.
 pub fn current_timestamp() -> f64 {
     chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
 }
@@ -45,7 +43,6 @@ pub struct CopyMarker {
 }
 
 impl CopyMarker {
-    /// The payload must already be normalized by the caller for its clipboard type.
     pub fn from_payload(content_type: ContentType, payload: &[u8]) -> Self {
         Self {
             hash: hash_bytes(payload),
@@ -75,9 +72,7 @@ pub struct ClipItem {
     pub is_pinned: bool,
     pub pin_order: Option<i32>,
     pub label: Option<String>,
-    /// App that was frontmost when the clip was captured (the copy source).
     pub source_app: Option<String>,
-    /// Optional HTML companion to a Text clip's plain-text `content`.
     pub html: Option<String>,
 }
 
@@ -97,12 +92,11 @@ pub struct ClipPreviewItem {
     pub file_count: usize,
 }
 
-// Frontend-optimized version: converts images to data URLs for zero-cost rendering
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendClipItem {
     pub id: String,
-    pub content: String, // Base64 string or data URL
+    pub content: String,
     pub content_type: ContentType,
     pub timestamp: f64,
     pub is_pinned: bool,
@@ -164,16 +158,12 @@ pub struct ClipStorage {
 
 const CLIP_COLUMNS: &str =
     "id, content, thumbnail, content_type, timestamp, is_pinned, pin_order, label, source_app, html";
-/// Files 记录的内容是 JSON 路径数组（打开数据库时已统一转换），这里展开成换行分隔的路径文本。
 const FILES_TEXT_SQL: &str = "CASE WHEN content_type='files'
     THEN CAST(COALESCE((SELECT group_concat(value, char(10)) FROM json_each(CAST(content AS TEXT))), '') AS BLOB) ELSE content END";
-/// 列表预览中文本取开头部分。
 const TEXT_HEAD_PREVIEW: &str = "substr(content, 1, 4096)";
-/// 搜索结果中文本取命中位置附近的摘要（`?2` 是查询词）。
 const TEXT_MATCH_EXCERPT: &str = "CAST(substr(CAST(content AS TEXT), max(1, instr(lower(CAST(content AS TEXT)), lower(?2)) - 64), 512) AS BLOB)";
 const FTS_REBUILD_BATCH_SIZE: i64 = 100;
 
-/// Files 最多返回两个路径，每个路径最多 4096 个字符；总数单独保留。
 fn preview_columns(text_preview: &str) -> String {
     format!(
         "id,
@@ -231,7 +221,6 @@ impl ClipStorage {
         if needs_fts_rebuild || storage.fts_needs_rebuild()? {
             storage.rebuild_fts_index()?;
         }
-        // 索引重建成功后才记录新版本号，中途失败时下次打开会重新升级。
         if version < crate::migration::CURRENT_DB_USER_VERSION {
             crate::migration::mark_clip_database_current(&storage.conn)
                 .map_err(string_to_rusqlite_error)?;
@@ -253,10 +242,6 @@ impl ClipStorage {
         Ok(removed)
     }
 
-    /// One-time migration to incremental auto_vacuum. `auto_vacuum` only takes
-    /// effect after a `VACUUM`, so a database without it pays a one-time full
-    /// rewrite here; every later open sees `auto_vacuum = INCREMENTAL` already
-    /// and skips straight past this check.
     fn ensure_incremental_auto_vacuum(conn: &Connection) -> Result<()> {
         const INCREMENTAL: i64 = 2;
 
@@ -275,16 +260,7 @@ impl ClipStorage {
         Ok(())
     }
 
-    /// Best-effort reclaim of pages freed by a delete/prune. SQLite
-    /// forbids running `incremental_vacuum` inside a transaction, so every
-    /// caller must invoke this only *after* its own transaction has
-    /// committed. Failures are only logged: reclaiming disk space must never
-    /// turn an otherwise-successful delete/prune into a caller-visible error.
     fn reclaim_space(&self) {
-        // `PRAGMA incremental_vacuum` yields a row per freed batch, so it must
-        // be stepped as a query and drained; `execute()` bails with "Execute
-        // returned results" after the first freed page and leaves the rest of
-        // the freelist unreclaimed.
         let result = self
             .conn
             .prepare("PRAGMA incremental_vacuum")
@@ -381,11 +357,6 @@ impl ClipStorage {
         items.collect()
     }
 
-    /// Keyset-paginated recent previews. `before` is the `(timestamp, id)`
-    /// cursor of the last row the caller already holds; `None` returns the
-    /// first page. The strict `id` tiebreak keeps paging stable even when many
-    /// rows share a timestamp, where a timestamp-only cursor would drop rows
-    /// straddling a page boundary or repeat them on the next page.
     pub fn get_recent_clip_previews_page(
         &self,
         limit: usize,
@@ -412,7 +383,6 @@ impl ClipStorage {
         items.collect()
     }
 
-    /// 按置顶顺序返回；`limit` 为 -1 表示不限制（SQLite 的 LIMIT 语义）。
     pub fn get_pinned_clip_previews(&self, limit: i64) -> Result<Vec<ClipPreviewItem>> {
         let columns = preview_columns(TEXT_HEAD_PREVIEW);
         let mut stmt = self.conn.prepare(&format!(
@@ -548,7 +518,6 @@ impl ClipStorage {
         Ok(())
     }
 
-    /// Get a single clip item by ID (efficient single-row lookup)
     pub fn get_by_id(&self, id: &str) -> Result<Option<ClipItem>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {CLIP_COLUMNS}
@@ -559,7 +528,6 @@ impl ClipStorage {
         stmt.query_row([id], Self::clip_from_row).optional()
     }
 
-    /// Bound preview bytes in SQL; paste paths continue to read the complete item.
     pub fn get_detail(&self, id: &str) -> std::result::Result<Option<FrontendClipDetail>, String> {
         const TEXT_LIMIT: usize = 1024 * 1024;
         const IMAGE_LIMIT: usize = 16 * 1024 * 1024;
@@ -612,7 +580,6 @@ impl ClipStorage {
         }))
     }
 
-    /// Merge needs metadata but never the original bytes of skipped images.
     pub fn get_for_merge(&self, id: &str, budget: usize) -> Result<Option<ClipItem>> {
         let size: Option<usize> = self.conn.query_row(
             "SELECT CASE WHEN content_type='image' THEN 0 ELSE length(content) END FROM clips WHERE id=?1", [id], |row| row.get(0)
@@ -622,7 +589,6 @@ impl ClipStorage {
                 "Merge exceeds the 50 MB content limit".into(),
             ));
         }
-        // 列顺序与 `CLIP_COLUMNS` 一致，交给 `clip_from_row` 读取。
         self.conn
             .prepare(
                 "SELECT id, CASE WHEN content_type = 'image' THEN x'' ELSE content END, NULL,
@@ -644,9 +610,6 @@ impl ClipStorage {
         stmt.query_row([id], Self::preview_from_row).optional()
     }
 
-    /// Bump several clips' timestamps to the same value in a single transaction,
-    /// so a merge paste moves every touched clip to the top of the recent list
-    /// with one write. Single and merge use the same update path.
     pub fn touch_timestamps(&self, ids: &[String], new_timestamp: f64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         {
@@ -660,8 +623,6 @@ impl ClipStorage {
         Ok(())
     }
 
-    /// Refresh a duplicate clip on re-copy: bump its timestamp and let present
-    /// metadata win while missing fields keep the old values via COALESCE.
     fn refresh_duplicate_with_conn(
         conn: &Connection,
         id: &str,
@@ -681,7 +642,6 @@ impl ClipStorage {
         Ok(())
     }
 
-    /// 应用图标按应用名保存一份，旧记录只要来自同名应用也能显示。
     pub fn save_app_icon(&self, name: &str, png: &[u8]) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO app_icons (name, png) VALUES (?1, ?2)",
@@ -748,10 +708,6 @@ impl ClipStorage {
             "CREATE INDEX IF NOT EXISTS idx_content_hash ON clips(content_hash, content_type)",
             [],
         )?;
-        // Keyset pagination orders the recent list by (timestamp DESC, id DESC)
-        // so duplicate timestamps can't drop or repeat rows across pages; the
-        // index must carry the id tiebreak or SQLite falls back to a temp sort.
-        // 旧库里可能还有只含时间戳的同名用途索引，它被下面的三列索引完全覆盖，删除即可。
         conn.execute("DROP INDEX IF EXISTS idx_recent_unpinned_timestamp", [])?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_recent_unpinned_ts_id
@@ -1021,17 +977,14 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Lossless file-list storage and self-copy marker representation.
 pub fn encode_file_paths(paths: &[String]) -> String {
     serde_json::to_string(paths).expect("a list of strings is JSON serializable")
 }
 
-/// Human-readable path text for merge, search and tray display.
 pub fn join_file_paths(paths: &[String]) -> String {
     paths.join("\n")
 }
 
-/// 解析 Files 记录的 JSON 路径数组。旧的换行格式在打开数据库时已全部转换。
 pub fn split_file_paths(content: &str) -> Vec<String> {
     serde_json::from_str(content)
         .expect("files clips store a JSON array of paths (legacy rows are converted on open)")
@@ -1039,7 +992,6 @@ pub fn split_file_paths(content: &str) -> Vec<String> {
 
 fn search_text_for_fts(content: &[u8], content_type: &ContentType) -> String {
     match content_type {
-        // Search file records through their decoded, human-readable paths.
         ContentType::Text => String::from_utf8_lossy(content).into_owned(),
         ContentType::Files => join_file_paths(&split_file_paths(&String::from_utf8_lossy(content))),
         ContentType::Image => String::new(),
@@ -1078,9 +1030,6 @@ fn io_to_rusqlite_error(error: std::io::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
-/// 把数据库备份到 `destination_db_path`。调用方保证目标文件不存在：迁移前
-/// `prepare_destination_directory` 拒绝含数据库文件的目录，升级前备份用带 UUID 的新文件名。
-/// 所以失败时可以直接删除本次创建的文件。
 fn backup_connection(conn: &Connection, destination_db_path: &Path) -> Result<()> {
     let result = (|| -> Result<()> {
         let mut destination = Connection::open(destination_db_path)?;
@@ -1186,12 +1135,6 @@ pub(crate) fn is_corrupt_database_error(error: &rusqlite::Error) -> bool {
     )
 }
 
-/// Move a (possibly corrupt) sqlite database file and its `-wal`/`-shm`/
-/// `-journal` sidecars out of the way to a unique `<name>.corrupt-<uuid>`
-/// backup, so a fresh database can be created in its place. Used by the
-/// startup recovery path in `main.rs` when SQLite reports the database as
-/// corrupt. Returns the path the primary db file was moved to, or `None` if
-/// nothing existed at `db_path`.
 pub(crate) fn quarantine_corrupt_database(db_path: &Path) -> Result<Option<PathBuf>> {
     let file_name = db_path
         .file_name()
@@ -1344,7 +1287,6 @@ mod tests {
         );
         drop(backup);
         drop(storage);
-        // 降级到 2.2.x 期间写入的换行格式记录，在版本号仍为 3 时打开也会被转换。
         Connection::open(&path)
             .unwrap()
             .execute("INSERT INTO clips(id,content,content_type,timestamp,is_pinned) VALUES('downgraded',?1,'files',2,0)", [b"/tmp/a.txt\n\n/tmp/b.txt\n".as_slice()])
@@ -1636,8 +1578,6 @@ mod tests {
             .insert(&test_item("c", b"c", 30, false, None), 100)
             .unwrap();
 
-        // Lift the two oldest clips above the newest with one shared timestamp;
-        // an unknown id is a harmless no-op (UPDATE matches nothing).
         storage
             .touch_timestamps(
                 &["a".to_string(), "b".to_string(), "missing".to_string()],
@@ -1649,8 +1589,6 @@ mod tests {
         assert_eq!(storage.get_by_id("b").unwrap().unwrap().timestamp, 99.0);
         assert_eq!(storage.get_by_id("c").unwrap().unwrap().timestamp, 30.0);
 
-        // Both touched clips now sort above the untouched one; the id DESC
-        // tiebreak orders the two equal-timestamp clips (b before a).
         let recent_ids: Vec<String> = storage
             .get_recent_clip_previews(10)
             .unwrap()
@@ -1842,7 +1780,6 @@ mod tests {
     fn fractional_seconds_preserve_capture_recopy_and_paste_order_with_legacy_rows() {
         let path = temp_db_path("subsecond_order");
         let storage = ClipStorage::new(&path).unwrap();
-        // Legacy INTEGER seconds remain readable alongside fractional seconds.
         storage
             .insert(&test_item("legacy", b"legacy", 100, false, None), 100)
             .unwrap();
@@ -1888,9 +1825,6 @@ mod tests {
         let db_path = temp_db_path("keyset_duplicate_timestamps");
         let storage = ClipStorage::new(&db_path).unwrap();
 
-        // Three rows share timestamp 5; a timestamp-only cursor would drop or
-        // repeat rows at a page boundary that lands mid-tie. One older and one
-        // newer row exercise paging across timestamps too.
         for id in ["a", "b", "c"] {
             storage
                 .insert(&test_item(id, id.as_bytes(), 5, false, None), 100)
@@ -1922,7 +1856,6 @@ mod tests {
             }
         }
 
-        // Order is timestamp DESC then id DESC, every row exactly once.
         assert_eq!(vec!["newer", "c", "b", "a", "older"], collected);
         let mut unique = collected.clone();
         unique.sort();
@@ -2195,7 +2128,6 @@ mod tests {
         cleanup_db(&db_path);
     }
 
-    /// Synthetic data only. Run with `cargo test --release search_latency_baseline -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn search_latency_baseline() {
@@ -2342,7 +2274,6 @@ mod tests {
             .unwrap()
             .image_url
             .is_some());
-        // Oversized BLOB is never returned to Rust by the detail projection.
         storage
             .conn
             .execute(
@@ -2601,8 +2532,6 @@ mod tests {
             storage.get_by_id("rich").unwrap().unwrap().source_app
         );
 
-        // A plain-text re-copy of identical content refreshes the timestamp
-        // but keeps missing metadata via COALESCE.
         let dup_id = storage
             .insert(&test_item("plain-dup", b"hello", 2, false, None), 100)
             .unwrap();
@@ -2612,7 +2541,6 @@ mod tests {
         assert_eq!(Some("Browser".to_string()), after_plain.source_app);
         assert_eq!(2.0, after_plain.timestamp);
 
-        // A newer rich re-copy wins and replaces the stored metadata.
         storage
             .insert(
                 &ClipItem {
@@ -2693,7 +2621,6 @@ mod tests {
             .unwrap();
         assert_eq!(2, mode);
 
-        // The one-time VACUUM that flips auto_vacuum must not lose data.
         let content: Vec<u8> = storage
             .conn
             .query_row("SELECT content FROM clips WHERE id = 'legacy'", [], |row| {
@@ -2711,8 +2638,6 @@ mod tests {
         let db_path = temp_db_path("reclaim_space");
         let storage = ClipStorage::new(&db_path).unwrap();
 
-        // Large enough, and enough of them, that freeing them leaves a
-        // measurable number of pages for incremental_vacuum to reclaim.
         let blob = vec![0xABu8; 200_000];
         for index in 0..20 {
             storage

@@ -1,21 +1,5 @@
 name: 'Prepare Release'
 
-# One-click version bump from the Actions tab: enter a version, and this job
-# runs scripts/release.sh to bump every manifest + README, commits to the
-# main branch, and pushes the v<version> tag — which triggers
-# .github/workflows/release.yml to build, sign, and draft the release.
-#
-# ── Requires a PAT to actually trigger the build ────────────────────────────
-# GitHub deliberately does NOT let the built-in GITHUB_TOKEN trigger further
-# workflow runs, so a tag pushed with it will NOT start the Release build. Add a
-# fine-grained/classic PAT with `contents: write` (repo) as the RELEASE_PAT
-# secret and this job uses it to push. Without RELEASE_PAT this workflow stops
-# before changing the repository; use the local path in .github/RELEASE_GUIDE.md.
-#
-# The release notes file must already be committed — this job will not scaffold
-# it, so the release can't ship with an empty body. Use scripts/release.sh
-# locally to scaffold it, or write it by hand first.
-
 on:
   workflow_dispatch:
     inputs:
@@ -66,7 +50,6 @@ jobs:
             exit 1
           fi
 
-      # release.sh 检查版本格式、顺序和已有标签，结尾核对四个清单。
       - name: bump manifests + README
         run: bash scripts/release.sh "$VERSION"
 

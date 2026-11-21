@@ -33,7 +33,10 @@ src-tauri/gen/
 *.sw?
 
 # User-specific tool configs
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/delete-comment/
 .serena/
 
 # OS generated files
@@ -61,3 +64,4 @@ ClipMan-signing/
 # Browser regression artifacts
 /test-results/
 /playwright-report/
+/.comment-audit/

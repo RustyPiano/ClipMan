@@ -1,9 +1,6 @@
-// Internationalization (i18n) module for ClipMan
-
 export type Locale = 'zh-CN' | 'en';
 
 interface Translations {
-  // App
   copiedOnly: string;
   searchLimit: string;
   previewToggle: string;
@@ -19,12 +16,10 @@ interface Translations {
   appName: string;
   appTagline: string;
 
-  // Navigation
   history: string;
   pinned: string;
   settings: string;
 
-  // Actions
   copy: string;
   copied: string;
   pin: string;
@@ -40,25 +35,20 @@ interface Translations {
   cancel: string;
   confirm: string;
 
-  // Content types
   text: string;
   image: string;
 
-  // Time
   justNow: string;
   minutesAgo: string;
   yesterday: string;
   characterCount: string;
 
-  // Empty states
   noPinnedItems: string;
   noClipboardHistory: string;
   noSearchResults: string;
 
-  // Search
   searchPlaceholder: string;
 
-  // Settings sections
   settingsGeneral: string;
   settingsClipboard: string;
   settingsAppearance: string;
@@ -66,7 +56,6 @@ interface Translations {
   settingsStorage: string;
   settingsAbout: string;
 
-  // General settings
   autostart: string;
   autostartDesc: string;
   globalHotkey: string;
@@ -80,7 +69,6 @@ interface Translations {
   pinnedShortcutDesc: string;
   disableHotkeyFailed: string;
 
-  // Clipboard settings
   maxHistoryItems: string;
   maxHistoryItemsDesc: string;
   autoPaste: string;
@@ -95,7 +83,6 @@ interface Translations {
   ignoreConcealed: string;
   ignoreConcealedDesc: string;
 
-  // Appearance settings
   themeMode: string;
   themeLight: string;
   themeDark: string;
@@ -103,7 +90,6 @@ interface Translations {
   themeSystem: string;
   language: string;
 
-  // Tray settings
   trayTextLength: string;
   trayTextLengthDesc: string;
   maxPinnedInTray: string;
@@ -111,7 +97,6 @@ interface Translations {
   maxRecentInTray: string;
   maxRecentInTrayDesc: string;
 
-  // Storage settings
   dataLocationDesc: string;
   currentLocation: string;
   changeLocation: string;
@@ -119,7 +104,6 @@ interface Translations {
   selectDataLocation: string;
   selectDirectoryFailed: string;
 
-  // Migration dialog
   confirmMigration: string;
   migratingTo: string;
   deleteOldData: string;
@@ -127,7 +111,6 @@ interface Translations {
   migrationSuccess: string;
   migrationFailed: string;
 
-  // About
   version: string;
   checkUpdate: string;
   checking: string;
@@ -141,25 +124,20 @@ interface Translations {
   installUpdateFailed: string;
   releaseNotes: string;
 
-  // Confirmations
   confirmClearHistory: string;
   confirmResetSettings: string;
 
-  // Errors
   loadSettingsFailed: string;
   saveSettingsFailed: string;
   copyFailed: string;
   pasteFailed: string;
   clearFailed: string;
 
-  // Loading
   loading: string;
 
-  // Misc
   decodeFailed: string;
   emptyContent: string;
 
-  // Clipboard permission
   clipboardAccessTitle: string;
   clipboardAccessDesc: string;
   clipboardAccessHint: string;
@@ -167,13 +145,11 @@ interface Translations {
   details: string;
   errorLabel: string;
 
-  // Accessibility permission (macOS)
   accessibilityTitle: string;
   accessibilityDesc: string;
   accessibilityHint: string;
   openSettings: string;
 
-  // QuickBar footer hints
   paste: string;
   slot: string;
   switchPanel: string;
@@ -182,12 +158,10 @@ interface Translations {
   pastePlain: string;
   pasteRich: string;
 
-  // Files / rich text
   files: string;
   fileCount: string;
   richTextBadge: string;
 
-  // Ignored apps
   ignoredApps: string;
   ignoredAppsDesc: string;
   ignoredAppsPlaceholder: string;
@@ -195,24 +169,20 @@ interface Translations {
   removeIgnoredApp: string;
   noIgnoredApps: string;
 
-  // Secret detection setting
   skipSecrets: string;
   skipSecretsDesc: string;
 
-  // Capture size limits
   maxTextBytes: string;
   maxTextBytesDesc: string;
   maxImageDimension: string;
   maxImageDimensionDesc: string;
 
-  // Multi-select merge paste
   selectedCount: string;
   mergePasteHint: string;
   multiSelectHint: string;
 }
 
 const zh: Translations = {
-  // App
   copiedOnly: '已复制，自动粘贴未完成，请在目标应用手动粘贴。',
   searchLimit: '仅显示前 1000 条结果，请缩小搜索范围。',
   previewToggle: '切换预览',
@@ -228,12 +198,10 @@ const zh: Translations = {
   appName: 'ClipMan',
   appTagline: '高效的剪贴板管理工具',
 
-  // Navigation
   history: '历史记录',
   pinned: '置顶',
   settings: '设置',
 
-  // Actions
   copy: '复制',
   copied: '已复制',
   pin: '置顶',
@@ -249,25 +217,20 @@ const zh: Translations = {
   cancel: '取消',
   confirm: '确认',
 
-  // Content types
   text: '文本',
   image: '图片',
 
-  // Time
   justNow: '刚刚',
   minutesAgo: '{n}分钟前',
   yesterday: '昨天',
   characterCount: '{n} 字符',
 
-  // Empty states
   noPinnedItems: '暂无置顶项目',
   noClipboardHistory: '暂无剪贴板历史',
   noSearchResults: '没有匹配的结果',
 
-  // Search
   searchPlaceholder: '搜索剪贴板内容...',
 
-  // Settings sections
   settingsGeneral: '常规',
   settingsClipboard: '剪贴板',
   settingsAppearance: '外观',
@@ -275,7 +238,6 @@ const zh: Translations = {
   settingsStorage: '存储',
   settingsAbout: '关于',
 
-  // General settings
   autostart: '开机自启动',
   autostartDesc: '系统启动时自动运行 ClipMan',
   globalHotkey: '全局热键',
@@ -289,7 +251,6 @@ const zh: Translations = {
   pinnedShortcutDesc: '可选。设置后直接打开常用面板；留空则不绑定。',
   disableHotkeyFailed: '无法禁用快捷键',
 
-  // Clipboard settings
   maxHistoryItems: '历史记录数量',
   maxHistoryItemsDesc: '保留的最大历史记录数量',
   autoPaste: '自动粘贴',
@@ -305,7 +266,6 @@ const zh: Translations = {
   ignoreConcealed: '忽略密码类剪贴板',
   ignoreConcealedDesc: '跳过系统标记为密码、临时或不可记录的剪贴板内容。',
 
-  // Appearance settings
   themeMode: '主题模式',
   themeLight: '浅色',
   themeDark: '深色',
@@ -313,7 +273,6 @@ const zh: Translations = {
   themeSystem: '跟随系统',
   language: '语言',
 
-  // Tray settings
   trayTextLength: '托盘文本长度',
   trayTextLengthDesc: '托盘菜单中显示的文本最大长度',
   maxPinnedInTray: '托盘置顶数量',
@@ -321,7 +280,6 @@ const zh: Translations = {
   maxRecentInTray: '托盘最近数量',
   maxRecentInTrayDesc: '托盘菜单中显示的最近项数量',
 
-  // Storage settings
   dataLocationDesc: '选择 ClipMan 数据的存储位置',
   currentLocation: '当前位置',
   changeLocation: '更改位置',
@@ -329,7 +287,6 @@ const zh: Translations = {
   selectDataLocation: '选择新的数据存储位置',
   selectDirectoryFailed: '选择目录失败',
 
-  // Migration dialog
   confirmMigration: '确认迁移数据',
   migratingTo: '即将把数据迁移到:',
   deleteOldData: '迁移后删除原位置数据',
@@ -337,7 +294,6 @@ const zh: Translations = {
   migrationSuccess: '数据迁移成功！',
   migrationFailed: '迁移失败',
 
-  // About
   version: '版本',
   checkUpdate: '检查更新',
   checking: '检查中',
@@ -351,25 +307,20 @@ const zh: Translations = {
   installUpdateFailed: '安装更新失败',
   releaseNotes: '更新内容',
 
-  // Confirmations
   confirmClearHistory: '确定要清除所有非置顶的历史记录吗？',
   confirmResetSettings: '确定要重置所有设置吗？这将恢复默认配置。',
 
-  // Errors
   loadSettingsFailed: '加载设置失败',
   saveSettingsFailed: '保存失败',
   copyFailed: '复制失败',
   pasteFailed: '粘贴失败',
   clearFailed: '清除失败',
 
-  // Loading
   loading: '加载中...',
 
-  // Misc
   decodeFailed: '[解码失败]',
   emptyContent: '[内容为空]',
 
-  // Clipboard permission
   clipboardAccessTitle: '无法访问剪贴板',
   clipboardAccessDesc: 'ClipMan 暂时无法读取系统剪贴板，新复制的内容可能不会被记录。',
   clipboardAccessHint: '请稍后重试；若持续出现，检查是否有其他剪贴板工具正在占用剪贴板。',
@@ -377,14 +328,12 @@ const zh: Translations = {
   details: '查看详情',
   errorLabel: '错误',
 
-  // Accessibility permission (macOS)
   accessibilityTitle: '需要无障碍权限',
   accessibilityDesc: 'ClipMan 无法自动粘贴（模拟 Cmd+V）：“辅助功能”权限已失效，常见于应用更新后。',
   accessibilityHint:
     '在系统设置中重新勾选 ClipMan 即可恢复自动粘贴；期间内容仍会复制到剪贴板，可手动粘贴。',
   openSettings: '打开系统设置',
 
-  // QuickBar footer hints
   paste: '粘贴',
   slot: '槽位',
   switchPanel: '切换',
@@ -393,12 +342,10 @@ const zh: Translations = {
   pastePlain: '纯文本粘贴',
   pasteRich: '富文本粘贴',
 
-  // Files / rich text
   files: '文件',
   fileCount: '{n} 个文件',
   richTextBadge: '富文本',
 
-  // Ignored apps
   ignoredApps: '忽略的应用',
   ignoredAppsDesc: '来自以下应用的复制内容不会被记录（按应用名匹配，不区分大小写）。',
   ignoredAppsPlaceholder: '输入应用名称，如 1Password',
@@ -406,24 +353,20 @@ const zh: Translations = {
   removeIgnoredApp: '移除',
   noIgnoredApps: '暂无忽略的应用',
 
-  // Secret detection
   skipSecrets: '自动跳过疑似密钥',
   skipSecretsDesc: '检测到私钥、API 密钥、JWT 等高置信度敏感内容时跳过采集。',
 
-  // Capture size limits
   maxTextBytes: '文本大小上限 (MB)',
   maxTextBytesDesc: '超过此大小的文本或文件路径列表将不会被记录。',
   maxImageDimension: '图片尺寸上限 (px)',
   maxImageDimensionDesc: '超过此边长的图片会被等比缩小后再保存；设为 0 可关闭缩放。',
 
-  // Multi-select merge paste
   selectedCount: '已选 {n} 项',
   mergePasteHint: '合并粘贴（换行分隔）',
   multiSelectHint: '多选',
 };
 
 const en: Translations = {
-  // App
   copiedOnly: 'Copied. Automatic paste was unavailable; paste manually in the target app.',
   searchLimit: 'Showing the first 1000 results. Refine your search.',
   previewToggle: 'Toggle preview',
@@ -439,12 +382,10 @@ const en: Translations = {
   appName: 'ClipMan',
   appTagline: 'Efficient clipboard manager',
 
-  // Navigation
   history: 'History',
   pinned: 'Pinned',
   settings: 'Settings',
 
-  // Actions
   copy: 'Copy',
   copied: 'Copied',
   pin: 'Pin',
@@ -460,25 +401,20 @@ const en: Translations = {
   cancel: 'Cancel',
   confirm: 'Confirm',
 
-  // Content types
   text: 'Text',
   image: 'Image',
 
-  // Time
   justNow: 'Just now',
   minutesAgo: '{n}m ago',
   yesterday: 'Yesterday',
   characterCount: '{n} chars',
 
-  // Empty states
   noPinnedItems: 'No pinned items',
   noClipboardHistory: 'No clipboard history',
   noSearchResults: 'No matching results',
 
-  // Search
   searchPlaceholder: 'Search clipboard...',
 
-  // Settings sections
   settingsGeneral: 'General',
   settingsClipboard: 'Clipboard',
   settingsAppearance: 'Appearance',
@@ -486,7 +422,6 @@ const en: Translations = {
   settingsStorage: 'Storage',
   settingsAbout: 'About',
 
-  // General settings
   autostart: 'Launch at startup',
   autostartDesc: 'Automatically start ClipMan when system boots',
   globalHotkey: 'Global hotkey',
@@ -501,7 +436,6 @@ const en: Translations = {
     'Optional. Opens QuickBar directly on the pinned panel; leave empty to disable.',
   disableHotkeyFailed: 'Failed to disable hotkey',
 
-  // Clipboard settings
   maxHistoryItems: 'History limit',
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
   autoPaste: 'Auto-paste',
@@ -519,7 +453,6 @@ const en: Translations = {
   ignoreConcealedDesc:
     'Skip clipboard payloads marked as passwords, transient, or excluded from history.',
 
-  // Appearance settings
   themeMode: 'Theme',
   themeLight: 'Light',
   themeDark: 'Dark',
@@ -527,7 +460,6 @@ const en: Translations = {
   themeSystem: 'System',
   language: 'Language',
 
-  // Tray settings
   trayTextLength: 'Tray text length',
   trayTextLengthDesc: 'Maximum text length in tray menu',
   maxPinnedInTray: 'Pinned in tray',
@@ -535,7 +467,6 @@ const en: Translations = {
   maxRecentInTray: 'Recent in tray',
   maxRecentInTrayDesc: 'Number of recent items shown in tray menu',
 
-  // Storage settings
   dataLocationDesc: 'Choose where ClipMan stores its data',
   currentLocation: 'Current location',
   changeLocation: 'Change location',
@@ -543,7 +474,6 @@ const en: Translations = {
   selectDataLocation: 'Select new data location',
   selectDirectoryFailed: 'Failed to select directory',
 
-  // Migration dialog
   confirmMigration: 'Confirm data migration',
   migratingTo: 'Data will be migrated to:',
   deleteOldData: 'Delete data from old location after migration',
@@ -551,7 +481,6 @@ const en: Translations = {
   migrationSuccess: 'Data migrated successfully!',
   migrationFailed: 'Migration failed',
 
-  // About
   version: 'Version',
   checkUpdate: 'Check for updates',
   checking: 'Checking',
@@ -565,25 +494,20 @@ const en: Translations = {
   installUpdateFailed: 'Failed to install update',
   releaseNotes: 'Release Notes',
 
-  // Confirmations
   confirmClearHistory: 'Are you sure you want to clear all non-pinned history?',
   confirmResetSettings: 'Are you sure you want to reset all settings to defaults?',
 
-  // Errors
   loadSettingsFailed: 'Failed to load settings',
   saveSettingsFailed: 'Failed to save',
   copyFailed: 'Copy failed',
   pasteFailed: 'Paste failed',
   clearFailed: 'Failed to clear',
 
-  // Loading
   loading: 'Loading...',
 
-  // Misc
   decodeFailed: '[Decode failed]',
   emptyContent: '[Empty content]',
 
-  // Clipboard permission
   clipboardAccessTitle: 'Cannot access the clipboard',
   clipboardAccessDesc:
     'ClipMan cannot read the system clipboard right now, so new copies may not be recorded.',
@@ -593,7 +517,6 @@ const en: Translations = {
   details: 'Details',
   errorLabel: 'Error',
 
-  // Accessibility permission (macOS)
   accessibilityTitle: 'Accessibility permission needed',
   accessibilityDesc:
     "ClipMan can't auto-paste (simulate Cmd+V): its Accessibility permission is no longer valid, which often happens after an update.",
@@ -601,7 +524,6 @@ const en: Translations = {
     'Re-enable ClipMan under System Settings to restore auto-paste. Until then, content is still copied to the clipboard so you can paste manually.',
   openSettings: 'Open System Settings',
 
-  // QuickBar footer hints
   paste: 'Paste',
   slot: 'Slot',
   switchPanel: 'Switch',
@@ -610,12 +532,10 @@ const en: Translations = {
   pastePlain: 'Paste as plain text',
   pasteRich: 'Paste rich text',
 
-  // Files / rich text
   files: 'Files',
   fileCount: '{n} files',
   richTextBadge: 'Rich text',
 
-  // Ignored apps
   ignoredApps: 'Ignored apps',
   ignoredAppsDesc:
     "Copies from these apps won't be recorded (matched by app name, case-insensitive).",
@@ -624,19 +544,16 @@ const en: Translations = {
   removeIgnoredApp: 'Remove',
   noIgnoredApps: 'No ignored apps',
 
-  // Secret detection
   skipSecrets: 'Skip likely secrets',
   skipSecretsDesc:
     'Skip capturing high-confidence secrets such as private keys, API tokens, or JWTs.',
 
-  // Capture size limits
   maxTextBytes: 'Max text size (MB)',
   maxTextBytesDesc: 'Text or file path lists larger than this are not recorded.',
   maxImageDimension: 'Max image dimension (px)',
   maxImageDimensionDesc:
     'Images larger than this on their longest side are downscaled before saving; set to 0 to disable.',
 
-  // Multi-select merge paste
   selectedCount: '{n} selected',
   mergePasteHint: 'Merge paste (newlines)',
   multiSelectHint: 'Multi-select',
@@ -644,7 +561,6 @@ const en: Translations = {
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };
 
-// 语言以后端设置 settings.locale 为准，各窗口读取设置后调用 setLocale。
 class I18n {
   private _locale = $state<Locale>('zh-CN');
 
@@ -660,7 +576,6 @@ class I18n {
     this._locale = locale;
   }
 
-  // Helper for interpolation: t.minutesAgo with {n} -> "5分钟前"
   format(template: string, params: Record<string, string | number>): string {
     let result = template;
     for (const [key, value] of Object.entries(params)) {

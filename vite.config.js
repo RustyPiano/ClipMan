@@ -3,7 +3,6 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'url';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   resolve: {

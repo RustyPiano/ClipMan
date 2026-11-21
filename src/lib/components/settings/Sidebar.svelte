@@ -16,7 +16,6 @@
 
   const t = $derived(i18n.t);
 
-  // Tabs with icons - labels are computed from i18n
   const tabConfig = [
     { id: 'general' as const, icon: SettingsIcon },
     { id: 'appearance' as const, icon: Palette },
