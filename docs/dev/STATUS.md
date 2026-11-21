@@ -14,7 +14,7 @@ main 的 macOS QuickBar 使用 NSPanel 并同步鼠标激活标记，保持目�
 
 代码不再写注释：注释里的设计决定迁入 `docs/adr/` 的 22 份 ADR；ESLint `local/no-comments` 和 `src-tauri/tests/no_comments.rs` 阻止新增注释，存量上限已清零。审查记录见 `docs/archive/COMMENT-AUDIT-2026-11-22.md`，权宜实现对应 Issue #3–#11，其中 #4 已随删除 `unlistenQuietly` 修复。
 
-代码精简（2026-11-22）：删除只用一次的包装、重复逻辑和兜底，FTS 重建改为一条 INSERT…SELECT，密钥检测改为 RegexSet 表，快捷键变更与回滚合成一组循环，前台窗口按值传递，e2e 模拟环境抽到 `e2e/tauri-mock.ts`。顺带修正：迁移回填缩略图不再放大小图；数据库辅助文件路径不经 `display()` 拼接；托盘菜单不再出现相邻或开头的分隔符；设置页托盘说明不再重复显示。测试删去重复和无效断言，Rust 107→65、Bun 64→53、浏览器 66→64。Windows 分支只能由 CI 编译验证。
+代码精简（2026-11-22）：删除只用一次的包装、重复逻辑和兜底，FTS 重建改为一条 INSERT…SELECT，密钥检测改为 RegexSet 表，快捷键变更与回滚合成一组循环，前台窗口按值传递，e2e 模拟环境抽到 `e2e/tauri-mock.ts`。顺带修正：迁移回填缩略图不再放大小图；数据库辅助文件路径不经 `display()` 拼接；托盘菜单不再出现相邻或开头的分隔符；设置页托盘说明不再重复显示。测试删去重复和无效断言，Rust 107→65、Bun 64→53、浏览器 66→64。Windows 剪贴板隐私标记和系统语言改用 windows crate 的 `Win32_System_Memory`、`Win32_Globalization` 接口，不再手写 kernel32 FFI；Windows 分支只能由 CI 编译验证。
 
 ## 最近验证
 
@@ -43,7 +43,6 @@ main 的 macOS QuickBar 使用 NSPanel 并同步鼠标激活标记，保持目�
 
 - Linux 没有 X11（纯 Wayland、无 XWayland）时，剪贴板监听的 `run()` 返回错误，线程按 fast-fail 直接 panic，应用退出。
 - Linux 的 arboard 不提供剪贴板序号，globalPlain 无法区分外部应用再次复制完全相同的文本及 HTML。
-- Windows 剪贴板隐私标记检查仍手写 kernel32 FFI（`GlobalLock` 等），可改用 windows crate 的 `Win32_System_Memory`（`docs/archive/REVIEW-2026-07-07.md` #47）；由 CI `rust-windows` 保证能编译。
 - 搜索最多展示 1000 条，已提示缩小范围；没有追加搜索分页。
 - 应用排除仅 macOS 可用（支持 bundle ID / 兼容本地化名称）；Windows/Linux 已提示。
 - 合并跳过图片，执行前显示跳过数量。

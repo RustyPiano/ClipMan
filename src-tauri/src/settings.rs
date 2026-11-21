@@ -26,12 +26,9 @@ fn system_locale() -> String {
 
 #[cfg(windows)]
 fn system_locale() -> String {
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetUserDefaultLocaleName(buffer: *mut u16, length: i32) -> i32;
-    }
-    let mut buffer = [0u16; 85];
-    let length = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    const LOCALE_NAME_MAX_LENGTH: usize = 85;
+    let mut buffer = [0u16; LOCALE_NAME_MAX_LENGTH];
+    let length = unsafe { windows::Win32::Globalization::GetUserDefaultLocaleName(&mut buffer) };
     locale_for_language(&String::from_utf16_lossy(
         &buffer[..length.saturating_sub(1) as usize],
     ))

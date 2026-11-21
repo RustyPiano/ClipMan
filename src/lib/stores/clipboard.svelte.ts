@@ -221,7 +221,7 @@ class ClipboardStore {
       this.pasteFormat = settings.pasteFormat;
       i18n.setLocale(settings.locale);
     } catch (error) {
-      console.error('Failed to refresh settings:', error);
+      toastStore.add(`${i18n.t.loadSettingsFailed}: ${String(error)}`, 'error');
     }
   }
 
@@ -400,7 +400,7 @@ class ClipboardStore {
     try {
       await invoke('hide_quickbar');
     } catch (error) {
-      console.error('[ERROR] Failed to hide QuickBar:', error);
+      toastStore.add(String(error), 'error');
     }
   }
 

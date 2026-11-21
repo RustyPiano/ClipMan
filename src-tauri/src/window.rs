@@ -46,7 +46,7 @@ pub fn show_quickbar_with_panel(
     remember_foreground_window(foreground_store, &quickbar);
     let geometry_changed = position_quickbar(&quickbar)?;
 
-    if quickbar.is_minimized().unwrap_or(false) {
+    if quickbar.is_minimized().map_err(to_string)? {
         quickbar.unminimize().map_err(to_string)?;
     }
     quickbar.show().map_err(to_string)?;

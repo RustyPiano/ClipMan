@@ -9,14 +9,6 @@ use uuid::Uuid;
 use crate::storage::{encode_file_paths, ClipItem, ContentType, CopyMarker};
 use crate::{paste::CopyWrite, settings::Settings, AppState};
 
-#[cfg(target_os = "windows")]
-#[link(name = "kernel32")]
-extern "system" {
-    fn GlobalLock(hmem: windows::Win32::Foundation::HANDLE) -> *mut std::ffi::c_void;
-    fn GlobalSize(hmem: windows::Win32::Foundation::HANDLE) -> usize;
-    fn GlobalUnlock(hmem: windows::Win32::Foundation::HANDLE) -> i32;
-}
-
 struct Handler {
     app_handle: AppHandle,
     last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
@@ -560,21 +552,23 @@ fn windows_clipboard_format_available(format: u32) -> bool {
 
 #[cfg(target_os = "windows")]
 fn windows_clipboard_dword(format: u32) -> Option<u32> {
+    use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::GetClipboardData;
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
     unsafe {
-        let handle = GetClipboardData(format).ok()?;
-        if handle.is_invalid() || GlobalSize(handle) < std::mem::size_of::<u32>() {
+        let memory = HGLOBAL(GetClipboardData(format).ok()?.0);
+        if GlobalSize(memory) < std::mem::size_of::<u32>() {
             return None;
         }
 
-        let data = GlobalLock(handle);
+        let data = GlobalLock(memory);
         if data.is_null() {
             return None;
         }
 
         let value = data.cast::<u32>().read_unaligned();
-        let _ = GlobalUnlock(handle);
+        let _ = GlobalUnlock(memory);
         Some(value)
     }
 }
