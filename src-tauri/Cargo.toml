@@ -64,6 +64,9 @@ objc2-app-kit = { version = "0.3.2", features = [
 ] }
 objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSObject", "NSString", "NSURL"] }
 
+[dev-dependencies]
+ra-ap-rustc_lexer = "0.185.0"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

@@ -29,7 +29,7 @@ src-tauri/gen/
 .claude/*
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/delete-comment
+!.claude/skills/delete-comment/
 .serena/
 
 .DS_Store
@@ -47,9 +47,7 @@ ClipMan-signing/
 *.pem
 *_CERTIFICATE.base64.txt
 
-.agents/*
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/delete-comment/
+.agents/
+/.comment-audit/
 /test-results/
 /playwright-report/

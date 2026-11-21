@@ -8,8 +8,7 @@
     "build": "bun --bun vite build",
     "preview": "bun --bun vite preview",
     "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
-    "lint": "eslint src/ && bun run lint:comments",
-    "lint:comments": "bun scripts/lint-comments.js",
+    "lint": "eslint .",
     "test": "bun test tests/",
     "test:types": "tsc -p tests/tsconfig.json --noEmit",
     "format": "prettier --write \"src/**/*.{ts,svelte}\"",
@@ -36,10 +35,8 @@
     "globals": "^17.12.0",
     "prettier": "^3.9.6",
     "prettier-plugin-svelte": "^4.1.1",
-    "shiki": "4.6.0",
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.2.2",
-    "yaml": "2"
+    "vite": "^8.2.2"
   }
 }
