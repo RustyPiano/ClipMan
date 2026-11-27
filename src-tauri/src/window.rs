@@ -10,12 +10,25 @@ const QUICKBAR_MAX_HEIGHT: f64 = 600.0;
 pub const QUICKBAR_HIDDEN_EVENT: &str = "quickbar-hidden";
 
 pub type ForegroundWindowStore = Arc<Mutex<Option<isize>>>;
+pub type QuickBarPanelStore = Arc<Mutex<QuickBarPanel>>;
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuickBarPanel {
     Recent,
     Pinned,
+}
+
+impl TryFrom<&str> for QuickBarPanel {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "recent" => Ok(Self::Recent),
+            "pinned" => Ok(Self::Pinned),
+            _ => Err(format!("Invalid QuickBar panel '{value}'")),
+        }
+    }
 }
 
 pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
@@ -32,13 +45,40 @@ pub fn setup_windows(app: &AppHandle) -> Result<(), String> {
 pub fn show_quickbar(
     app: &AppHandle,
     foreground_store: &ForegroundWindowStore,
+    panel_store: &QuickBarPanelStore,
 ) -> Result<(), String> {
-    show_quickbar_with_panel(app, foreground_store, QuickBarPanel::Recent)
+    show_quickbar_with_panel(app, foreground_store, panel_store, QuickBarPanel::Recent)
+}
+
+pub fn set_active_quickbar_panel(panel_store: &QuickBarPanelStore, panel: QuickBarPanel) {
+    *panel_store.lock().unwrap() = panel;
+}
+
+pub fn toggle_quickbar_with_panel(
+    app: &AppHandle,
+    foreground_store: &ForegroundWindowStore,
+    panel_store: &QuickBarPanelStore,
+    panel: QuickBarPanel,
+) -> Result<(), String> {
+    let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
+    let visible = quickbar.is_visible().map_err(to_string)?;
+    let focused = quickbar.is_focused().map_err(to_string)?;
+    if visible && focused {
+        if *panel_store.lock().unwrap() == panel {
+            return hide_quickbar_and_restore(app, foreground_store);
+        }
+        *panel_store.lock().unwrap() = panel;
+        return app
+            .emit("quickbar-opened", serde_json::json!({ "panel": panel }))
+            .map_err(to_string);
+    }
+    show_quickbar_with_panel(app, foreground_store, panel_store, panel)
 }
 
 pub fn show_quickbar_with_panel(
     app: &AppHandle,
     foreground_store: &ForegroundWindowStore,
+    panel_store: &QuickBarPanelStore,
     panel: QuickBarPanel,
 ) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
@@ -54,6 +94,7 @@ pub fn show_quickbar_with_panel(
     if geometry_changed {
         invalidate_quickbar_shadow(&quickbar);
     }
+    *panel_store.lock().unwrap() = panel;
     app.emit("quickbar-opened", serde_json::json!({ "panel": panel }))
         .map_err(to_string)
 }
@@ -61,6 +102,30 @@ pub fn show_quickbar_with_panel(
 pub fn hide_quickbar(app: &AppHandle) -> Result<(), String> {
     let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
     hide_quickbar_window(&quickbar)
+}
+
+pub fn hide_quickbar_and_restore(
+    app: &AppHandle,
+    foreground_store: &ForegroundWindowStore,
+) -> Result<(), String> {
+    let quickbar = get_window(app, QUICKBAR_WINDOW_LABEL)?;
+    hide_quickbar_window(&quickbar)?;
+    #[cfg(target_os = "macos")]
+    {
+        let settings_visible = match app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+            Some(window) => window.is_visible().map_err(to_string)?,
+            None => false,
+        };
+        if !settings_visible {
+            let target = *foreground_store.lock().unwrap();
+            if let Err(error) = restore_recorded_foreground_window(target) {
+                log::debug!("Did not restore previous app after QuickBar hide: {error}");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = foreground_store;
+    Ok(())
 }
 
 pub fn open_settings_window(app: &AppHandle) -> Result<(), String> {
@@ -210,36 +275,9 @@ fn quickbar_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
 }
 
 #[cfg(target_os = "macos")]
-objc2::define_class!(
-    #[unsafe(super(
-        objc2_app_kit::NSPanel,
-        objc2_app_kit::NSWindow,
-        objc2_app_kit::NSResponder,
-        objc2::runtime::NSObject
-    ))]
-    #[thread_kind = objc2::MainThreadOnly]
-    #[name = "ClipManQuickBarPanel"]
-    struct QuickBarNsPanel;
-
-    impl QuickBarNsPanel {
-        #[unsafe(method(canBecomeKeyWindow))]
-        fn can_become_key_window(&self) -> bool {
-            true
-        }
-    }
-);
-
-#[cfg(target_os = "macos")]
 fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
-    use objc2::ClassType;
-    use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
+    use objc2_app_kit::{NSFloatingWindowLevel, NSWindowCollectionBehavior};
 
-    unsafe {
-        objc2::ffi::object_setClass(
-            window.ns_window().map_err(to_string)?.cast(),
-            QuickBarNsPanel::class(),
-        );
-    }
     let ns_window = ns_window(window)?;
 
     window.set_shadow(true).map_err(to_string)?;
@@ -247,21 +285,16 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     window
         .set_visible_on_all_workspaces(true)
         .map_err(to_string)?;
-    ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
-    unsafe {
-        let _: () = objc2::msg_send![ns_window, _setPreventsActivation: true];
-    }
-    ns_window.setLevel(NSStatusWindowLevel);
+    ns_window.setLevel(NSFloatingWindowLevel);
     ns_window.setHidesOnDeactivate(false);
     ns_window.setCollectionBehavior(
-        NSWindowCollectionBehavior::Auxiliary
-            | NSWindowCollectionBehavior::CanJoinAllSpaces
+        NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::Transient
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
 
-    log::info!("Configured QuickBar macOS non-activating panel");
+    log::info!("Configured QuickBar macOS floating window");
     Ok(())
 }
 
@@ -411,11 +444,20 @@ fn restore_foreground_window(target: isize) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+pub fn frontmost_app_pid() -> Option<i32> {
+    use objc2_app_kit::NSWorkspace;
+
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|app| app.processIdentifier())
+}
+
+#[cfg(target_os = "macos")]
 fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
     let ns_window = ns_window(window)?;
     ns_window.orderFrontRegardless();
     ns_window.makeKeyAndOrderFront(None);
-    Ok(())
+    window.set_focus().map_err(to_string)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -423,19 +465,6 @@ fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
     window.set_focus().map_err(to_string)
 }
 
-#[cfg(target_os = "macos")]
-fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApp;
-
-    let mtm = MainThreadMarker::new()
-        .ok_or_else(|| "Settings window focus must run on the main thread".to_string())?;
-    NSApp(mtm).activate();
-
-    window.set_focus().map_err(to_string)
-}
-
-#[cfg(not(target_os = "macos"))]
 fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
     window.set_focus().map_err(to_string)
 }

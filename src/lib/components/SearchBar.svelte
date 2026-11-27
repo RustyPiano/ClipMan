@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
   import { i18n } from '$lib/i18n';
-  import Button from '$lib/components/ui/Button.svelte';
   import { Loader2, Search, X } from 'lucide-svelte';
   import { listen } from '@tauri-apps/api/event';
   import { SEARCH_INPUT_ID } from '$lib/constants';
@@ -85,14 +84,12 @@
   });
 </script>
 
-<div class="relative w-full">
-  <div
-    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors"
-  >
+<div class="relative flex w-full items-center">
+  <div class="pointer-events-none flex flex-none items-center pl-1 pr-2.5 text-muted-foreground/70">
     {#if clipboardStore.isSearchPending}
-      <Loader2 class="h-4 w-4 animate-spin stroke-[2]" />
+      <Loader2 class="h-4 w-4 animate-spin" />
     {:else}
-      <Search class="h-4 w-4 stroke-[2]" />
+      <Search class="h-4 w-4" />
     {/if}
   </div>
 
@@ -111,18 +108,18 @@
     oninput={handleInput}
     oncompositionstart={handleCompositionStart}
     oncompositionend={handleCompositionEnd}
-    class="qb-search h-9 w-full rounded-lg pl-9 pr-10 text-sm"
+    class="qb-search h-10 w-full pr-7 text-[14px]"
   />
 
   {#if clipboardStore.searchQuery}
-    <Button
-      variant="ghost"
-      size="icon"
-      class="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-secondary/65 active:scale-90 transition-all duration-150"
+    <button
+      type="button"
+      class="absolute right-0.5 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 hover:bg-accent hover:text-foreground"
       onclick={clearSearch}
       title={t.clear}
+      aria-label={t.clear}
     >
-      <X class="h-3.5 w-3.5 duration-150" />
-    </Button>
+      <X class="h-3.5 w-3.5" />
+    </button>
   {/if}
 </div>

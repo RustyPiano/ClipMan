@@ -4,12 +4,18 @@ import {
   comparePinOrder,
   decodeClipText,
   decodeFilePaths,
+  encodeClipTextPreview,
   fileBasename,
   fileDirname,
+  formatBytes,
   formatClipTime,
   getRecentDisplayItems,
+  highlightSegments,
+  isSingleUrl,
   looksLikeDirectory,
   looksLikeCode,
+  matchesClipFilter,
+  parseColorValue,
 } from '../../src/lib/utils/clip-items';
 import type { ClipItem } from '../../src/lib/types';
 
@@ -180,17 +186,67 @@ describe('file path display helpers', () => {
 });
 
 describe('row display helpers', () => {
-  test('only code-like text uses the monospace font', () => {
+  test('only code-like text uses the monospace font and URLs are classified as links', () => {
     for (const code of [
-      'https://example.com/a',
       '{ "a": 1 }',
       'bun run check && bun test',
       '  indented()',
       'const x = 1;',
     ])
       expect(looksLikeCode(code)).toBe(true);
-    for (const prose of ['Keep common actions close.', '周会纪要：确认搜索体验。', 'a | b is fine'])
-      expect(looksLikeCode(prose)).toBe(false);
+    for (const nonCode of [
+      'https://example.com/a',
+      'Keep common actions close.',
+      '周会纪要：确认搜索体验。',
+      'a | b is fine',
+    ])
+      expect(looksLikeCode(nonCode)).toBe(false);
+    expect(isSingleUrl('https://example.com/a')).toBe(true);
+    expect(isSingleUrl('visit https://example.com/a now')).toBe(false);
+  });
+
+  test('parses hex, rgb, and hsl colors into normalized formats', () => {
+    expect(parseColorValue('#3b82f6')).toEqual({
+      css: 'rgb(59, 130, 246)',
+      hex: '#3B82F6',
+      rgb: 'rgb(59, 130, 246)',
+      hsl: 'hsl(217, 91%, 60%)',
+    });
+    expect(parseColorValue('#fff')?.hex).toBe('#FFFFFF');
+    expect(parseColorValue('rgb(255, 0, 0)')?.hex).toBe('#FF0000');
+    expect(parseColorValue('hsl(120, 100%, 50%)')?.hex).toBe('#00FF00');
+    expect(parseColorValue('not-a-color')).toBeNull();
+    expect(parseColorValue('rgb(300, 0, 0)')).toBeNull();
+  });
+
+  test('highlights matching search terms case-insensitively and filters by type', () => {
+    expect(highlightSegments('ClipMan QuickBar', 'clip')).toEqual([
+      { text: 'Clip', match: true },
+      { text: 'Man QuickBar', match: false },
+    ]);
+    expect(highlightSegments('İfoo bar', 'foo')).toEqual([
+      { text: 'İ', match: false },
+      { text: 'foo', match: true },
+      { text: ' bar', match: false },
+    ]);
+    const urlItem = clip({ content: encodeText('https://clipman.top') });
+    const textItem = clip({ content: encodeText('plain note') });
+    const imgItem = clip({ contentType: 'image', content: 'data:image/png;base64,AA==' });
+    expect(matchesClipFilter(urlItem, 'link')).toBe(true);
+    expect(matchesClipFilter(textItem, 'link')).toBe(false);
+    expect(matchesClipFilter(imgItem, 'image')).toBe(true);
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(2048)).toBe('2.0 KB');
+  });
+
+  test('encodeClipTextPreview truncates on UTF-8 character boundaries without replacement chars', () => {
+    const text = 'a' + '中'.repeat(2000);
+    const encoded = encodeClipTextPreview(text);
+    const decoded = decodeClipText(clip({ content: encoded }), '');
+    expect(decoded.includes('\uFFFD')).toBe(false);
+    const byteLength = new TextEncoder().encode(decoded).length;
+    expect(byteLength).toBeLessThanOrEqual(4096);
+    expect(byteLength).toBeGreaterThan(4090);
   });
 
   test('clip times get coarser with age', () => {

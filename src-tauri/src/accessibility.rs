@@ -16,11 +16,14 @@ mod imp {
         unsafe { AXIsProcessTrusted() }
     }
 
-    pub fn open_settings() -> Result<(), String> {
-        std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            .spawn()
-            .map(|_| ())
+    pub fn open_settings(app: &AppHandle) -> Result<(), String> {
+        use tauri_plugin_opener::OpenerExt;
+
+        app.opener()
+            .open_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                None::<&str>,
+            )
             .map_err(|e| format!("Failed to open Accessibility settings: {e}"))
     }
 
@@ -59,6 +62,7 @@ mod imp {
         };
 
         let app_for_main = app.clone();
+        let app_for_settings = app.clone();
         let dispatch = app.run_on_main_thread(move || {
             app_for_main
                 .dialog()
@@ -72,7 +76,7 @@ mod imp {
                 .show(move |open_pressed| {
                     DIALOG_OPEN.store(false, Ordering::SeqCst);
                     if open_pressed {
-                        if let Err(e) = open_settings() {
+                        if let Err(e) = open_settings(&app_for_settings) {
                             log::error!("{e}");
                         }
                     }
@@ -95,6 +99,6 @@ pub fn is_trusted() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn open_settings() -> Result<(), String> {
+pub fn open_settings(_app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }

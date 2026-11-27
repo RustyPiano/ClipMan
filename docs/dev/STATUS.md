@@ -6,53 +6,20 @@
 
 ## 当前状态
 
-v2.4.6 已于 2026-11-27 正式发布，发布提交为 `beddb1d`，包含 macOS QuickBar 焦点修复和 11 月的代码精简，说明见 `release_notes_2.4.6.md`。Vercel 生产部署已更新，公开下载页已显示 v2.4.6。
+- **最新发版：v2.5.0（已推送标签触发 Release 工作流）**：
+  - **macOS 窗口与输入法**：移除 `object_setClass` 替换 `NSPanel`、私有接口 `_setPreventsActivation:` 和 macOS 14+ 专属的 `NSApp.activate()`，改用标准浮动窗口并通过 `window.set_focus()` 激活（兼容 macOS 13.3+），修复 `WKWebView` 内中文输入法候选窗不显示问题。自动粘贴前轮询确认原应用回到前台（上限 500 ms）；复制模式隐藏、`Esc` 或重复按同面板全局快捷键隐藏时恢复原应用；跨面板快捷键直接切换面板。
+  - **收藏与编辑（原“置顶”更名为“收藏”并启用星标 `★`）**：收藏支持乐观更新、并发保护、失败后从后端重载、顶部收藏计数和批量收藏（保持已有收藏顺序）；收藏面板支持新建常用文本/提示词、鼠标上下排序和预览栏直接编辑正文（同事务同步 FTS；超过 1 MiB 截断项前后端均禁止编辑；编辑草稿在窗口失焦隐藏后保留）。
+  - **QuickBar 与工作台重构**：拆分 `QuickBar.svelte` 与 `NewFavoriteForm.svelte`；重做浅色/深色/粉色三套配色与主题令牌；分类筛选（全部/文本/图片/文件/链接）下推到 SQLite 查询与分页；新增搜索高亮、色值预览与 HEX/RGB/HSL 复制（经 Rust `copy_plain_text`）、链接打开与文件夹定位（经 `tauri-plugin-opener`）、原图 4 条有界缓存与自动加载。
+  - **设置页与托盘**：设置页新增未保存提示与 `⌘S` 保存；托盘菜单顶部增加“打开 ClipMan”。
 
-文件摘要最多提供两个路径，允许重复路径正常显示，界面使用实际文件总数；设置保存拒绝非法值，存储目录读取失败可重新读取；纯文本写入共用，重复判断、异常包装、注释和文档已精简。QuickBar 忽略输入法确认按键，避免回车确认中文时触发粘贴。
+## 待办
 
-macOS QuickBar 使用 NSPanel 并同步鼠标激活标记，保持目标应用激活。
-
-代码不再写注释：注释里的设计决定迁入 `docs/adr/` 的 22 份 ADR；ESLint `local/no-comments` 和 `src-tauri/tests/no_comments.rs` 阻止新增注释，存量上限已清零。审查记录见 `docs/archive/COMMENT-AUDIT-2026-11-22.md`，权宜实现对应 Issue #3–#11，其中 #4 已随删除 `unlistenQuietly` 修复。
-
-代码精简（2026-11-22）：删除只用一次的包装、重复逻辑和兜底，FTS 重建改为一条 INSERT…SELECT，密钥检测改为 RegexSet 表，快捷键变更与回滚合成一组循环，前台窗口按值传递，e2e 模拟环境抽到 `e2e/tauri-mock.ts`。顺带修正：迁移回填缩略图不再放大小图；数据库辅助文件路径不经 `display()` 拼接；托盘菜单不再出现相邻或开头的分隔符；设置页托盘说明不再重复显示。测试删去重复和无效断言，Rust 107→65、Bun 64→53、浏览器 66→64。Windows 剪贴板隐私标记和系统语言改用 windows crate 的 `Win32_System_Memory`、`Win32_Globalization` 接口，不再手写 kernel32 FFI；Windows 分支只能由 CI 编译验证。
-
-## 最近验证
-
-- v2.4.6 的 Release 运行 `45922189200` 通过全部质量检查、四个构建目标和产物校验。本机独立验证通过 7 份更新签名、macOS 双架构 DMG 的镜像完整性、版本、架构和严格代码签名；公钥延续 v2.4.5，macOS 签名要求与已安装版本一致。公开更新清单已返回 2.4.6。
-
-- 本机（2026-11-22）：注释清理和代码精简后 Rust 65 项、Bun 53 项、Chromium/WebKit 64 项、发布校验 6 项通过；lint（含注释检查）、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。
-
-- 本机（2026-10-22）：Rust 107 项、前端 64 项、Chromium/WebKit 66 项、发布校验 6 项全部通过；lint、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。性能基准按配置跳过，Windows/Linux 桌面运行未实测。
-- 鼠标焦点修复：独立探针对照通过；隔离应用实测通过 4 次 TextEdit 打开、点击与 Esc 关闭，以及访达改名编辑在点击后保持。剪贴板、输入法、鼠标位置和原前台应用已恢复；Rust、前端、浏览器及发布校验测试通过。
-- v2.4.5 的生产前端构建通过 6 项定向测试。
-- macOS 原生验证通过：8 次搜索与粘贴、小图片复用原图作为缩略图、托盘查询失败保留菜单、真实中文输入法确认回车不粘贴及下一次回车正常粘贴。测试后已恢复剪贴板、输入法和日常应用。
-- Release 运行 `39782418292` 的全部质量检查、四个平台构建和产物校验通过。
-- 本机独立验证通过：更新公钥与 v2.4.4 一致，7 份 updater 签名有效；macOS 双架构镜像、版本、架构及严格代码签名正确，签名证书与当前安装版本一致。
-- 本机 PATH 没有 `minisign`，运行发布校验测试和 `verify-release.py` 时用 `src-tauri/target/release-verification/tools/minisign`。
-- 图片缩略图 `self-start`、类型图标和应用图标的实际观感需要用正式包在系统 WKWebView 中目测。
-- Playwright 浏览器缓存保留在本机（用户决定，避免反复安装）。
-
-## 待办（按优先级）
-
-1. macOS QuickBar 的 NSPanel 焦点修复使用 AppKit 私有接口 `_setPreventsActivation:`；原生 QA 断言点击后目标应用仍在前台。待原生验证完整粘贴、搜索框中文输入法、失焦关闭、多屏与全屏 Space；运行前需退出正在使用的 ClipMan。
-2. 用 v2.4.4 正式包回归：类型图标与应用图标显示、键盘/鼠标多选后回车合并粘贴、图片缩略图宽度、精简后的 capabilities、原生 `<dialog>`、globalPlain 剥离、文件写回失败报错、迁移期间继续采集、自定义目录不可用或剪贴板监听启动失败时报错退出。
-3. 用正式包实机验证 Linux，回归 v2.4.3→v2.4.4 updater 路径，复测更新后辅助功能授权保留、文件 TCC 和多屏/Spaces。
-4. 提示词管理（2026-11-22 定，未开始）：在置顶上扩展，不另建模块，标签页改名“收藏”。顺序：预览栏编辑正文（同事务更新 content_hash、FTS）→ ⌘P 后直接进入标签编辑、收藏面板新建 → `{{变量}}` 和 `{{clipboard}}` 占位符（作为 `paste::use_clips` 的参数，与中文整理动作共用）→ 记录来源链接（新列，数据库格式 v4）→ Markdown 导入导出。分组、版本历史、关键词展开、MCP 暂不做。
-5. QuickBar 交互：多选时 ⌘⌫ / ⌘P 处理全部勾选行（批量删除前确认）；⌥←/→ 切换面板拦截了搜索框里的按词移动，改为 ⌃Tab 或仅在搜索框为空时拦截；“⋯”菜单补全 ⌘P、⌘⌫、⌘↵。Esc 和悬停移动光标维持现状。
-6. Wave 4 候选（未排期）：Paste Stack 会话队列、Apple 公证。类型高亮、SQLCipher/同步继续 YAGNI。
+1. 等待 GitHub Actions `Release`（`v2.5.0`）全部作业及 `verify-release` 通过后，在 Releases 页面核对草稿并正式发布。
+2. 用正式包在 macOS 实机验证中文输入法候选窗、复制/粘贴后原应用恢复前台及跨 Space 行为；产品页（Vercel）按需更新 `website/` 截图。
 
 ## 已知问题 / 注意事项
 
-- Linux 没有 X11（纯 Wayland、无 XWayland）时，剪贴板监听的 `run()` 返回错误，线程按 fast-fail 直接 panic，应用退出。
-- Linux 的 arboard 不提供剪贴板序号，globalPlain 无法区分外部应用再次复制完全相同的文本及 HTML。
-- 搜索最多展示 1000 条，已提示缩小范围；没有追加搜索分页。
-- 应用排除仅 macOS 可用（支持 bundle ID / 兼容本地化名称）；Windows/Linux 已提示。
-- 合并跳过图片，执行前显示跳过数量。
-- 原图详情上限 16 MiB；文本/文件预览上限 1 MiB，均在 SQL 限制读取；复制/粘贴仍使用完整内容。
-- 自定义目录里的数据库被 SQLite 判定损坏时，与默认目录一样隔离旧文件后新建空库。
-
-## 背景资料指路
-
-- 已完成的开发记录（v2.2 波次规格与验收、审核记录、QuickBar 改版记录）和 v2.0 重设计文档：`docs/archive/`，均带归档横幅，不作为当前指导。
-- 发布流程：`.github/RELEASE_GUIDE.md`。
-- 产品页（https://www.clipman.top）在 `RustyPiano/ClipMan-Page` 仓库，推送 main 后由 Vercel 部署。版本和下载链接在构建时读取最新发布，发版后需在 Vercel 重新部署（没有新提交时运行 `vercel redeploy <最新生产部署 URL> --target production`，项目名 `clip-man-page`）；QuickBar 界面变化后在该仓库运行 `npm run screenshots`，用本仓库前端和 WebKit 重新截图。
+- 打开 QuickBar 会短暂激活 ClipMan，导致 Finder 文件重命名等失焦即退出的临时编辑框中断（详见 `docs/adr/0014-quickbar-macos-window.md`）。
+- Linux 纯 Wayland（无 XWayland）下剪贴板监听无法启动；Linux 的 `globalPlain` 无法区分外部应用再次复制完全相同的文本及 HTML。
+- 自定义数据目录启动时若数据库损坏会隔离备份为 `.corrupt-*` 并重建空库；若目录本身不可用则弹出致命错误并退出。
+- 搜索最多展示 1000 条；应用排除目前仅支持 macOS；合并粘贴跳过图片；原图预览上限 16 MiB，文本/文件预览与在线编辑上限 1 MiB（复制/粘贴始终使用完整内容）。

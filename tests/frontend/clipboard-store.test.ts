@@ -58,6 +58,7 @@ function resetStore() {
   clipboardStore.searchResults = [];
   clipboardStore.searchQuery = '';
   clipboardStore.activeSearchQuery = '';
+  clipboardStore.filter = 'all';
   clipboardStore.isLoading = false;
   clipboardStore.isSearchPending = false;
   clipboardStore.historyError = null;
@@ -67,6 +68,12 @@ function resetStore() {
   clipboardStore.maxHistoryItems = 100;
   clipboardStore.autoPaste = true;
   clipboardStore.pasteFormat = 'original';
+  clipboardStore.newFavoriteOpen = false;
+  clipboardStore.newFavoriteLabel = '';
+  clipboardStore.newFavoriteContent = '';
+  clipboardStore.contentDrafts = {};
+  clipboardStore.editingClipId = null;
+  clipboardStore.editingLabelId = null;
   selectionStore.selectedIds.clear();
   toastStore.toasts = [];
 }
@@ -556,10 +563,16 @@ describe('clipboard store races', () => {
     expect(await detail).toBe(null);
     expect(clipboardStore.getCachedFullClip('deleted-while-loading')).toBe(undefined);
   });
-  test('detail cache evicts old entries at sixteen and skips large text and images', async () => {
+  test('detail cache bounds text at sixteen, skips large text, and bounds images at four', async () => {
     installTauriInvoke((_cmd, args) =>
-      args?.id === 'image'
-        ? { id: 'image', contentType: 'image', text: '', imageUrl: 'data:image/png;base64,eA==' }
+      String(args?.id).startsWith('image')
+        ? {
+            id: String(args?.id),
+            contentType: 'image',
+            text: '',
+            imageUrl: 'data:image/png;base64,eA==',
+            truncated: false,
+          }
         : {
             id: String(args?.id),
             contentType: 'text',
@@ -573,10 +586,15 @@ describe('clipboard store races', () => {
     expect(clipboardStore.getCachedFullClip('bounded-16')).toBeDefined();
     await clipboardStore.fetchFullClip('large');
     expect(clipboardStore.getCachedFullClip('large')).toBeUndefined();
-    expect((await clipboardStore.fetchFullClip('image'))?.imageUrl).toBe(
+    for (let i = 0; i < 5; i++) {
+      expect((await clipboardStore.fetchFullClip(`image-${i}`))?.imageUrl).toBe(
+        'data:image/png;base64,eA=='
+      );
+    }
+    expect(clipboardStore.getCachedFullClip('image-0')).toBeUndefined();
+    expect(clipboardStore.getCachedFullClip('image-4')?.imageUrl).toBe(
       'data:image/png;base64,eA=='
     );
-    expect(clipboardStore.getCachedFullClip('image')).toBeUndefined();
   });
 
   test('a burst during history and search refreshes is coalesced without losing the last update', async () => {
@@ -620,5 +638,84 @@ describe('clipboard store races', () => {
     expect(clipboardStore.searchResults[0].id).toBe('latest');
     await reload();
     expect(historyCalls).toBe(4);
+  });
+
+  test('togglePin updates optimistically, toasts only after success, and reloads on failure', async () => {
+    let fail = false;
+    const item = clip({ id: 'pin-me', timestamp: 10 });
+    const freshItem = clip({ id: 'arrived-during-pin', timestamp: 20 });
+    installTauriInvoke((cmd) => {
+      if (cmd === 'toggle_pin' && fail) throw new Error('db locked');
+      if (cmd === 'get_recent_clips') return fail ? [freshItem] : [];
+      if (cmd === 'get_pinned_clips') return [{ ...item, isPinned: true, pinOrder: 1 }];
+      return null;
+    });
+
+    clipboardStore.recentItems = [item];
+    await clipboardStore.togglePin('pin-me');
+    expect(clipboardStore.pinnedItems.map((c) => c.id)).toEqual(['pin-me']);
+    expect(toastStore.toasts.at(-1)?.type).toBe('pin');
+
+    toastStore.toasts = [];
+    fail = true;
+    await clipboardStore.togglePin('pin-me');
+    expect(clipboardStore.pinnedItems.map((c) => c.id)).toEqual(['pin-me']);
+    expect(clipboardStore.recentItems.map((c) => c.id)).toEqual(['arrived-during-pin']);
+    expect(toastStore.toasts.map((t) => t.type)).toEqual(['error']);
+  });
+
+  test('batchTogglePin sends only items changing state and reloads on error', async () => {
+    const batchCalls: Array<Record<string, unknown> | undefined> = [];
+    let fail = false;
+    const pinned = clip({ id: 'p1', isPinned: true, pinOrder: 1, timestamp: 10 });
+    const recent = clip({ id: 'r1', isPinned: false, pinOrder: null, timestamp: 20 });
+
+    installTauriInvoke((cmd, args) => {
+      if (cmd === 'batch_toggle_pin') {
+        batchCalls.push(args);
+        if (fail) throw new Error('write failed');
+        return (args?.ids as string[]).length;
+      }
+      if (cmd === 'get_recent_clips') return fail ? [recent] : [];
+      if (cmd === 'get_pinned_clips')
+        return fail ? [pinned] : [pinned, { ...recent, isPinned: true, pinOrder: 2 }];
+      return null;
+    });
+
+    clipboardStore.pinnedItems = [pinned];
+    clipboardStore.recentItems = [recent];
+    await clipboardStore.batchTogglePin(['p1', 'r1']);
+    expect(batchCalls).toEqual([{ ids: ['r1'], isPinned: true }]);
+    expect(toastStore.toasts.at(-1)?.type).toBe('pin');
+
+    toastStore.toasts = [];
+    fail = true;
+    await clipboardStore.batchTogglePin(['p1', 'r1']);
+    expect(clipboardStore.recentItems.map((c) => c.id)).toEqual(['r1']);
+    expect(clipboardStore.pinnedItems.map((c) => c.id)).toEqual(['p1']);
+    expect(toastStore.toasts.map((t) => t.type)).toEqual(['error']);
+  });
+
+  test('setFilter forwards category filter to backend history and search queries', async () => {
+    const calls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    installTauriInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return [];
+    });
+
+    clipboardStore.setFilter('image');
+    await Promise.resolve();
+    expect(calls.find((c) => c.cmd === 'get_recent_clips')?.args).toEqual({
+      limit: 101,
+      filter: 'image',
+    });
+
+    calls.length = 0;
+    clipboardStore.setSearchQuery('cat');
+    await clipboardStore.search('cat');
+    expect(calls.find((c) => c.cmd === 'search_clips')?.args).toEqual({
+      query: 'cat',
+      filter: 'image',
+    });
   });
 });

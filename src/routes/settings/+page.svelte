@@ -21,9 +21,14 @@
   const t = $derived(i18n.t);
 
   let settings = $state<Settings | null>(null);
+  let savedSnapshot = $state('');
+  const hasUnsavedChanges = $derived(
+    settings !== null && savedSnapshot !== '' && JSON.stringify(settings) !== savedSnapshot
+  );
 
   let loading = $state(true);
   let saving = $state(false);
+  let settingsForm: HTMLFormElement | undefined = $state();
 
   let updateInfo = $state<UpdateInfo | null>(null);
   let checkingUpdate = $state(false);
@@ -52,6 +57,7 @@
     try {
       loading = true;
       settings = await invoke<Settings>('get_settings');
+      savedSnapshot = JSON.stringify(settings);
       i18n.setLocale(settings.locale);
     } catch (err) {
       toastStore.add(`${t.loadSettingsFailed}: ${String(err)}`, 'error');
@@ -81,6 +87,7 @@
         { settings: reset ? null : settings }
       );
       settings = result.settings;
+      savedSnapshot = JSON.stringify(settings);
       i18n.setLocale(settings.locale);
       toastStore.add(result.warning ?? t.saved, result.warning ? 'info' : 'success');
     } catch (err) {
@@ -188,7 +195,15 @@
       toastStore.add(String(err), 'error');
     }
   }
+  function handleKeyDown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      settingsForm?.requestSubmit();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 <div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
   <header
@@ -207,7 +222,15 @@
       <h1 class="text-xl font-bold tracking-tight">{t.settings}</h1>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2.5">
+      {#if hasUnsavedChanges}
+        <span
+          class="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
+        >
+          <span class="qb-pin-text h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true"></span>
+          {t.unsavedChanges}
+        </span>
+      {/if}
       <Button
         variant="outline"
         onclick={resetSettings}
@@ -244,6 +267,7 @@
         </div>
       {:else if settings}
         <form
+          bind:this={settingsForm}
           id="settings-form"
           class="max-w-2xl mx-auto space-y-6"
           onsubmit={(event) => {

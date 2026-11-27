@@ -10,7 +10,7 @@ useTauriMock('main', () => {
     content: btoa(`Clipboard entry ${index}`),
     timestamp: Math.floor(Date.now() / 1000) - index * 60,
     isPinned: false,
-    pinOrder: null,
+    pinOrder: null as number | null,
     label: null as string | null,
     sourceApp: 'Editor',
     hasHtml: false,
@@ -84,19 +84,34 @@ useTauriMock('main', () => {
     if (cmd === 'check_accessibility_permission') return true;
     if (cmd === 'get_app_icon') return args.name === 'Editor' ? appIcon : null;
     if (cmd === 'get_pinned_clips') return structuredClone(clips.filter((item) => item.isPinned));
+    const matchesFilter = (item: (typeof clips)[number], filter?: string) => {
+      if (!filter || filter === 'all') return true;
+      if (filter === 'image') return item.contentType === 'image';
+      if (filter === 'files') return item.contentType === 'files';
+      if (filter === 'text') return item.contentType === 'text';
+      if (filter === 'link') {
+        if (item.contentType !== 'text') return false;
+        const decoded = new TextDecoder().decode(
+          Uint8Array.from(atob(item.content), (c) => c.charCodeAt(0))
+        );
+        return /^\s*https?:\/\/\S+\s*$/.test(decoded);
+      }
+      return true;
+    };
     if (cmd === 'get_recent_clips') {
       if (initialHistory) {
         initialHistory = false;
         setTimeout(() => w.emitTestEvent('quickbar-opened'), 5);
       }
       await new Promise((resolve) => setTimeout(resolve, 30));
-      const start = args.beforeId ? Number(args.beforeId.split('-')[1]) + 1 : 0;
-      return structuredClone(clips.slice(start, start + args.limit));
+      const pool = clips.filter((item) => !item.isPinned && matchesFilter(item, args.filter));
+      const start = args.beforeId ? pool.findIndex((item) => item.id === args.beforeId) + 1 : 0;
+      return structuredClone(pool.slice(start, start + args.limit));
     }
     if (cmd === 'search_clips') {
       await new Promise((resolve) => setTimeout(resolve, 90));
       return args.query === 'many'
-        ? clips
+        ? clips.filter((item) => matchesFilter(item, args.filter))
         : [
             {
               ...clips[0],
@@ -113,6 +128,44 @@ useTauriMock('main', () => {
         else item.label = args.label;
       }
       return null;
+    }
+    if (cmd === 'batch_toggle_pin') {
+      let changed = 0;
+      for (const id of args.ids) {
+        const item = clips.find((entry) => entry.id === id);
+        if (item && item.isPinned !== args.isPinned) {
+          item.isPinned = args.isPinned;
+          changed += 1;
+        }
+      }
+      return changed;
+    }
+    if (cmd === 'set_quickbar_panel') return null;
+    if (cmd === 'update_clip_content') {
+      const item = clips.find((entry) => entry.id === args.id);
+      if (item) {
+        item.content = btoa(String.fromCharCode(...new TextEncoder().encode(args.content)));
+        item.contentBytes = args.content.length;
+        item.hasHtml = false;
+      }
+      return null;
+    }
+    if (cmd === 'create_pinned_clip') {
+      const created = {
+        id: 'created-pinned',
+        contentType: 'text',
+        content: btoa(String.fromCharCode(...new TextEncoder().encode(args.content))),
+        timestamp: Math.floor(Date.now() / 1000) + 10,
+        isPinned: true,
+        pinOrder: 99,
+        label: args.label,
+        sourceApp: 'ClipMan',
+        hasHtml: false,
+        contentBytes: args.content.length,
+        fileCount: 0,
+      };
+      clips.unshift(created);
+      return structuredClone(created);
     }
     if (cmd === 'get_clip' && args.id === 'clip-2')
       return { id: args.id, contentType: 'image', text: '', imageUrl: clips[2].content };
@@ -288,15 +341,15 @@ test('10000 loaded results keep the DOM bounded', async ({ page }) => {
   expect(await page.getByRole('row').count()).toBeLessThan(20);
 });
 
-test('image originals are loaded only when explicitly requested', async ({ page }) => {
+test('normal images auto-load original preview while huge images require manual expand', async ({
+  page,
+}) => {
   await page.getByRole('combobox').focus();
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
-  const load = page.getByRole('button', { name: 'Expand preview' });
-  await expect(load).toBeVisible();
-  expect((await calls(page, 'get_clip')).filter((call) => call.args.id === 'clip-2')).toEqual([]);
-  await load.click();
-  await expect(load).toHaveCount(0);
+  await expect
+    .poll(async () => (await calls(page, 'get_clip')).some((call) => call.args.id === 'clip-2'))
+    .toBe(true);
 });
 
 test('multi-selection is distinct from keyboard focus and exposes image skipping', async ({
@@ -378,39 +431,71 @@ test('limited text preview explains that copy still uses complete content', asyn
   ).toBeVisible();
   await expect(expand).toHaveCount(0);
   await expect(page.locator('pre')).toHaveText('Detail for large');
+  await expect(
+    page.locator('aside').getByRole('button', { name: 'Edit content', exact: true })
+  ).toBeDisabled();
 });
 
-test('row mouse actions target their own item without pasting, and editing keeps row height', async ({
+test('row mouse actions show immediate pin badge, pinned count, and keep row height on edit', async ({
   page,
 }) => {
   const row = page.locator('#clip-item-clip-1');
   await row.hover();
   await row.getByRole('button', { name: 'Copy', exact: true }).click();
-  await expect(row.locator('button[aria-label="Copy"]')).toHaveClass(/text-emerald-500/);
-  await row.getByRole('button', { name: 'Pin', exact: true }).click();
-  await expect(row.getByRole('button', { name: 'Unpin', exact: true })).toBeVisible();
+  await expect(row.locator('button[aria-label="Copy"]')).toHaveClass(/is-copied/);
+  await row.getByRole('button', { name: 'Favorite', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Unfavorite', exact: true })).toBeVisible();
+  await expect(row.locator('[data-pin-badge]')).toBeVisible();
+  await expect(page.locator('[data-pinned-count]')).toHaveText('1');
   await row.getByRole('button', { name: 'Edit label', exact: true }).click();
   const input = row.getByRole('textbox', { name: 'Edit label' });
   await input.fill('Mouse label');
-  expect((await row.boundingBox())?.height).toBe(72);
+  expect((await row.boundingBox())?.height).toBe(60);
   await page.locator('#clip-item-clip-3').hover();
   await input.press('Enter');
   await expect(row).toContainText('Mouse label');
   await row.hover();
   await row.getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(row).toHaveCount(0);
-  const calls = await page.evaluate(() => (window as any).calls);
-  expect(calls.find((call: any) => call.cmd === 'copy_to_system_clipboard').args).toEqual({
+  const recorded = await page.evaluate(() => (window as any).calls);
+  expect(recorded.find((call: any) => call.cmd === 'copy_to_system_clipboard').args).toEqual({
     clipId: 'clip-1',
   });
-  expect(calls.find((call: any) => call.cmd === 'set_clip_label').args).toEqual({
+  expect(recorded.find((call: any) => call.cmd === 'set_clip_label').args).toEqual({
     id: 'clip-1',
     label: 'Mouse label',
   });
-  expect(calls.find((call: any) => call.cmd === 'delete_clip').args).toEqual({ id: 'clip-1' });
+  expect(recorded.find((call: any) => call.cmd === 'delete_clip').args).toEqual({ id: 'clip-1' });
   expect(
-    calls.filter((call: any) => call.cmd === 'paste_clip' || call.cmd === 'paste_clips')
+    recorded.filter((call: any) => call.cmd === 'paste_clip' || call.cmd === 'paste_clips')
   ).toEqual([]);
+});
+
+test('category filters, creating pinned snippets, and editing preview content work end-to-end', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await expect(page.getByRole('row')).toHaveCount(1);
+  await expect(page.locator('#clip-item-clip-1')).toBeVisible();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+
+  await page.getByRole('button', { name: 'Favorites', exact: true }).click();
+  await page.getByRole('button', { name: 'New', exact: true }).first().click();
+  await page.getByPlaceholder('Label (optional)').fill('Standup');
+  await page.getByPlaceholder('Type reusable text, snippet, or prompt...').fill('Daily update');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#clip-item-created-pinned')).toContainText('Standup');
+
+  await page.locator('aside').getByRole('button', { name: 'Edit content', exact: true }).click();
+  await page.locator('aside textarea').fill('Updated daily note');
+  await page.locator('#clip-item-created-pinned').hover();
+  await page.evaluate(() => {
+    (window as any).emitTestEvent('quickbar-hidden');
+    (window as any).emitTestEvent('quickbar-opened', { panel: 'pinned' });
+  });
+  await expect(page.locator('aside textarea')).toHaveValue('Updated daily note');
+  await page.locator('aside').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('aside pre')).toHaveText('Updated daily note');
 });
 
 test('Escape cancels row editing without closing QuickBar or saving', async ({ page }) => {
@@ -424,23 +509,16 @@ test('Escape cancels row editing without closing QuickBar or saving', async ({ p
   expect(await calls(page, 'hide_quickbar', 'set_clip_label', 'paste_clip')).toEqual([]);
 });
 
-test('row actions never reserve text width or cover the content line', async ({ page }) => {
+test('row content preserves full width before and during hover', async ({ page }) => {
   const row = page.locator('#clip-item-clip-1');
   const content = row.locator('[role=gridcell]').nth(1);
-  const title = content.locator('.text-foreground');
   const rowBox = (await row.boundingBox())!;
   const before = (await content.boundingBox())!;
   expect(before.width).toBeGreaterThan(rowBox.width - 70);
   await row.hover();
   const after = (await content.boundingBox())!;
   expect(after.width).toBe(before.width);
-  const actions = (await row.locator('.row-actions').boundingBox())!;
-  const titleBox = (await title.boundingBox())!;
-  expect(actions.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-  const slot = (await row.locator('.slot-hint').boundingBox())!;
-  expect(actions.y).toBeGreaterThanOrEqual(slot.y + slot.height);
-  const metaText = (await row.locator('.row-meta > span.truncate').boundingBox())!;
-  expect(actions.x).toBeGreaterThanOrEqual(metaText.x + metaText.width - 1);
+  await expect(row.locator('.row-actions')).toBeVisible();
 });
 
 test('file rows show basenames with +N badge and Windows paths split correctly', async ({

@@ -57,9 +57,11 @@ export interface UpdateInfo {
   body?: string;
 }
 
+export type ClipFilter = 'all' | 'text' | 'image' | 'files' | 'link';
+
 export type Theme = 'light' | 'dark' | 'light-pink' | 'system';
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info' | 'pin';
 
 export interface Toast {
   id: number;

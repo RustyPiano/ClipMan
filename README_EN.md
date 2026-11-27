@@ -24,14 +24,14 @@ ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is 
 
 ### Core Features
 
-- **Pin Content** - Pin code snippets, commands, links, etc. permanently
+- **Favorites & Snippets** - Star frequently used snippets, commands, or links, create custom favorites directly, reorder them, and edit text inline in the preview pane
 - **Persistent Storage** - SQLite database, survives restarts, smart deduplication
-- **Full-Text Search** - SQLite FTS5 + trigram index with real-time Chinese/English search
-- **Multiple Content Types** - Store plain text, HTML, images, and file lists with details loaded on demand; glyphs tell text, links, code, images and files apart, and macOS shows the source app's icon
-- **QuickBar Access** - Open from any app (default `Cmd/Ctrl+Shift+V`), select by keyboard, then auto-paste or copy based on settings
+- **Full-Text Search & Filters** - SQLite FTS5 + trigram index with match highlighting and SQL-backed category filtering (All / Text / Images / Files / Links)
+- **Rich Inspector Preview** - Store plain text, HTML, images, and file lists; preview images clearly, copy HEX/RGB/HSL color values, open links, and reveal files in Finder/Explorer; macOS shows source app icons
+- **QuickBar Access** - Open or toggle closed from any app (default `Cmd/Ctrl+Shift+V`), with native CJK IME support, keyboard selection, and auto-paste or copy-only modes
 - **Paste Format** - Keep original formatting, strip it only when taking clips through ClipMan, or turn copied rich text into plain text right away; `⌥Enter` flips it for one paste
-- **Mouse and Keyboard** - Copy, pin, label, or delete directly from each row; select a range with `⇧↑/↓` or `⇧`-click, toggle rows with `⌘`-click, then press Enter to merge paste
-- **Tray Menu** - Quick access to recent and pinned items
+- **Mouse and Keyboard** - Copy, favorite, label, or delete directly from each row; select a range with `⇧↑/↓` or `⇧`-click, toggle rows with `⌘`-click for batch favorite, batch delete, or Enter to merge paste
+- **Tray Menu** - Quick access to open QuickBar or copy recent and favorite items
 - **Multiple Themes** - Light/Dark/Pink themes, follow system
 - **Multi-Language** - English and Chinese support, auto-detect system language
 
@@ -66,7 +66,7 @@ Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) t
 
 1. Use hotkey `Cmd+Shift+V` (macOS) / `Ctrl+Shift+V` (Windows) to open
 2. All copied content is automatically saved in the history list
-3. Click the pin icon to pin frequently used content
+3. Click the star icon to save favorites, or create new snippets directly in the Favorites panel
 4. Use search bar to quickly find history records
 5. Click an item to run the QuickBar default action: auto-paste by default, or copy only when auto-paste is disabled
 6. Click tray icon for quick access (tray menu actions always copy only)

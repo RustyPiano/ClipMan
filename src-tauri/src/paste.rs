@@ -148,13 +148,47 @@ pub async fn use_clips(
     .await
     .map_err(|error| error.to_string())??;
 
+    let foreground_store = state.quickbar_foreground_window.clone();
     let action = async {
+        if hide && !simulate {
+            let app_for_hide = app.clone();
+            let store_for_hide = foreground_store.clone();
+            crate::commands::run_action_on_main_thread(
+                app,
+                "hide_quickbar_and_restore",
+                move || crate::window::hide_quickbar_and_restore(&app_for_hide, &store_for_hide),
+            )
+            .map_err(|e| format!("Failed to hide QuickBar after copy: {e}"))?;
+            return Ok(());
+        }
         if hide {
-            crate::window::hide_quickbar(app)
-                .map_err(|e| format!("Failed to hide QuickBar before paste: {e}"))?;
+            let app_for_hide = app.clone();
+            crate::commands::run_action_on_main_thread(app, "hide_quickbar", move || {
+                crate::window::hide_quickbar(&app_for_hide)
+            })
+            .map_err(|e| format!("Failed to hide QuickBar before paste: {e}"))?;
         }
         if simulate {
-            simulate_paste(app, foreground).await
+            let result = simulate_paste(app, foreground).await;
+            if result.is_err() && hide && crate::accessibility::is_trusted() {
+                let app_for_restore = app.clone();
+                let store_for_restore = foreground_store.clone();
+                if let Err(restore_error) = crate::commands::run_action_on_main_thread(
+                    app,
+                    "restore_after_paste_failure",
+                    move || {
+                        crate::window::hide_quickbar_and_restore(
+                            &app_for_restore,
+                            &store_for_restore,
+                        )
+                    },
+                ) {
+                    log::debug!(
+                        "Could not restore previous app after paste failure: {restore_error}"
+                    );
+                }
+            }
+            result
         } else {
             Ok(())
         }
@@ -505,7 +539,22 @@ fn simulate_paste_blocking(app: &AppHandle, foreground: Option<isize>) -> Result
         crate::window::restore_recorded_foreground_window(foreground)
     })
     .map_err(|e| format!("Could not reactivate previous app before paste: {e}"))?;
-    thread::sleep(Duration::from_millis(60));
+
+    if let Some(expected_pid) = foreground.map(|pid| pid as i32) {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if crate::window::frontmost_app_pid() == Some(expected_pid) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "Timed out waiting for previous app (pid {expected_pid}) to become frontmost"
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    thread::sleep(Duration::from_millis(20));
 
     if app
         .get_webview_window(crate::window::QUICKBAR_WINDOW_LABEL)

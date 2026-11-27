@@ -12,13 +12,15 @@ mod tray;
 mod window;
 
 use commands::{
-    check_accessibility_permission, check_clipboard_permission, check_for_updates,
-    clear_non_pinned_history, copy_to_system_clipboard, delete_clip, disable_global_shortcut,
+    batch_delete_clips, batch_toggle_pin, check_accessibility_permission,
+    check_clipboard_permission, check_for_updates, clear_non_pinned_history, copy_plain_text,
+    copy_to_system_clipboard, create_pinned_clip, delete_clip, disable_global_shortcut,
     enable_global_shortcut, get_app_icon, get_clip, get_current_data_path, get_pinned_clips,
     get_recent_clips, get_settings, hide_quickbar, install_update, migrate_data_location,
-    open_accessibility_settings, open_folder, open_settings_window, paste_clip, paste_clips,
-    register_quickbar_shortcut, reorder_pinned, search_clips, set_clip_label, show_quickbar,
-    toggle_pin, update_settings,
+    open_accessibility_settings, open_folder, open_settings_window, open_url, paste_clip,
+    paste_clips, register_quickbar_shortcut, reorder_pinned, reveal_in_folder, search_clips,
+    set_clip_label, set_quickbar_panel, show_quickbar, toggle_pin, update_clip_content,
+    update_settings,
 };
 use paste::CopyWrite;
 use settings::SettingsManager;
@@ -38,6 +40,7 @@ pub struct AppState {
     pub(crate) last_copied_by_us: Arc<Mutex<Option<CopyWrite>>>,
     pub icon_cache: Arc<TrayIconCache>,
     pub quickbar_foreground_window: window::ForegroundWindowStore,
+    pub quickbar_panel: window::QuickBarPanelStore,
 }
 
 fn initialize_storage_core(
@@ -162,9 +165,11 @@ fn main() {
             let app_for_main = app.clone();
             if let Err(e) = app.run_on_main_thread(move || {
                 if let Some(state) = app_for_main.try_state::<AppState>() {
-                    if let Err(e) =
-                        window::show_quickbar(&app_for_main, &state.quickbar_foreground_window)
-                    {
+                    if let Err(e) = window::show_quickbar(
+                        &app_for_main,
+                        &state.quickbar_foreground_window,
+                        &state.quickbar_panel,
+                    ) {
                         log::error!("Failed to show QuickBar for second-instance launch: {e}");
                     }
                 }
@@ -177,6 +182,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -217,6 +223,7 @@ fn main() {
 
             let last_copied_by_us = Arc::new(Mutex::new(None));
             let quickbar_foreground_window = Arc::new(Mutex::new(None));
+            let quickbar_panel = Arc::new(Mutex::new(window::QuickBarPanel::Recent));
 
             app.manage(AppState {
                 storage: Arc::new(Mutex::new(storage)),
@@ -226,6 +233,7 @@ fn main() {
                 last_copied_by_us: last_copied_by_us.clone(),
                 icon_cache: Arc::new(TrayIconCache::new()),
                 quickbar_foreground_window: quickbar_foreground_window.clone(),
+                quickbar_panel: quickbar_panel.clone(),
             });
 
             if let Err(e) = window::setup_windows(app.handle()) {
@@ -268,6 +276,7 @@ fn main() {
                 app.handle(),
                 current_shortcut.as_str(),
                 quickbar_foreground_window.clone(),
+                quickbar_panel.clone(),
                 window::QuickBarPanel::Recent,
             ) {
                 log::error!("{}", e);
@@ -278,6 +287,7 @@ fn main() {
                     app.handle(),
                     pinned_shortcut.as_str(),
                     quickbar_foreground_window,
+                    quickbar_panel,
                     window::QuickBarPanel::Pinned,
                 ) {
                     log::warn!("{}", e);
@@ -297,26 +307,34 @@ fn main() {
             get_clip,
             search_clips,
             toggle_pin,
+            batch_toggle_pin,
             delete_clip,
+            batch_delete_clips,
             get_settings,
             update_settings,
             check_clipboard_permission,
             check_accessibility_permission,
             open_accessibility_settings,
             clear_non_pinned_history,
+            copy_plain_text,
             copy_to_system_clipboard,
             paste_clip,
             paste_clips,
             set_clip_label,
+            update_clip_content,
+            create_pinned_clip,
             reorder_pinned,
             open_settings_window,
             hide_quickbar,
             show_quickbar,
+            set_quickbar_panel,
             check_for_updates,
             install_update,
             disable_global_shortcut,
             enable_global_shortcut,
             open_folder,
+            open_url,
+            reveal_in_folder,
             migrate_data_location,
             get_current_data_path
         ])

@@ -14,6 +14,7 @@ const ICON_CACHE_SIZE: usize = 50;
 pub const TRAY_ID: &str = "main";
 
 pub struct TrayI18n {
+    pub open_quickbar: &'static str,
     pub pinned_header: &'static str,
     pub recent_header: &'static str,
     pub image: &'static str,
@@ -27,7 +28,8 @@ impl TrayI18n {
     pub fn new(locale: &str) -> Self {
         if locale.starts_with("zh") {
             Self {
-                pinned_header: "置顶项",
+                open_quickbar: "打开 ClipMan",
+                pinned_header: "收藏",
                 recent_header: "最近复制",
                 image: "图片",
                 clear: "清除",
@@ -37,7 +39,8 @@ impl TrayI18n {
             }
         } else {
             Self {
-                pinned_header: "Pinned",
+                open_quickbar: "Open ClipMan",
+                pinned_header: "Favorites",
                 recent_header: "Recent",
                 image: "Image",
                 clear: "Clear",
@@ -171,7 +174,9 @@ pub fn build_tray_menu(
         )
     };
 
-    let mut menu_builder = MenuBuilder::new(app);
+    let mut menu_builder = MenuBuilder::new(app)
+        .item(&MenuItemBuilder::with_id("open_quickbar", i18n.open_quickbar).build(app)?)
+        .separator();
 
     for (header_id, header_text, items) in [
         ("pinned_header", i18n.pinned_header, &pinned_items),
@@ -211,6 +216,17 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
     log::debug!("Menu event: {}", event_id);
 
     match event_id {
+        "open_quickbar" => {
+            log::info!("Open QuickBar menu clicked");
+            let state = app.state::<AppState>();
+            if let Err(e) = crate::window::show_quickbar(
+                app,
+                &state.quickbar_foreground_window,
+                &state.quickbar_panel,
+            ) {
+                log::error!("Failed to show QuickBar from tray: {}", e);
+            }
+        }
         "quit" => {
             log::info!("Quit menu clicked");
             app.exit(0);

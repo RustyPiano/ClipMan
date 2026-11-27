@@ -7,9 +7,11 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::Settings;
-use crate::storage::{ClipStorage, FrontendClipItem};
+use crate::storage::{ClipFilter, ClipStorage, FrontendClipItem};
 use crate::tray::update_tray_menu;
 use crate::{migration, AppState};
+
+const MAX_BATCH_IDS: usize = 10_000;
 
 async fn with_storage<T, F>(storage: Arc<Mutex<ClipStorage>>, op: F) -> Result<T, String>
 where
@@ -47,11 +49,13 @@ pub async fn get_recent_clips(
     limit: usize,
     before_timestamp: Option<f64>,
     before_id: Option<String>,
+    filter: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
+    let filter = ClipFilter::from_optional(filter.as_deref())?;
     with_storage(state.storage.clone(), move |storage| {
         let before = before_timestamp.zip(before_id.as_deref());
         let items = storage
-            .get_recent_clip_previews_page(limit, before)
+            .get_recent_clip_previews_page(limit, before, filter)
             .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
@@ -101,10 +105,12 @@ pub async fn get_app_icon(
 pub async fn search_clips(
     state: State<'_, AppState>,
     query: String,
+    filter: Option<String>,
 ) -> Result<Vec<FrontendClipItem>, String> {
+    let filter = ClipFilter::from_optional(filter.as_deref())?;
     with_storage(state.storage.clone(), move |storage| {
         let items = storage
-            .search_clip_previews(&query)
+            .search_clip_previews_filtered(&query, filter)
             .map_err(|e| e.to_string())?;
         Ok(items
             .into_iter()
@@ -171,8 +177,8 @@ pub async fn check_accessibility_permission() -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn open_accessibility_settings() -> Result<(), String> {
-    crate::accessibility::open_settings()
+pub async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
+    crate::accessibility::open_settings(&app)
 }
 
 #[tauri::command]
@@ -244,6 +250,20 @@ pub async fn copy_to_system_clipboard(
 }
 
 #[tauri::command]
+pub async fn copy_plain_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
+    let _operation = state
+        .clipboard_use_lock
+        .try_lock()
+        .map_err(|_| "A clipboard operation is already running".to_string())?;
+    let marker = state.last_copied_by_us.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::paste::write_plain_text_to_system_clipboard(&text, &marker)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn paste_clip(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -290,6 +310,7 @@ pub fn register_quickbar_shortcut(
     app: &AppHandle,
     shortcut: &str,
     foreground_store: crate::window::ForegroundWindowStore,
+    panel_store: crate::window::QuickBarPanelStore,
     panel: crate::window::QuickBarPanel,
 ) -> Result<(), String> {
     let app_clone = app.clone();
@@ -304,11 +325,13 @@ pub fn register_quickbar_shortcut(
 
             let app_for_action = app_clone.clone();
             let foreground_store = foreground_store.clone();
+            let panel_store = panel_store.clone();
             if let Err(e) =
                 run_action_on_main_thread(&app_clone, "show_quickbar_from_shortcut", move || {
-                    crate::window::show_quickbar_with_panel(
+                    crate::window::toggle_quickbar_with_panel(
                         &app_for_action,
                         &foreground_store,
+                        &panel_store,
                         panel,
                     )
                 })
@@ -338,6 +361,133 @@ pub async fn set_clip_label(
 }
 
 #[tauri::command]
+pub async fn update_clip_content(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    content: String,
+) -> Result<(), String> {
+    if content.trim().is_empty() {
+        return Err("Content cannot be empty".to_string());
+    }
+    let max_bytes = state.settings.get().max_text_bytes;
+    if content.len() > max_bytes {
+        return Err(format!(
+            "Content exceeds max text limit ({max_bytes} bytes)"
+        ));
+    }
+    let updated = with_storage(state.storage.clone(), move |storage| {
+        storage.update_text_content(&id, &content)
+    })
+    .await?;
+    if !updated {
+        return Err("Clip not found or cannot be edited".to_string());
+    }
+
+    update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_pinned_clip(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    content: String,
+    label: Option<String>,
+) -> Result<FrontendClipItem, String> {
+    if content.trim().is_empty() {
+        return Err("Content cannot be empty".to_string());
+    }
+    let max_bytes = state.settings.get().max_text_bytes;
+    if content.len() > max_bytes {
+        return Err(format!(
+            "Content exceeds max text limit ({max_bytes} bytes)"
+        ));
+    }
+    let preview = with_storage(state.storage.clone(), move |storage| {
+        storage
+            .create_pinned_text(&content, label)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+
+    update_tray_menu(&app);
+    Ok(FrontendClipItem::from_preview(preview))
+}
+
+#[tauri::command]
+pub async fn batch_toggle_pin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    is_pinned: bool,
+) -> Result<usize, String> {
+    if ids.len() > MAX_BATCH_IDS {
+        return Err(format!(
+            "Cannot process more than {MAX_BATCH_IDS} clips at once"
+        ));
+    }
+    let limit = state.settings.get().max_history_items;
+    let changed = with_storage(state.storage.clone(), move |storage| {
+        storage
+            .batch_update_pin(&ids, is_pinned, limit)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+
+    update_tray_menu(&app);
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn batch_delete_clips(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    if ids.len() > MAX_BATCH_IDS {
+        return Err(format!(
+            "Cannot process more than {MAX_BATCH_IDS} clips at once"
+        ));
+    }
+    with_storage(state.storage.clone(), move |storage| {
+        storage.batch_delete(&ids).map_err(|e| e.to_string())
+    })
+    .await?;
+
+    update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let trimmed = url.trim();
+    if (!trimmed.starts_with("http://") && !trimmed.starts_with("https://"))
+        || trimmed.chars().any(char::is_whitespace)
+    {
+        return Err("Only http:// and https:// URLs can be opened".to_string());
+    }
+    app.opener()
+        .open_url(trimmed, None::<&str>)
+        .map_err(|e| format!("Failed to open URL: {e}"))
+}
+
+#[tauri::command]
+pub async fn reveal_in_folder(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let target = std::path::Path::new(&path);
+    if !target.exists() {
+        return Err("File or folder no longer exists".to_string());
+    }
+    app.opener()
+        .reveal_item_in_dir(target)
+        .map_err(|e| format!("Failed to reveal file: {e}"))
+}
+
+#[tauri::command]
 pub async fn reorder_pinned(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -364,18 +514,30 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn hide_quickbar(app: AppHandle) -> Result<(), String> {
-    crate::window::hide_quickbar(&app)
+pub async fn hide_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let foreground_store = state.quickbar_foreground_window.clone();
+    let app_for_action = app.clone();
+    run_action_on_main_thread(&app, "hide_quickbar", move || {
+        crate::window::hide_quickbar_and_restore(&app_for_action, &foreground_store)
+    })
 }
 
 #[tauri::command]
 pub async fn show_quickbar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let foreground_store = state.quickbar_foreground_window.clone();
+    let panel_store = state.quickbar_panel.clone();
 
     let app_for_action = app.clone();
     run_action_on_main_thread(&app, "show_quickbar", move || {
-        crate::window::show_quickbar(&app_for_action, &foreground_store)
+        crate::window::show_quickbar(&app_for_action, &foreground_store, &panel_store)
     })
+}
+
+#[tauri::command]
+pub async fn set_quickbar_panel(state: State<'_, AppState>, panel: String) -> Result<(), String> {
+    let panel = crate::window::QuickBarPanel::try_from(panel.as_str())?;
+    crate::window::set_active_quickbar_panel(&state.quickbar_panel, panel);
+    Ok(())
 }
 
 async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
@@ -445,6 +607,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 fn apply_shortcut_changes(
     app: &AppHandle,
     foreground_store: crate::window::ForegroundWindowStore,
+    panel_store: crate::window::QuickBarPanelStore,
     old_shortcut: &str,
     old_pinned_shortcut: Option<&str>,
     new_shortcut: &str,
@@ -475,7 +638,13 @@ fn apply_shortcut_changes(
     }
 
     let result = changes.iter().try_for_each(|&(_, new, panel)| match new {
-        Some(new) => register_quickbar_shortcut(app, new, foreground_store.clone(), panel),
+        Some(new) => register_quickbar_shortcut(
+            app,
+            new,
+            foreground_store.clone(),
+            panel_store.clone(),
+            panel,
+        ),
         None => Ok(()),
     });
 
@@ -487,9 +656,13 @@ fn apply_shortcut_changes(
         }
         for &(old, _, panel) in &changes {
             if let Some(old) = old {
-                if let Err(e) =
-                    register_quickbar_shortcut(app, old, foreground_store.clone(), panel)
-                {
+                if let Err(e) = register_quickbar_shortcut(
+                    app,
+                    old,
+                    foreground_store.clone(),
+                    panel_store.clone(),
+                    panel,
+                ) {
                     log::warn!("Failed to restore old {panel:?} shortcut '{old}': {e}");
                 }
             }
@@ -546,6 +719,7 @@ fn update_settings_blocking(
 
     let autostart_changed = old.enable_autostart != settings.enable_autostart;
     let foreground_store = state.quickbar_foreground_window.clone();
+    let panel_store = state.quickbar_panel.clone();
     let rollback_autostart = |reason: &str| {
         if autostart_changed {
             if let Err(rollback_error) = apply_autostart_setting(app, old.enable_autostart) {
@@ -569,6 +743,7 @@ fn update_settings_blocking(
     if let Err(e) = apply_shortcut_changes(
         app,
         foreground_store.clone(),
+        panel_store.clone(),
         &old.global_shortcut,
         old.pinned_shortcut.as_deref(),
         &settings.global_shortcut,
@@ -582,6 +757,7 @@ fn update_settings_blocking(
         if let Err(rollback_error) = apply_shortcut_changes(
             app,
             foreground_store,
+            panel_store,
             &settings.global_shortcut,
             settings.pinned_shortcut.as_deref(),
             &old.global_shortcut,
@@ -683,6 +859,7 @@ pub async fn enable_global_shortcut(
     let settings = state.settings.get();
     let current_shortcut = settings.global_shortcut;
     let foreground_store = state.quickbar_foreground_window.clone();
+    let panel_store = state.quickbar_panel.clone();
 
     if !app
         .global_shortcut()
@@ -692,6 +869,7 @@ pub async fn enable_global_shortcut(
             &app,
             current_shortcut.as_str(),
             foreground_store.clone(),
+            panel_store.clone(),
             crate::window::QuickBarPanel::Recent,
         )
         .map_err(|e| format!("Failed to re-enable shortcut: {}", e))?;
@@ -708,6 +886,7 @@ pub async fn enable_global_shortcut(
                 &app,
                 pinned_shortcut.as_str(),
                 foreground_store,
+                panel_store,
                 crate::window::QuickBarPanel::Pinned,
             )
             .map_err(|e| format!("Failed to re-enable pinned shortcut: {}", e))?;
@@ -719,19 +898,12 @@ pub async fn enable_global_shortcut(
 }
 
 #[tauri::command]
-pub async fn open_folder(path: String) -> Result<(), String> {
-    let program = if cfg!(target_os = "macos") {
-        "open"
-    } else if cfg!(target_os = "windows") {
-        "explorer"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program)
-        .arg(&path)
-        .spawn()
-        .map_err(|e| format!("Failed to open folder: {}", e))?;
-    Ok(())
+pub async fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    app.opener()
+        .open_path(&path, None::<&str>)
+        .map_err(|e| format!("Failed to open folder: {e}"))
 }
 
 #[tauri::command]

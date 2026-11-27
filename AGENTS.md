@@ -19,15 +19,13 @@ ClipMan is a **local-first desktop clipboard manager** (Windows / macOS / Linux)
 | --- | --- | --- |
 | `docs/dev/STATUS.md` | Current state, uncommitted work, TODO queue, known issues | **Update it as soon as `src/` or `src-tauri/` changes or a release/CI state changes, without waiting for a reminder.** Keep ≤100 lines; delete stale entries instead of appending forever. |
 | `AGENTS.md` (this file) | Stable knowledge: architecture, conventions, commands, gotchas | Update in the same session whenever conventions/architecture/commands change. Never let it describe a past state as present. |
-| Other `docs/dev/*.md` | Docs for in-progress work (plans, specs) | Move to `docs/archive/` with a dated banner once the work is finished or superseded. |
-| `docs/adr/` | Design decision records (one decision per file) | Add a new ADR or mark an old one superseded when a decision changes. Code never carries the rationale in comments. |
-| `docs/archive/` | Finished or superseded docs (plans, specs, review records), each with a banner | Read-only. **Never treat archived docs as current guidance.** |
+| `docs/adr/` | Design decision records (one decision per file) | Add a new ADR or replace an old one when a decision changes. Code never carries the rationale in comments. |
 | `README.md` / `README_EN.md` | Human/user-facing feature docs | Update when user-visible features ship (typically at release time). |
 
 Maintenance rules for agents:
 
-1. New docs about in-progress work go under `docs/dev/`; when the work is finished or the doc is superseded, move it to `docs/archive/` with a dated banner at the top — don't leave two docs claiming to be current.
-2. If you find a contradiction between a doc and the code, the code is the truth; fix or archive the doc in the same session and note it in `STATUS.md`.
+1. Keep docs minimal and truthful; delete obsolete docs instead of keeping stale copies that can mislead future changes.
+2. If you find a contradiction between a doc and the code, the code is the truth; fix or delete the doc in the same session and note it in `STATUS.md`.
 
 ## Setup Commands
 
@@ -150,8 +148,8 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 - 自身复制识别：`last_copied_by_us` 保存 `CopyWrite`（`CopyMarker` 和写入完成时间）；写入期间标记有效，完成后匹配时检查 2 秒有效期。所有剪贴板写入都在 `clipboard_use_lock` 内执行。Text 的标记只计算纯文本；Files 使用实际写入路径列表的 JSON（macOS 使用存储路径，其他平台使用规范路径）。自身复制或去重跳过仍需推进 `last_marker`。
 - `globalPlain` 的同文富文本必须重新经过应用排除、密钥和大小检查，并在保存成功后才能剥离格式。剥离持有 `clipboard_use_lock`：macOS/Windows 只核对系统剪贴板序号；Linux 的 arboard 不提供序号，改为核对完整文本、HTML 且没有文件列表，因此无法区分外部应用再次复制完全相同的内容。⌥Enter 贴出的富文本保留在系统剪贴板，直到下一次复制。
 - macOS 文件写回不经过 arboard，直接向 `NSPasteboard` 写入 `NSURL`，并核对剪贴板里实际保留的条目，原因见 `docs/adr/0013-macos-file-write-nspasteboard.md`。写入失败时返回错误，不改写为路径文本。
-- QuickBar surface/focus tokens (`--qb-*`) live in `src/app.css`, scoped to `.quickbar-panel`. Row action backgrounds use the row surface, avoiding unrelated white/dark toolbar patches.
-- macOS 上的 QuickBar 在启动时用 `object_setClass` 换成 NSPanel 子类（`window.rs` 的 `QuickBarNsPanel`），设置 `NonactivatingPanel` 后调用 AppKit 私有接口 `_setPreventsActivation:` 同步鼠标激活行为。不要调用 `window.set_focus()`：tao 会顺带 `activateIgnoringOtherApps`。原生 QA 断言打开和点击 QuickBar 后目标应用仍在前台，并覆盖访达改名粘贴。
+- QuickBar surface/focus tokens (`--qb-*`, `--pin-*`) live in `src/app.css`, scoped to `.quickbar-panel`.
+- macOS 上的 QuickBar 使用标准浮动窗口（`NSFloatingWindowLevel`），打开时通过 `window.set_focus()` 正常激活 Accessory 应用以支持 `WKWebView` 中/日/韩输入法候选窗；不调用 macOS 14+ 专属的 `NSApp.activate()`。粘贴前轮询确认原应用回到前台，复制隐藏、`Esc` 或重复按同面板快捷键隐藏时恢复原前台应用（权衡详见 `docs/adr/0014-quickbar-macos-window.md`）。
 - QuickBar shadow is the **native macOS window shadow** derived from the window's alpha shape. Do not add CSS drop shadows or translucent pixels around `.quickbar-panel` — they distort the alpha shape and the shadow renders as a gray halo. Windows keeps `shadow: false` (DWM shadows follow the rectangular frame).
 - Tray menu is rebuilt from the DB on every clipboard change — keep that path cheap. Propagate query/build errors and preserve the previous menu on refresh failure.
 - Runtime data-path reporting and migration source/cleanup come from `ClipStorage::data_directory()`, the canonical parent of the database actually opened. `custom_data_path` remains only the next-start preference; if that directory is unusable at startup, ClipMan shows the fatal storage alert and exits instead of falling back to the default directory. Migration rejects destinations that already contain ClipMan database files, so backups write straight to the destination path.
@@ -159,14 +157,15 @@ bun run format         # prettier --write "src/**/*.{ts,svelte}"
 - Clip timestamps are fractional Unix seconds (`f64` / JS number); preserve fractions through capture, dedup, paste history touch and pagination cursors. SQLite reads legacy integer seconds alongside new real values; do not truncate to whole seconds.
 - Database format v3 stores file lists as JSON string arrays. Every database open converts any remaining newline-separated file rows (possible after a downgrade to 2.2.x, which does not reject v3 databases) to JSON and rebuilds FTS; all other code reads JSON only. Upgrades create a SQLite backup before changing rows and reject newer schema versions; do not lower `CURRENT_DB_USER_VERSION` or write newline-joined file records. The unused legacy `group_name` column stays in old databases and is never read.
 - Search uses SQLite FTS5 with a full-text short-query LIKE fallback. Results contain match excerpts and at most 1001 rows (1000 visible + sentinel); keep FTS maintenance in storage. Limit FTS candidates before generating excerpts.
-- QuickBar 使用固定行高 `ROW_HEIGHT_REM` 和列表虚拟化，CSS 与滚动计算共用该值；标签编辑保持行高。布局见 `ClipboardItem.svelte`，不得在方向键处理时逐行测量位置。
+- QuickBar 使用固定行高 `ROW_HEIGHT_REM` 和列表虚拟化，CSS 与滚动计算共用该值；标签编辑保持行高。
 - 文件摘要最多返回两个路径，每个路径最多 4096 个字符；实际数量来自 `fileCount`，用于多文件图标和剩余数量提示。
-- 每行保留 grid/row/gridcell 语义；类型图标、粘贴按钮和操作按钮各自独立，不嵌套按钮。图标和操作按钮的 mousedown 必须阻止默认聚焦，操作区不得覆盖文本。
-- 光标和多选由 `selectionStore` 按 ID 管理。⇧↑/↓ 和 ⇧点击按锚点选择范围，范围缩回一行时清空多选；普通 ↑/↓ 清空多选，⌘点击和类型图标切换单行。回车使用唯一勾选行或合并多选，删除当前行后保留光标位置。相关行为由 `tests/selection.test.ts` 和 `e2e/quickbar.spec.ts` 覆盖。
-- ⇧点击不触发粘贴，尚无多选时勾选该行作为锚点。Alt+Left/Right 切换面板，Tab 保持原生焦点导航。
+- 每行保留 grid/row/gridcell 语义；类型图标、粘贴按钮和操作按钮各自独立，不嵌套按钮。图标和操作按钮的 mousedown 阻止默认聚焦。元信息用单个拼接字符串渲染以避免 WebKit 多余空白；删除光标所在行后光标保持在原位置。
+- 光标和多选由 `selectionStore` 按 ID 管理。⇧↑/↓ 和 ⇧点击按锚点选择范围，范围缩回一行时清空多选；普通 ↑/↓ 清空多选，⌘点击和类型图标切换单行；多选支持批量置顶（⌘P）、批量删除（⌘⌫，带确认）和合并粘贴（回车）。相关行为由 `tests/selection.test.ts` 和 `e2e/quickbar.spec.ts` 覆盖。
+- ⇧点击不触发粘贴，尚无多选时勾选该行作为锚点。面板切换使用 ⌘[/] 或 ⌃Tab（搜索框为空时兼容 Alt+Left/Right），避免拦截搜索框按词移动光标；Esc 按层取消编辑/菜单/多选/搜索筛选，最后隐藏窗口。
 - QuickBar 按键处理同时检查 `isComposing` 和 `keyCode === 229`，输入法结束组字后的确认回车也不能触发粘贴。
-- `get_clip` returns decoded `ClipDetail` (`text` / optional original `imageUrl`), distinct from base64 list summaries. Small text details have one bounded cache (16 × 256K UTF-16 units). SQL caps text/file details at 1 MiB and rejects images above 16 MiB before returning their BLOB; `truncated` drives the preview notice. Copy/paste still read complete content.
-- Copy, single paste and merge paste share `paste::use_clips`, guarded across all callers. Write succeeds before history touch; `clips-used` invalidates the entire affected view after the action, while `clipboard-changed` remains the capture upsert event. Results distinguish `copied`, `pasteRequested`, and `copiedOnly`; never turn post-write maintenance failure into a retryable paste failure.
+- `get_clip` returns decoded `ClipDetail` (`text` / optional original `imageUrl`), distinct from base64 list summaries. Small text details have one bounded cache (16 × 256K UTF-16 units) and image details have a bounded 4-item cache. SQL caps text/file details at 1 MiB and rejects images above 16 MiB before returning their BLOB; `truncated` drives the preview notice and disables inline editing (backend `update_text_content` also enforces the 1 MiB limit). Copy/paste still read complete content.
+- Copy, single paste and merge paste share `paste::use_clips`, guarded across all callers; standalone plain-text copy (e.g. color formats) uses `copy_plain_text` under the same `clipboard_use_lock` and `last_copied_by_us` marker. External URL opening and folder reveal use `tauri-plugin-opener` (never shell `cmd /C start`). Write succeeds before history touch; `clips-used` invalidates the entire affected view after the action, while `clipboard-changed` remains the capture upsert event. Results distinguish `copied`, `pasteRequested`, and `copiedOnly`; never turn post-write maintenance failure into a retryable paste failure.
+- Category filtering (`all | text | image | files | link`) runs in SQLite for both `get_recent_clips` pagination and `search_clips`.
 - Merge paste has a 50 MB aggregate text budget. History limits are enforced on new/duplicate capture, settings reduction, and unpinning; keep pruning and FTS updates in the same storage transaction.
 - History initialization and append pagination have independent request sequences. Background invalidations share one running refresh with a pending flag. Incoming capture events are retained only during a history reload; do not restore a permanent duplicate event cache.
 - 来源应用图标按应用名存在 `app_icons` 表（每个应用一份 64px PNG），不写进 clips 行；macOS 采集时每个应用每次运行渲染一次 `NSRunningApplication.icon` 并发出 `app-icon-saved`，前端 `appIconStore` 按名字缓存 `get_app_icon` 的结果并在该事件后重新读取。图标失败只记录日志，不影响本次复制的保存。

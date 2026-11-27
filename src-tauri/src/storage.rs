@@ -363,11 +363,20 @@ impl ClipStorage {
     }
 
     pub fn get_recent_clip_previews(&self, limit: usize) -> Result<Vec<ClipPreviewItem>> {
+        self.get_recent_clip_previews_filtered(limit, ClipFilter::All)
+    }
+
+    pub fn get_recent_clip_previews_filtered(
+        &self,
+        limit: usize,
+        filter: ClipFilter,
+    ) -> Result<Vec<ClipPreviewItem>> {
         let columns = preview_columns(TEXT_HEAD_PREVIEW);
+        let filter_sql = filter.sql_clause();
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
-             WHERE is_pinned = 0
+             WHERE is_pinned = 0 AND ({filter_sql})
              ORDER BY timestamp DESC, id DESC
              LIMIT ?1"
         ))?;
@@ -380,16 +389,19 @@ impl ClipStorage {
         &self,
         limit: usize,
         before: Option<(f64, &str)>,
+        filter: ClipFilter,
     ) -> Result<Vec<ClipPreviewItem>> {
         let Some((before_timestamp, before_id)) = before else {
-            return self.get_recent_clip_previews(limit);
+            return self.get_recent_clip_previews_filtered(limit, filter);
         };
 
         let columns = preview_columns(TEXT_HEAD_PREVIEW);
+        let filter_sql = filter.sql_clause();
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
              WHERE is_pinned = 0
+               AND ({filter_sql})
                AND (timestamp < ?1 OR (timestamp = ?1 AND id < ?2))
              ORDER BY timestamp DESC, id DESC
              LIMIT ?3"
@@ -417,15 +429,23 @@ impl ClipStorage {
     }
 
     pub fn search_clip_previews(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
+        self.search_clip_previews_filtered(query, ClipFilter::All)
+    }
+
+    pub fn search_clip_previews_filtered(
+        &self,
+        query: &str,
+        filter: ClipFilter,
+    ) -> Result<Vec<ClipPreviewItem>> {
         log::debug!("Searching previews ({} characters)", query.chars().count());
 
         let query = query.trim();
 
         if query.chars().count() < 3 {
-            return self.search_previews_with_like(query);
+            return self.search_previews_with_like(query, filter);
         }
 
-        self.search_previews_with_fts(query)
+        self.search_previews_with_fts(query, filter)
     }
 
     pub fn backup_to_path(&self, destination_db_path: &Path) -> Result<()> {
@@ -462,6 +482,123 @@ impl ClipStorage {
         )?;
         Self::sync_fts_for_clip_id_with_conn(&tx, id)?;
         tx.commit()
+    }
+
+    pub fn update_text_content(&self, id: &str, text: &str) -> std::result::Result<bool, String> {
+        let bytes = text.as_bytes();
+        let content_hash = hash_bytes(bytes);
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let existing: Option<(ContentType, usize)> = tx
+            .query_row(
+                "SELECT content_type, length(content) FROM clips WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((content_type, existing_bytes)) = existing else {
+            return Ok(false);
+        };
+        if content_type != ContentType::Text {
+            return Ok(false);
+        }
+        if existing_bytes > MAX_TEXT_DETAIL_BYTES {
+            return Err("Clip exceeds the 1 MiB safe editing limit".to_string());
+        }
+        let updated = tx
+            .execute(
+                "UPDATE clips SET content = ?1, content_hash = ?2, html = NULL WHERE id = ?3 AND content_type = 'text'",
+                params![bytes, content_hash, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated > 0 {
+            Self::sync_fts_for_clip_id_with_conn(&tx, id).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated > 0)
+    }
+
+    pub fn create_pinned_text(&self, text: &str, label: Option<String>) -> Result<ClipPreviewItem> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let bytes = text.as_bytes();
+        let content_hash = hash_bytes(bytes);
+        let timestamp = current_timestamp();
+        let label = normalize_label(label);
+        let tx = self.conn.unchecked_transaction()?;
+        let max_order: Option<i32> = tx.query_row(
+            "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let pin_order = max_order.unwrap_or(0) + 1;
+        tx.execute(
+            "INSERT INTO clips (
+                id, content, thumbnail, content_hash, content_type, timestamp,
+                is_pinned, pin_order, label, source_app, html
+             )
+             VALUES (?1, ?2, NULL, ?3, 'text', ?4, 1, ?5, ?6, 'ClipMan', NULL)",
+            params![id, bytes, content_hash, timestamp, pin_order, label],
+        )?;
+        Self::sync_fts_for_clip_id_with_conn(&tx, &id)?;
+        tx.commit()?;
+        self.get_preview_by_id(&id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    pub fn batch_update_pin(&self, ids: &[String], is_pinned: bool, limit: usize) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let mut next_order = if is_pinned {
+            let max_order: Option<i32> = tx.query_row(
+                "SELECT MAX(pin_order) FROM clips WHERE is_pinned = 1",
+                [],
+                |row| row.get(0),
+            )?;
+            max_order.unwrap_or(0) + 1
+        } else {
+            0
+        };
+        let mut changed_total = 0usize;
+        for id in ids {
+            let changed = if is_pinned {
+                let updated = tx.execute(
+                    "UPDATE clips SET is_pinned = 1, pin_order = ?1 WHERE id = ?2 AND is_pinned = 0",
+                    params![next_order, id],
+                )?;
+                if updated > 0 {
+                    next_order += 1;
+                }
+                updated
+            } else {
+                tx.execute(
+                    "UPDATE clips SET is_pinned = 0, pin_order = NULL WHERE id = ?1 AND is_pinned = 1",
+                    params![id],
+                )?
+            };
+            changed_total += changed;
+        }
+        Self::prune_history_with_conn(&tx, limit)?;
+        tx.commit()?;
+        Ok(changed_total)
+    }
+
+    pub fn batch_delete(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        for id in ids {
+            tx.execute("DELETE FROM clips_fts WHERE clip_id = ?1", params![id])?;
+            tx.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
+        }
+        tx.commit()?;
+        self.reclaim_space();
+        Ok(())
     }
 
     pub fn reorder_pinned(&self, id: &str, direction: &str) -> Result<()> {
@@ -542,7 +679,6 @@ impl ClipStorage {
     }
 
     pub fn get_detail(&self, id: &str) -> std::result::Result<Option<FrontendClipDetail>, String> {
-        const TEXT_LIMIT: usize = 1024 * 1024;
         const IMAGE_LIMIT: usize = 16 * 1024 * 1024;
         let result = self
             .conn
@@ -550,7 +686,7 @@ impl ClipStorage {
                 &format!("WITH payload AS (SELECT content_type, {FILES_TEXT_SQL} AS data FROM clips WHERE id=?1)
                  SELECT content_type, length(data), CASE WHEN content_type='image' THEN
                    CASE WHEN length(data)<=?3 THEN data ELSE x'' END ELSE substr(data,1,?2) END FROM payload"),
-                params![id, TEXT_LIMIT, IMAGE_LIMIT],
+                params![id, MAX_TEXT_DETAIL_BYTES, IMAGE_LIMIT],
                 |row| {
                     Ok((
                         row.get::<_, ContentType>(0)?,
@@ -778,16 +914,21 @@ impl ClipStorage {
         })
     }
 
-    fn search_previews_with_fts(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
+    fn search_previews_with_fts(
+        &self,
+        query: &str,
+        filter: ClipFilter,
+    ) -> Result<Vec<ClipPreviewItem>> {
         let fts_query = escape_fts_query(query);
         let columns = preview_columns(TEXT_MATCH_EXCERPT);
+        let filter_sql = filter.sql_clause();
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
              WHERE rowid IN (
                 SELECT rowid FROM clips WHERE (rowid, id) IN (
                     SELECT rowid, clip_id FROM clips_fts WHERE clips_fts MATCH ?1
-                ) ORDER BY timestamp DESC, id DESC LIMIT 1001
+                ) AND ({filter_sql}) ORDER BY timestamp DESC, id DESC LIMIT 1001
              )
              ORDER BY timestamp DESC, id DESC"
         ))?;
@@ -796,17 +937,25 @@ impl ClipStorage {
         items.collect()
     }
 
-    fn search_previews_with_like(&self, query: &str) -> Result<Vec<ClipPreviewItem>> {
+    fn search_previews_with_like(
+        &self,
+        query: &str,
+        filter: ClipFilter,
+    ) -> Result<Vec<ClipPreviewItem>> {
         let like_query = format!("%{}%", escape_like_query(query));
         let columns = preview_columns(TEXT_MATCH_EXCERPT);
+        let filter_sql = filter.sql_clause();
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {columns}
              FROM clips
              WHERE (
-                content_type IN ('text','files')
-                AND CAST(({FILES_TEXT_SQL}) AS TEXT) LIKE ?1 ESCAPE '\\'
+                (
+                    content_type IN ('text','files')
+                    AND CAST(({FILES_TEXT_SQL}) AS TEXT) LIKE ?1 ESCAPE '\\'
+                )
+                OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
              )
-             OR COALESCE(label, '') LIKE ?1 ESCAPE '\\'
+             AND ({filter_sql})
              ORDER BY timestamp DESC, id DESC
              LIMIT 1001"
         ))?;
@@ -850,6 +999,46 @@ impl ClipStorage {
             params![max_history_items],
         )?;
         Ok(deleted)
+    }
+}
+
+pub const MAX_TEXT_DETAIL_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipFilter {
+    All,
+    Text,
+    Image,
+    Files,
+    Link,
+}
+
+impl ClipFilter {
+    pub fn from_optional(value: Option<&str>) -> std::result::Result<Self, String> {
+        match value {
+            None | Some("all") => Ok(Self::All),
+            Some("text") => Ok(Self::Text),
+            Some("image") => Ok(Self::Image),
+            Some("files") => Ok(Self::Files),
+            Some("link") => Ok(Self::Link),
+            Some(other) => Err(format!("Invalid clip filter '{other}'")),
+        }
+    }
+
+    fn sql_clause(self) -> &'static str {
+        match self {
+            Self::All => "1 = 1",
+            Self::Text => "content_type = 'text'",
+            Self::Image => "content_type = 'image'",
+            Self::Files => "content_type = 'files'",
+            Self::Link => {
+                "content_type = 'text' \
+                 AND (lower(trim(CAST(content AS TEXT), char(9) || char(10) || char(13) || ' ')) LIKE 'http://%' \
+                      OR lower(trim(CAST(content AS TEXT), char(9) || char(10) || char(13) || ' ')) LIKE 'https://%') \
+                 AND lower(trim(CAST(content AS TEXT), char(9) || char(10) || char(13) || ' ')) NOT IN ('http://', 'https://') \
+                 AND trim(CAST(content AS TEXT), char(9) || char(10) || char(13) || ' ') NOT GLOB ('*[' || char(9) || char(10) || char(13) || ' ]*')"
+            }
+        }
     }
 }
 
@@ -1476,10 +1665,16 @@ mod tests {
         next.timestamp = 100.2;
         storage.insert(&first, 100).unwrap();
         storage.insert(&next, 100).unwrap();
-        let page = storage.get_recent_clip_previews_page(1, None).unwrap();
+        let page = storage
+            .get_recent_clip_previews_page(1, None, ClipFilter::All)
+            .unwrap();
         assert_eq!(page[0].id, "a-next");
         let rest = storage
-            .get_recent_clip_previews_page(10, Some((page[0].timestamp, &page[0].id)))
+            .get_recent_clip_previews_page(
+                10,
+                Some((page[0].timestamp, &page[0].id)),
+                ClipFilter::All,
+            )
             .unwrap();
         assert_eq!(
             rest.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
@@ -1530,7 +1725,7 @@ mod tests {
         loop {
             let before = cursor.as_ref().map(|(ts, id)| (*ts, id.as_str()));
             let page = storage
-                .get_recent_clip_previews_page(page_size, before)
+                .get_recent_clip_previews_page(page_size, before, ClipFilter::All)
                 .unwrap();
             let Some(last) = page.last() else {
                 break;
@@ -2030,6 +2225,262 @@ mod tests {
         assert!(
             size_after < size_before,
             "expected database file to shrink after clearing large clips: before={size_before} after={size_after}"
+        );
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn update_text_content_and_create_pinned_text_sync_fts() {
+        let db_path = temp_db_path("edit_and_create_pinned");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        let created = storage
+            .create_pinned_text("initial prompt template", Some("Prompt".into()))
+            .unwrap();
+        assert!(created.is_pinned);
+        assert_eq!(created.label.as_deref(), Some("Prompt"));
+        assert_eq!(storage.search_clip_previews("template").unwrap().len(), 1);
+
+        let updated = storage
+            .update_text_content(&created.id, "updated reusable snippet")
+            .unwrap();
+        assert!(updated);
+        assert!(storage.search_clip_previews("template").unwrap().is_empty());
+        assert_eq!(storage.search_clip_previews("reusable").unwrap().len(), 1);
+
+        let detail = storage.get_detail(&created.id).unwrap().unwrap();
+        assert_eq!(detail.text, "updated reusable snippet");
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn batch_pin_and_batch_delete_are_atomic() {
+        let db_path = temp_db_path("batch_ops");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        storage
+            .insert(&test_item("a", b"alpha", 1, false, None), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("b", b"beta", 2, false, None), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("c", b"gamma", 3, false, None), 100)
+            .unwrap();
+
+        storage
+            .batch_update_pin(&["a".into(), "b".into()], true, 100)
+            .unwrap();
+        let pinned = storage.get_pinned_clip_previews(-1).unwrap();
+        assert_eq!(pinned.len(), 2);
+
+        storage.batch_delete(&["a".into(), "c".into()]).unwrap();
+        assert!(storage.get_by_id("a").unwrap().is_none());
+        assert!(storage.get_by_id("b").unwrap().is_some());
+        assert!(storage.get_by_id("c").unwrap().is_none());
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn update_text_content_rejects_non_text_and_oversized_clips() {
+        let db_path = temp_db_path("edit_guards");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        let img = ClipItem {
+            content_type: ContentType::Image,
+            ..test_item("img-1", b"png-bytes", 1, false, None)
+        };
+        storage.insert(&img, 100).unwrap();
+        assert!(!storage.update_text_content("img-1", "text").unwrap());
+
+        let oversized = vec![b'a'; MAX_TEXT_DETAIL_BYTES + 16];
+        storage
+            .insert(&test_item("big-1", &oversized, 2, false, None), 100)
+            .unwrap();
+        let err = storage
+            .update_text_content("big-1", "truncated draft")
+            .unwrap_err();
+        assert!(err.contains("1 MiB"));
+        assert_eq!(
+            storage.get_by_id("big-1").unwrap().unwrap().content.len(),
+            MAX_TEXT_DETAIL_BYTES + 16
+        );
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn batch_pin_preserves_existing_order_and_unpin_enforces_history_limit() {
+        let db_path = temp_db_path("batch_pin_order_and_limit");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        storage
+            .insert(&test_item("p1", b"one", 1, true, Some(1)), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("p2", b"two", 2, true, Some(2)), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("r1", b"three", 3, false, None), 100)
+            .unwrap();
+        storage
+            .insert(&test_item("r2", b"four", 4, false, None), 100)
+            .unwrap();
+
+        let changed = storage
+            .batch_update_pin(&["p1".into(), "r1".into()], true, 100)
+            .unwrap();
+        assert_eq!(changed, 1);
+        let pinned_ids: Vec<_> = storage
+            .get_pinned_clip_previews(-1)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(pinned_ids, vec!["p1", "p2", "r1"]);
+
+        let unpinned = storage
+            .batch_update_pin(&["p1".into(), "p2".into(), "r1".into()], false, 2)
+            .unwrap();
+        assert_eq!(unpinned, 3);
+        let recent_ids: Vec<_> = storage
+            .get_recent_clip_previews(10)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(recent_ids, vec!["r2", "r1"]);
+
+        drop(storage);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn sql_filters_recent_pagination_and_search_by_category() {
+        let db_path = temp_db_path("sql_filters");
+        let storage = ClipStorage::new(&db_path).unwrap();
+
+        storage
+            .insert(&test_item("t1", b"plain note alpha", 1, false, None), 100)
+            .unwrap();
+        storage
+            .insert(
+                &test_item(
+                    "url1",
+                    b"  https://example.com/alpha?x=1&y=2\n",
+                    2,
+                    false,
+                    None,
+                ),
+                100,
+            )
+            .unwrap();
+        storage
+            .insert(
+                &test_item(
+                    "url-multi",
+                    b"https://example.com extra words",
+                    3,
+                    false,
+                    None,
+                ),
+                100,
+            )
+            .unwrap();
+        storage
+            .insert(&test_item("url-bare", b"https://", 4, false, None), 100)
+            .unwrap();
+        storage
+            .insert(
+                &test_item("url2", b"HTTPS://CLIPMAN.TOP/alpha", 5, false, None),
+                100,
+            )
+            .unwrap();
+        storage
+            .insert(
+                &ClipItem {
+                    content_type: ContentType::Image,
+                    label: Some("alpha shot".into()),
+                    ..test_item("img1", b"png", 6, false, None)
+                },
+                100,
+            )
+            .unwrap();
+        storage
+            .insert(
+                &ClipItem {
+                    content_type: ContentType::Files,
+                    ..test_item(
+                        "file1",
+                        encode_file_paths(&["/tmp/alpha.pdf".into()]).as_bytes(),
+                        7,
+                        false,
+                        None,
+                    )
+                },
+                100,
+            )
+            .unwrap();
+
+        let page1 = storage
+            .get_recent_clip_previews_page(1, None, ClipFilter::Link)
+            .unwrap();
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].id, "url2");
+        let page2 = storage
+            .get_recent_clip_previews_page(
+                10,
+                Some((page1[0].timestamp, &page1[0].id)),
+                ClipFilter::Link,
+            )
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["url1"]
+        );
+
+        assert_eq!(
+            storage
+                .get_recent_clip_previews_filtered(10, ClipFilter::Image)
+                .unwrap()
+                .iter()
+                .map(|i| i.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["img1"]
+        );
+        assert_eq!(
+            storage
+                .get_recent_clip_previews_filtered(10, ClipFilter::Files)
+                .unwrap()
+                .iter()
+                .map(|i| i.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["file1"]
+        );
+
+        let fts_links = storage
+            .search_clip_previews_filtered("alpha", ClipFilter::Link)
+            .unwrap();
+        assert_eq!(
+            fts_links.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["url2", "url1"]
+        );
+        let like_images = storage
+            .search_clip_previews_filtered("al", ClipFilter::Image)
+            .unwrap();
+        assert_eq!(
+            like_images
+                .iter()
+                .map(|i| i.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["img1"]
         );
 
         drop(storage);
