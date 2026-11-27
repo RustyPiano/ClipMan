@@ -38,10 +38,15 @@ pub fn migrate_legacy_identity(identifier: &str) -> Result<bool, String> {
 }
 
 fn webview_data_roots() -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = dirs::data_local_dir().into_iter().collect();
-    #[cfg(target_os = "macos")]
-    roots.extend(dirs::home_dir().map(|home| home.join("Library/WebKit")));
-    roots
+    let macos_webkit = if cfg!(target_os = "macos") {
+        dirs::home_dir().map(|home| home.join("Library/WebKit"))
+    } else {
+        None
+    };
+    [dirs::data_local_dir(), macos_webkit]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 fn move_dir_contents(legacy: &Path, current: &Path) -> Result<bool, String> {
