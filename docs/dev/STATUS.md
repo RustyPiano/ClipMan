@@ -6,14 +6,16 @@
 
 ## 当前状态
 
-- **最新正式版 [v2.6.0](https://github.com/RustyPiano/ClipLeaf/releases/tag/v2.6.0)**：首次启动欢迎页与空列表引导；后台每日检查更新，托盘和 QuickBar 提示，安装显示进度、装完由用户重启；设置即时保存，托盘菜单并入“常规”，“存储”页显示用量、导出/导入收藏、删除旧备份；日志写入系统日志目录，“关于”页可复制诊断信息；`secure_delete`、FTS5 secure-delete 与清空后截断 WAL；Linux X11 识别密码管理器标记并用 XFixes 计数剪贴板序号；密钥规则 8 → 14 条；macOS/X11 剪贴板轮询 500 → 100 ms。设计见 ADR 0024。
-- [Release 工作流](https://github.com/RustyPiano/ClipLeaf/actions/runs/46004639716)通过三个系统的质量检查和四个平台构建；公开的更新清单含 11 个平台与安装格式条目，已改为公开直链，7 个更新包通过验签；产品页已重新部署到 2.6.0。
+- **最新正式版 [v2.6.1](https://github.com/RustyPiano/ClipLeaf/releases/tag/v2.6.1)**：应用图标换成 ClipLeaf 叶子图标（托盘图标仍是单色剪贴板图案）；修正设置页分组标题与选项的间距。
+- v2.6.0：首次启动欢迎页与空列表引导；后台每日检查更新，托盘和 QuickBar 提示，安装显示进度、装完由用户重启；设置即时保存，托盘菜单并入“常规”，“存储”页显示用量、导出/导入收藏、删除旧备份；日志写入系统日志目录，“关于”页可复制诊断信息；`secure_delete`、FTS5 secure-delete 与清空后截断 WAL；Linux X11 识别密码管理器标记并用 XFixes 计数剪贴板序号；密钥规则 8 → 14 条；macOS/X11 剪贴板轮询 500 → 100 ms。设计见 ADR 0024。
+- v2.6.1 的 [Release 工作流](https://github.com/RustyPiano/ClipLeaf/actions/runs/46019062316)用时 6.5 分钟（v2.6.0 为 15 分钟）：质量检查与打包并行，标签构建恢复 `release-cache.yml` 在 main 上预热的依赖缓存；日常 CI 约 2.5 分钟。公开的更新清单已改为公开直链，7 个更新包通过验签。设计见 ADR 0022。
 - 从 ClipMan 升级到 ClipLeaf 时，数据迁移和 macOS 辅助功能重新授权见 [ADR 0023](../adr/0023-clipleaf-rename.md)。
-- **产品页**：[clipleaf.app](https://clipleaf.app) 使用本仓库 `website/`，Vercel 项目 `clipleaf-page` 跟随 `main` 部署。构建时读取最新公开更新清单生成下载链接。
+- **产品页**：[clipleaf.app](https://clipleaf.app) 使用本仓库 `website/`，Vercel 项目 `clipleaf-page` 跟随 `main` 部署。构建时读取最新公开更新清单生成下载链接。首屏演示会自动演示一次复制，访客在页面上复制的文字会进入演示面板；滑过后右下角有跟随浮窗。
+- 产品页使用本地字体。中文和英文标题共用 19.5 KB 的字体文件，正文和等宽字体各用一个可变字重文件。
 
 ## 待办
 
-1. 用 `v2.6.0` 正式包实机核对：全新安装时欢迎页出现并在授权辅助功能后自动回到欢迎页（`show_onboarding_when_trusted`）；后台更新提示、下载进度和“立即重启”要等下一个版本发布后从 2.6.0 升级验证；Linux X11 密码标记和 XFixes 剪贴板序号只在容器里验证过，需在真实 KDE + KeePassXC 上确认。
+1. 实机核对：全新安装时欢迎页出现并在授权辅助功能后自动回到欢迎页（`show_onboarding_when_trusted`）；从 2.6.0 升级到 2.6.1，验证后台更新提示、下载进度和“立即重启”，以及新图标在 Dock、任务栏中的显示；Linux X11 密码标记和 XFixes 剪贴板序号只在容器里验证过，需在真实 KDE + KeePassXC 上确认。
 2. Windows 代码签名：申请 SignPath Foundation 开源项目免费证书，通过后在 `release.yml` 接入签名步骤。
 3. 用 `v2.5.3` 正式包实机核对：macOS 从 ClipMan 2.5.x 自动更新后的数据迁移、`ClipLeaf.app` 改名、开机自启与辅助功能重新授权；Windows（MSI 与 NSIS 旧安装）和 Linux deb/rpm 的替换升级与自启迁移。
 4. 实机核对 Windows 旧版卸载失败时安装中止、Linux X11（无剪贴板管理器）取用历史后粘贴。
