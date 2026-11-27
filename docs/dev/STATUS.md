@@ -9,7 +9,7 @@
 - **最新正式版：v2.5.1（已公开发布，更名 ClipLeaf）**：
   - `CI`、`Release`（四端构建/签名/`verify-release`）通过，`latest.json` 已切换为公开直链并复验；旧仓库地址的更新清单经 GitHub 跳转同样返回 2.5.1。发布时两个打包作业各建了一个草稿，已手工合并后复验，并在 `release.yml` 新增 `draft-release` 作业防止再次发生（下次发版首次验证）。
   - 变更：产品名、界面文字、安装包和仓库（`RustyPiano/ClipLeaf`）改用 ClipLeaf，identifier、数据文件、签名证书和可执行文件名保持不变（`docs/adr/0023-clipleaf-rename.md`）；同时修复 macOS 全屏 Space 上无法唤出 QuickBar 的回归，以及搜索高亮被行尾截断。
-- **产品页**：本仓库 `website/`（Svelte + Vite），Vercel 项目 `clipleaf-page` 接入本仓库 `main`，域名 `clipleaf.app`；构建时读取最新 `latest.json` 决定下载版本，发版公开后需重新部署一次。旧产品页（`ClipMan-Page`、Vercel `clip-man-page`）已下线。
+- **产品页**：本仓库 `website/`（Svelte + Vite），Vercel 项目 `clipleaf-page` 接入本仓库 `main`，域名 `clipleaf.app`（待在 Cloudflare 为 `@` 和 `www` 添加指向 Vercel 的 CNAME，关闭代理）；构建时读取最新 `latest.json` 决定下载版本，发版公开后需重新部署一次。旧产品页（`ClipMan-Page`、Vercel `clip-man-page`）已下线。
 - **文档整理**：精简 `AGENTS.md`（去重目录表与 ADR 重复段落）、同步 ADR 0009/0012/0022 与 `.github/RELEASE_GUIDE.md`、清理 14 份已发布的历史 `release_notes_*.md`。
 
 ## 待办
