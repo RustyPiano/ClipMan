@@ -50,10 +50,10 @@ ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and S
 
 Choose an installer on the [website](https://clipleaf.app) or visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) to download:
 
-- **Windows**: `ClipLeaf_2.6.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipLeaf_2.6.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipLeaf_2.6.0_x64.dmg`
-- **Linux**: `ClipLeaf_2.6.0_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.6.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.6.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.6.1_x64.dmg`
+- **Linux**: `ClipLeaf_2.6.1_amd64.AppImage`
 
 When you upgrade from ClipMan, ClipLeaf migrates your history, favorites, and settings. If the database rename is interrupted, it resumes the next time you open the app.
 

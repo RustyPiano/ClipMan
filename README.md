@@ -50,10 +50,10 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 从[官网](https://clipleaf.app)选择安装包，或访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
 
-- **Windows**: `ClipLeaf_2.6.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipLeaf_2.6.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipLeaf_2.6.0_x64.dmg`
-- **Linux**: `ClipLeaf_2.6.0_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.6.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.6.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.6.1_x64.dmg`
+- **Linux**: `ClipLeaf_2.6.1_amd64.AppImage`
 
 从 ClipMan 升级时，ClipLeaf 会迁移历史记录、收藏和设置。如果数据库改名时中断，下次启动会继续。
 
