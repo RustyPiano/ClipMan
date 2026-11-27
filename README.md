@@ -47,10 +47,10 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
 
-- **Windows**: `ClipLeaf_2.5.2_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipLeaf_2.5.2_aarch64.dmg`
-- **macOS (Intel)**: `ClipLeaf_2.5.2_x64.dmg`
-- **Linux**: `ClipLeaf_2.5.2_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.5.3_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.5.3_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.5.3_x64.dmg`
+- **Linux**: `ClipLeaf_2.5.3_amd64.AppImage`
 
 ### macOS 安装与权限
 
