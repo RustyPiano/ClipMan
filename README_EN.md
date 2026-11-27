@@ -37,20 +37,23 @@ ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and S
 
 ### Additional Features
 
-- Filter out private keys and common API tokens. On macOS and Windows, ClipLeaf skips items marked as confidential by default. With this filter enabled, Windows also skips items whose privacy markers it cannot read
-- Auto-update
+- Filter out private keys and common API tokens. Items that password managers mark as confidential are skipped by default (macOS, Windows, and Linux X11), and items whose markers cannot be read are skipped too
+- First-launch guide covering the shortcut, Accessibility access, and basic use
+- Background update checks with download progress; you choose when to restart
+- Settings save automatically
 - Launch at startup
-- Custom storage location
-- Data management
+- Custom storage location, disk usage, favorites export/import, and old backup cleanup
+- Deleted items are overwritten in the database and search index
+- Logs and diagnostics (without clipboard contents) for bug reports
 
 ## Installation
 
 Choose an installer on the [website](https://clipleaf.app) or visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) to download:
 
-- **Windows**: `ClipLeaf_2.5.3_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipLeaf_2.5.3_aarch64.dmg`
-- **macOS (Intel)**: `ClipLeaf_2.5.3_x64.dmg`
-- **Linux**: `ClipLeaf_2.5.3_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.6.0_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.6.0_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.6.0_x64.dmg`
+- **Linux**: `ClipLeaf_2.6.0_amd64.AppImage`
 
 When you upgrade from ClipMan, ClipLeaf migrates your history, favorites, and settings. If the database rename is interrupted, it resumes the next time you open the app.
 

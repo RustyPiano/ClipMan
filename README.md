@@ -37,20 +37,23 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 ### 其他功能
 
-- 可跳过私钥和常见 API 令牌。macOS 和 Windows 默认跳过带隐私标记的内容。开启此过滤时，Windows 也会跳过无法检查标记的记录
-- 自动更新
+- 可跳过私钥和常见 API 令牌。默认跳过密码管理器等标记为隐私的内容（macOS、Windows 和 Linux X11），无法检查标记时跳过该条记录
+- 首次启动引导：快捷键、辅助功能授权和使用说明
+- 后台自动检查更新，显示下载进度，装完由你决定何时重启
+- 设置修改后自动保存
 - 开机自启动
-- 自定义存储位置
-- 数据管理
+- 自定义存储位置，查看占用空间、导出/导入收藏、删除旧备份
+- 删除的记录会从数据库和索引中覆盖清除
+- 日志和诊断信息（不含剪贴板内容），方便反馈问题
 
 ## 安装
 
 从[官网](https://clipleaf.app)选择安装包，或访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
 
-- **Windows**: `ClipLeaf_2.5.3_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipLeaf_2.5.3_aarch64.dmg`
-- **macOS (Intel)**: `ClipLeaf_2.5.3_x64.dmg`
-- **Linux**: `ClipLeaf_2.5.3_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.6.0_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.6.0_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.6.0_x64.dmg`
+- **Linux**: `ClipLeaf_2.6.0_amd64.AppImage`
 
 从 ClipMan 升级时，ClipLeaf 会迁移历史记录、收藏和设置。如果数据库改名时中断，下次启动会继续。
 

@@ -1,6 +1,6 @@
 {
   "name": "clipleaf",
-  "version": "2.5.3",
+  "version": "2.6.0",
   "description": "A modern clipboard manager",
   "type": "module",
   "scripts": {
