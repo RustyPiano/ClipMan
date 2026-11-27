@@ -1,173 +1,68 @@
 # AGENTS.md
 
-Guidance for AI coding agents working on **ClipMan**. For human-facing docs see [`README.md`](README.md).
+Project guidance for AI coding agents working on **ClipMan**. User-facing docs live in [`README.md`](README.md) / [`README_EN.md`](README_EN.md).
 
-## Project Overview
+## Overview
 
-ClipMan is a **local-first desktop clipboard manager** (Windows / macOS / Linux). It captures clipboard history (plain text, HTML rich text, images, file lists), lets users search / pin / restore / merge-paste entries from a QuickBar panel or the system tray, and persists everything in a local SQLite database (FTS5 search, keyset pagination, secret-detection and app-ignore privacy filters).
+ClipMan is a local-first desktop clipboard manager (macOS / Windows / Linux) in a single desktop process with no network tier:
 
-- **Backend:** Rust 2021 + Tauri 2.11 (`src-tauri/`) — clipboard monitoring, SQLite storage, tray, global shortcuts, settings, updater.
-- **Frontend:** Svelte 5 (runes) + TypeScript + Tailwind CSS 4, built with Vite 8 (`src/`).
-- **IPC:** Tauri `invoke`/`emit` is the _only_ boundary between UI and backend.
-- **Architecture:** single desktop process, no network tier. Shared `AppState` (`Arc<Mutex<…>>`) in `src-tauri/src/main.rs`; thin command adapters in `commands.rs` over `storage`/`settings`/`tray`/`clipboard`/`migration` modules.
+- **Backend (`src-tauri/`):** Rust 2021 + Tauri 2.11, SQLite (FTS5 + keyset pagination), clipboard monitor, tray, global shortcuts, settings, updater.
+- **Frontend (`src/`):** Svelte 5 (runes) + TypeScript + Tailwind CSS 4 + Vite 8 (`$lib/*` -> `src/lib/*`).
+- **Boundary:** Tauri `invoke`/`emit` is the only interface between UI and Rust.
 
-## Documentation map & maintenance protocol (read this first)
+## Documentation Map
 
-**Start every session by reading [`docs/dev/STATUS.md`](docs/dev/STATUS.md)** — the living "where the project is right now" doc. Doc roles:
-
-| Doc | Role | Update policy |
+| Doc | Role | Update Rule |
 | --- | --- | --- |
-| `docs/dev/STATUS.md` | Current state, uncommitted work, TODO queue, known issues | **Update it as soon as `src/` or `src-tauri/` changes or a release/CI state changes, without waiting for a reminder.** Keep ≤100 lines; delete stale entries instead of appending forever. |
-| `AGENTS.md` (this file) | Stable knowledge: architecture, conventions, commands, gotchas | Update in the same session whenever conventions/architecture/commands change. Never let it describe a past state as present. |
-| `docs/adr/` | Design decision records (one decision per file) | Add a new ADR or replace an old one when a decision changes. Code never carries the rationale in comments. |
-| `README.md` / `README_EN.md` | Human/user-facing feature docs | Update when user-visible features ship (typically at release time). |
+| [`docs/dev/STATUS.md`](docs/dev/STATUS.md) | Current state, TODOs, known issues | **Read first every session.** Update whenever code or release/CI state changes; keep ≤ 100 lines and delete stale items. |
+| `AGENTS.md` | Commands, enforced conventions, non-inferable gotchas | Update when tooling or core conventions change. Do not duplicate ADR rationales here. |
+| `docs/adr/` | Architectural & platform design decisions (0001–0022) | Read the relevant ADR before modifying capture, paste/focus, SQLite schema, macOS windowing, settings, or release flows; update or replace ADRs when decisions change. |
+| `README.md` / `README_EN.md` | User-facing feature & install docs | Update at release time when user-visible features change. |
 
-Maintenance rules for agents:
+If a doc contradicts the code, the code is truth — fix or delete the stale doc in the same session.
 
-1. Keep docs minimal and truthful; delete obsolete docs instead of keeping stale copies that can mislead future changes.
-2. If you find a contradiction between a doc and the code, the code is the truth; fix or delete the doc in the same session and note it in `STATUS.md`.
+## Commands
 
-## Setup Commands
-
-Use **Bun** (matches CI); `bun.lock` is the single committed dependency lockfile.
+Use **Bun** (`bun.lock` is the single frontend lockfile). Toolchain: Bun 1.3+, Rust 1.96.0 (`rust-toolchain.toml`). Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
 
 ```bash
-bun install            # install frontend deps (Cargo deps fetch on first build)
-```
-
-Requirements: Bun 1.3+, Rust 1.96.0 via `rust-toolchain.toml`. Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
-
-## Development Workflow
-
-```bash
-bun tauri dev          # run the full desktop app (Vite + Rust, hot reload)
-```
-
-`bun run dev` 只启动 Vite 服务，由 `tauri.conf.json` 的 `beforeDevCommand` 调用；界面依赖 Tauri 运行环境，不支持在普通浏览器里单独打开。
-
-## Build
-
-```bash
-bun tauri build        # produce platform installers (output under src-tauri/target/release/bundle/)
-bun run build          # frontend bundle only -> dist/
-```
-
-发布由 `vX.Y.Z` 标签触发，步骤和相关脚本见 `.github/RELEASE_GUIDE.md`。
-
-## Testing & quality gates
-
-Backend: inline Rust unit tests (`#[cfg(test)]` in most `src-tauri/src/*.rs` modules). Frontend: `bun:test` suites under `tests/frontend/`. 发布准备测试在 `tests/release-prepare.test.js`，产物校验测试在 `scripts/test_verify_release.py`。CI (`.github/workflows/ci.yml`) enforces all of the below on push/PR and through `workflow_call` for releases — **keep every gate green before finishing any change**:
-
-```bash
-cd src-tauri && cargo test                             # Rust unit tests
-cd src-tauri && cargo clippy --all-targets -- -D warnings
-cd src-tauri && cargo fmt --check
-bun run lint                   # ESLint over the repository, including the no-comments rule
-bun run check                  # svelte-check + TypeScript type check
-bun run test:types             # TypeScript-check frontend test files
-bun test tests/                # frontend unit tests
-bun run test:ui                # Chromium + WebKit interaction tests (install browsers once)
-bun run build                  # frontend bundle (cargo test also needs dist/ to exist)
-python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
-```
-
-产物校验测试需要 `minisign`，可通过 `MINISIGN` 环境变量指定本机工具路径；测试密钥和下载附件均存放在已忽略的 `src-tauri/target/release-verification/`。`scripts/verify-release.py --repo owner/repo --tag vX.Y.Z` 只读校验 Release，`--check-key-only` 仅比较历史公钥。常规发布不允许替换已有安装信任的更新公钥。
-
-Add or update tests for logic you change (Rust and frontend both).
-Browser setup: `bunx playwright install chromium webkit` (Linux CI adds `--with-deps`).
-`e2e/` exercises compiled Svelte with a synthetic IPC backend; it does not replace native focus/permission tests.
-Native macOS smoke: build an isolated QA bundle with `bun tauri build --bundles app --config '{"productName":"ClipMan QA","identifier":"com.clipman.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to both the terminal/agent and `ClipMan QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipMan QA.app"`. The script drives the desktop and restores the clipboard afterwards; `--storage-only` checks thumbnails/tray failures without auto-paste permission.
-`bun run test:types` checks both Bun and browser suites. Optional synthetic DB benchmark:
-`cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.
-
-## Code Style
-
-Frontend formatter is `.prettierrc`: **2-space indent, single quotes, semicolons, `es5` trailing commas, printWidth 100**.
-
-```bash
+bun install            # install frontend deps
+bun tauri dev          # full desktop app (do not open `bun run dev` in a plain browser)
+bun run build          # frontend bundle -> dist/ (required before `cargo test` / `cargo clippy`)
+bun tauri build        # platform installers under src-tauri/target/release/bundle/
 bun run format         # prettier --write "src/**/*.{ts,svelte}"
 ```
 
-- TypeScript is strict (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`). Prefix intentionally-unused args with `_`.
-- Rust: standard rustfmt layout (4-space, grouped `use`, early-return error checks).
-- 代码、测试、脚本和配置里不写注释（`docs/adr/0001-no-code-comments.md`）。不明显的设计决定写进 `docs/adr/`，权宜实现提 GitHub Issue。`bun run lint` 检查 JS/TS/Svelte，`cargo test` 的 `tests/no_comments.rs` 检查 Rust；存量注释的上限在 `eslint-suppressions.json` 和 `src-tauri/tests/comment-suppressions.json`，只能下降。清理流程用 `/delete-comment`。
+### CI Quality Gates (keep all green before finishing a change)
 
-## Naming & Conventions
+```bash
+cd src-tauri && cargo fmt --check
+cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd src-tauri && cargo test
+bun run lint
+bun run check
+bun run test:types
+bun test tests/
+bun run build
+bun run test:ui
+python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
+```
 
-- Rust modules: `snake_case.rs` under `src-tauri/src/`. Structs/enums PascalCase, fields snake_case.
-- Svelte components: `PascalCase.svelte` under `src/lib/components/`. Routes follow Svelte conventions (`+page.svelte`).
-- Svelte 5 rune stores: `*.svelte.ts` with singleton named exports (`clipboardStore`, `themeStore`, `toastStore`, `i18n`).
-- **Tauri commands are snake_case and must match the string passed to `invoke('…')`.** Register every command in the `invoke_handler![]` macro in `main.rs`.
-- **IPC boundary uses camelCase:** Rust stays snake_case internally but serializes with `#[serde(rename_all = "camelCase")]` (see `settings.rs`, `storage.rs`). Keep TS types in `src/lib/types.ts` in sync.
-- `update_settings` takes a settings object to save, or `null` to reset from Rust defaults through the same validation/rollback path. The backend preserves migration-owned data paths and tray-owned capture pause state. The frontend has no duplicate defaults; failed loading disables saves and offers retry.
-- 保存设置时，数值范围、语言、粘贴格式和应用排除项数量必须通过后端验证，非法值返回错误。读取旧设置时保留兼容处理；前端使用原生表单验证，不自动修改超出范围的输入。
-- Settings writes and data migration run through `spawn_blocking`; never wait for `settings_write_lock` from a Tauri main-thread callback. A failed persisted-settings load pauses capture and keeps the original store for recovery.
-- Command boundary returns `Result<T, String>`; service code uses `map_err(|e| e.to_string())`. UI wraps calls in try/catch and surfaces failures via toast/inline text.
-- 出错时返回错误或在出错位置 panic，不加改用其他目录、改写成其他格式、切换备用模式之类的 fallback，也不在前端把命令失败当成成功。`std::sync::Mutex` 直接 `.lock().unwrap()`：release 配置 `panic = "abort"`，锁不会中毒。
-- Constants: `UPPER_SNAKE_CASE` in both TS and Rust.
+- `bun run test:ui` runs Chromium + WebKit against compiled Svelte with a synthetic IPC mock (`e2e/`). First-time browser setup: `bunx playwright install chromium webkit`.
+- `test_verify_release.py` needs `minisign` (pass `MINISIGN=/path/to/minisign` if not in `PATH`; verification artifacts live in ignored `src-tauri/target/release-verification/`).
+- Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipMan QA","identifier":"com.clipman.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipMan QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipMan QA.app"` (`--storage-only` skips auto-paste).
+- Optional search benchmark: `cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.
+- Release steps and signing rules: [`.github/RELEASE_GUIDE.md`](.github/RELEASE_GUIDE.md).
 
-## Where Things Live
+## Enforced Conventions & Gotchas
 
-| Area                                                   | Path                                                           |
-| ------------------------------------------------------ | -------------------------------------------------------------- |
-| App entry, AppState, tray setup, shortcuts, startup recovery | `src-tauri/src/main.rs`                                  |
-| Tauri command handlers (IPC)                           | `src-tauri/src/commands.rs`                                    |
-| SQLite storage + dedup + history limits + pagination   | `src-tauri/src/storage.rs`                                     |
-| Clipboard monitoring (single-representation snapshot: Files > Text+html > Image) | `src-tauri/src/clipboard.rs`         |
-| Clipboard write-back + paste simulation (single & merge) | `src-tauri/src/paste.rs`                                     |
-| Secret detection (skip PEM/AWS/JWT/token captures)     | `src-tauri/src/secrets.rs`                                     |
-| QuickBar window (NSPanel, positioning, native shadow)  | `src-tauri/src/window.rs`                                      |
-| macOS Accessibility permission flow                    | `src-tauri/src/accessibility.rs`                               |
-| Tray menu (dynamic, rebuilt on change)                 | `src-tauri/src/tray.rs`                                        |
-| Settings persistence (tauri-plugin-store)              | `src-tauri/src/settings.rs`                                    |
-| Data dir / migration                                   | `src-tauri/src/migration.rs`                                   |
-| Frontend unit tests (bun:test)                         | `tests/frontend/*.test.ts`                                     |
-| Frontend stores                                        | `src/lib/stores/*.svelte.ts`                                   |
-| UI components                                          | `src/lib/components/**`, `src/routes/**`                       |
-| Shared TS types                                        | `src/lib/types.ts`                                             |
-| Native + frontend config                               | `src-tauri/tauri.conf.json`, `vite.config.js`, `tsconfig.json` |
-
-`$lib/*` maps to `src/lib/*` (in both `tsconfig.json` and `vite.config.js`).
-
-## Platform Notes
-
-- **macOS:** runs as an Accessory (menu-bar) app; clipboard access and auto-paste (simulating Cmd+V) need **Accessibility permission**. Without it `CGEventPost` fails *silently*, so `accessibility.rs` checks `AXIsProcessTrusted()` before pasting and guides the user to re-grant (native dialog + QuickBar banner) rather than failing silently. Releases are signed with a stable self-signed cert so the grant survives updates (see `.github/RELEASE_GUIDE.md`).
-- **Windows:** `windows` crate features are already enabled for Win32 windowing/dataexchange.
-- **Linux:** auto-paste support is best-effort (Wayland limited); degrade to copy-only, don't error.
-
-## Commits & PRs
-
-- Use **Conventional Commits** (`feat(scope):`, `fix:`, `docs:`, `refactor:`, `chore:`).
-- This is a solo repo — **commit directly to `main`** (no feature branch needed). Only commit when asked.
-- Stage only the files relevant to your change; don't sweep in unrelated working-tree edits.
-
-## Gotchas
-
-- **One clipboard change = one record.** The monitor reads a single representative snapshot per change with priority `Files > Text(+html companion) > Image` (`clipboard.rs`). Never re-introduce independent text/image reads — that's the old double-record bug.
-- 剪贴板监听由 `clipboard::start_monitor` 在启动时开启一次，之后不停止也不重启。数据迁移依靠 `state.storage` 锁与采集互斥：备份和替换期间采集线程等待这把锁，拿到锁时写入的已是新库。
-- 自身复制识别：`last_copied_by_us` 保存 `CopyWrite`（`CopyMarker` 和写入完成时间）；写入期间标记有效，完成后匹配时检查 2 秒有效期。所有剪贴板写入都在 `clipboard_use_lock` 内执行。Text 的标记只计算纯文本；Files 使用实际写入路径列表的 JSON（macOS 使用存储路径，其他平台使用规范路径）。自身复制或去重跳过仍需推进 `last_marker`。
-- `globalPlain` 的同文富文本必须重新经过应用排除、密钥和大小检查，并在保存成功后才能剥离格式。剥离持有 `clipboard_use_lock`：macOS/Windows 只核对系统剪贴板序号；Linux 的 arboard 不提供序号，改为核对完整文本、HTML 且没有文件列表，因此无法区分外部应用再次复制完全相同的内容。⌥Enter 贴出的富文本保留在系统剪贴板，直到下一次复制。
-- macOS 文件写回不经过 arboard，直接向 `NSPasteboard` 写入 `NSURL`，并核对剪贴板里实际保留的条目，原因见 `docs/adr/0013-macos-file-write-nspasteboard.md`。写入失败时返回错误，不改写为路径文本。
-- QuickBar surface/focus tokens (`--qb-*`, `--pin-*`) live in `src/app.css`, scoped to `.quickbar-panel`.
-- macOS 上的 QuickBar 使用标准浮动窗口（`NSFloatingWindowLevel`），打开时通过 `window.set_focus()` 正常激活 Accessory 应用以支持 `WKWebView` 中/日/韩输入法候选窗；不调用 macOS 14+ 专属的 `NSApp.activate()`。粘贴前轮询确认原应用回到前台，复制隐藏、`Esc` 或重复按同面板快捷键隐藏时恢复原前台应用（权衡详见 `docs/adr/0014-quickbar-macos-window.md`）。
-- QuickBar shadow is the **native macOS window shadow** derived from the window's alpha shape. Do not add CSS drop shadows or translucent pixels around `.quickbar-panel` — they distort the alpha shape and the shadow renders as a gray halo. Windows keeps `shadow: false` (DWM shadows follow the rectangular frame).
-- Tray menu is rebuilt from the DB on every clipboard change — keep that path cheap. Propagate query/build errors and preserve the previous menu on refresh failure.
-- Runtime data-path reporting and migration source/cleanup come from `ClipStorage::data_directory()`, the canonical parent of the database actually opened. `custom_data_path` remains only the next-start preference; if that directory is unusable at startup, ClipMan shows the fatal storage alert and exits instead of falling back to the default directory. Migration rejects destinations that already contain ClipMan database files, so backups write straight to the destination path.
-- Images always store original + thumbnail. If both dimensions are ≤256px, reuse the original PNG bytes for the thumbnail; never upscale small images. Do not reintroduce `store_original_image`.
-- Clip timestamps are fractional Unix seconds (`f64` / JS number); preserve fractions through capture, dedup, paste history touch and pagination cursors. SQLite reads legacy integer seconds alongside new real values; do not truncate to whole seconds.
-- Database format v3 stores file lists as JSON string arrays. Every database open converts any remaining newline-separated file rows (possible after a downgrade to 2.2.x, which does not reject v3 databases) to JSON and rebuilds FTS; all other code reads JSON only. Upgrades create a SQLite backup before changing rows and reject newer schema versions; do not lower `CURRENT_DB_USER_VERSION` or write newline-joined file records. The unused legacy `group_name` column stays in old databases and is never read.
-- Search uses SQLite FTS5 with a full-text short-query LIKE fallback. Results contain match excerpts and at most 1001 rows (1000 visible + sentinel); keep FTS maintenance in storage. Limit FTS candidates before generating excerpts.
-- QuickBar 使用固定行高 `ROW_HEIGHT_REM` 和列表虚拟化，CSS 与滚动计算共用该值；标签编辑保持行高。
-- 文件摘要最多返回两个路径，每个路径最多 4096 个字符；实际数量来自 `fileCount`，用于多文件图标和剩余数量提示。
-- 每行保留 grid/row/gridcell 语义；类型图标、粘贴按钮和操作按钮各自独立，不嵌套按钮。图标和操作按钮的 mousedown 阻止默认聚焦。元信息用单个拼接字符串渲染以避免 WebKit 多余空白；删除光标所在行后光标保持在原位置。
-- 光标和多选由 `selectionStore` 按 ID 管理。⇧↑/↓ 和 ⇧点击按锚点选择范围，范围缩回一行时清空多选；普通 ↑/↓ 清空多选，⌘点击和类型图标切换单行；多选支持批量置顶（⌘P）、批量删除（⌘⌫，带确认）和合并粘贴（回车）。相关行为由 `tests/selection.test.ts` 和 `e2e/quickbar.spec.ts` 覆盖。
-- ⇧点击不触发粘贴，尚无多选时勾选该行作为锚点。面板切换使用 ⌘[/] 或 ⌃Tab（搜索框为空时兼容 Alt+Left/Right），避免拦截搜索框按词移动光标；Esc 按层取消编辑/菜单/多选/搜索筛选，最后隐藏窗口。
-- QuickBar 按键处理同时检查 `isComposing` 和 `keyCode === 229`，输入法结束组字后的确认回车也不能触发粘贴。
-- `get_clip` returns decoded `ClipDetail` (`text` / optional original `imageUrl`), distinct from base64 list summaries. Small text details have one bounded cache (16 × 256K UTF-16 units) and image details have a bounded 4-item cache. SQL caps text/file details at 1 MiB and rejects images above 16 MiB before returning their BLOB; `truncated` drives the preview notice and disables inline editing (backend `update_text_content` also enforces the 1 MiB limit). Copy/paste still read complete content.
-- Copy, single paste and merge paste share `paste::use_clips`, guarded across all callers; standalone plain-text copy (e.g. color formats) uses `copy_plain_text` under the same `clipboard_use_lock` and `last_copied_by_us` marker. External URL opening and folder reveal use `tauri-plugin-opener` (never shell `cmd /C start`). Write succeeds before history touch; `clips-used` invalidates the entire affected view after the action, while `clipboard-changed` remains the capture upsert event. Results distinguish `copied`, `pasteRequested`, and `copiedOnly`; never turn post-write maintenance failure into a retryable paste failure.
-- Category filtering (`all | text | image | files | link`) runs in SQLite for both `get_recent_clips` pagination and `search_clips`.
-- Merge paste has a 50 MB aggregate text budget. History limits are enforced on new/duplicate capture, settings reduction, and unpinning; keep pruning and FTS updates in the same storage transaction.
-- History initialization and append pagination have independent request sequences. Background invalidations share one running refresh with a pending flag. Incoming capture events are retained only during a history reload; do not restore a permanent duplicate event cache.
-- 来源应用图标按应用名存在 `app_icons` 表（每个应用一份 64px PNG），不写进 clips 行；macOS 采集时每个应用每次运行渲染一次 `NSRunningApplication.icon` 并发出 `app-icon-saved`，前端 `appIconStore` 按名字缓存 `get_app_icon` 的结果并在该事件后重新读取。图标失败只记录日志，不影响本次复制的保存。
-- App exclusions on macOS accept bundle identifiers as well as legacy display names; Windows/Linux display their unsupported status.
-- 界面语言以后端 `settings.locale` 为准（新设置按系统语言初始化）；前端不另存 locale，QuickBar 在启动和 `settings-changed` 时读取设置并切换语言。主题只存在前端 localStorage。
+- **No code comments** (`docs/adr/0001-no-code-comments.md`): ESLint (`bun run lint`) and `src-tauri/tests/no_comments.rs` (`cargo test`) enforce zero new comments in code, tests, scripts, and configs; legacy suppression counts can only decrease. Put non-obvious rationale in `docs/adr/`.
+- **IPC contract:** Tauri command names are `snake_case` and must be registered in `invoke_handler![]` in `src-tauri/src/main.rs`. Payloads serialize as `camelCase` (`#[serde(rename_all = "camelCase")]`) and must stay in sync with `src/lib/types.ts`. Commands return `Result<T, String>`.
+- **Fail fast:** Return errors or panic at the fault site instead of silently falling back to alternate paths, formats, or modes, and never treat failed commands as success in UI. `std::sync::Mutex::lock().unwrap()` is intentional because release builds use `panic = "abort"`.
+- **TypeScript & Prettier:** Strict TS (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`; prefix unused params with `_`). Prettier: 2 spaces, single quotes, semicolons, `es5` trailing commas, width 100.
+- **Settings & threading:** Settings persistence and data migration run via `spawn_blocking`; never wait on `settings_write_lock` from a Tauri main-thread callback. Backend owns defaults (`update_settings(null)` resets) and input validation; frontend never duplicates defaults. Locale lives in backend `settings.locale`; theme lives in frontend `localStorage`.
+- **Single-capture & privacy:** Clipboard monitor starts once and reads one snapshot per change (`Files > Text(+html) > Image`). All clipboard writes hold `clipboard_use_lock` and update `last_copied_by_us` (`docs/adr/0002`–`0004`, `0012`).
+- **Database schema v3:** File lists store JSON string arrays; never lower `CURRENT_DB_USER_VERSION` or write newline-joined file rows (`docs/adr/0008`). Timestamps are fractional Unix seconds (`f64`); never truncate to whole seconds (`docs/adr/0006`).
+- **QuickBar UI:** Keep fixed `ROW_HEIGHT_REM` virtualization, non-nested `grid`/`row`/`gridcell` buttons, IME `isComposing || keyCode === 229` guards, and native macOS window shadow without CSS shadows/translucent halos on `.quickbar-panel` (`docs/adr/0014`, `0015`).
+- **External links & folders:** Always use `tauri-plugin-opener` (never shell out to `cmd /C start` or raw `spawn()`).
+- **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`), directly on `main`, only when asked; stage only relevant files.

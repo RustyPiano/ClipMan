@@ -66,7 +66,8 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 4. 检查自动填入的 `release_notes_<版本号>.md` 内容是否正确
 5. 可选: 添加截图或演示 GIF
 6. 取消勾选 "Set as a pre-release" (如果这是正式版本)
-7. 点击 "Publish release"
+7. 点击 "Publish release"（或执行 `gh release edit vX.Y.Z --draft=false --prerelease=false`）
+8. **重写 `latest.json` 为公开直链并复验**：`tauri-action` 在草稿阶段生成的 `latest.json` 使用 `api.github.com/repos/.../releases/assets/<id>`，匿名客户端会受 60 次/小时限流导致 403。公开后把 `latest.json` 中的平台 `url` 替换为对应附件的 `browser_download_url`（`https://github.com/RustyPiano/ClipMan/releases/download/vX.Y.Z/...`），用 `gh release upload vX.Y.Z latest.json --clobber` 覆盖，再运行 `python3 scripts/verify-release.py --repo RustyPiano/ClipMan --tag vX.Y.Z` 复验签名。
 
 `verify-release` 的通过记录是公开草稿前的必要检查。GitHub 的手动发布按钮不会自动受到工作流结果限制。
 

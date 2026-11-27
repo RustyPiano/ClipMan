@@ -116,7 +116,7 @@ bun tauri dev
 bun tauri build
 ```
 
-各模块所在位置见 [AGENTS.md](AGENTS.md) 的 “Where Things Live”。
+开发规范与设计决策见 [AGENTS.md](AGENTS.md) 和 [docs/adr/](docs/adr/)。
 
 ## 路线图
 

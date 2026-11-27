@@ -113,7 +113,7 @@ bun tauri dev
 bun tauri build
 ```
 
-See "Where Things Live" in [AGENTS.md](AGENTS.md) for where each module lives.
+See [AGENTS.md](AGENTS.md) and [docs/adr/](docs/adr/) for development conventions and design decisions.
 
 ## Roadmap
 
