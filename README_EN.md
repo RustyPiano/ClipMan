@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="app-icon.png" alt="ClipLeaf" width="128" />
+<img src="website/public/icon.png" alt="ClipLeaf" width="128" />
 
 **Lightweight Modern Clipboard Manager**
 
