@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        var t = localStorage.getItem('clipleaf-theme');
+        var m = document.querySelector('meta[name="color-scheme"]');
+        if (t === 'ink') {
+          m.content = 'dark';
+          document.documentElement.dataset.theme = 'ink';
+        } else if (t === 'paper') {
+          m.content = 'light';
+          document.documentElement.dataset.theme = 'paper';
+        } else if (t === 'petal') {
+          m.content = 'light';
+          document.documentElement.dataset.theme = 'petal';
+        }
+      } catch (e) {}
+    </script>
+    <title>ClipLeaf — 复制过的，都在手边</title>
+    <meta
+      name="description"
+      content="ClipLeaf 是一款本地优先的跨平台剪贴板管理器。粘进 Word / PPT 自动纯文本不毁排版，SQLite FTS5 毫秒检索，开源免费，零云端上传。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://clipleaf.app/" />
+    <meta property="og:title" content="ClipLeaf — 复制过的，都在手边" />
+    <meta
+      property="og:description"
+      content="贴进 Word / PPT 不毁排版 · 本地 SQLite 毫秒检索 · 跨平台免费开源剪贴板。"
+    />
+    <meta property="og:image" content="https://clipleaf.app/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ClipLeaf — Everything you copy. Kept light." />
+    <meta
+      name="twitter:description"
+      content="Layout-safe plain paste for Word & PowerPoint · Local SQLite · Free & open source."
+    />
+    <meta name="twitter:image" content="https://clipleaf.app/og.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,255 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC',
+    'Hiragino Sans GB', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'Geist Mono', 'SF Mono', ui-monospace, 'Cascadia Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --page-bg: light-dark(#ffffff, #0e0e10);
+  --stage-bg: light-dark(#f5f5f7, #161619);
+  --surface: light-dark(#ffffff, #1c1c20);
+  --surface-subtle: light-dark(#f2f2f5, #232328);
+  --ink: light-dark(#181818, #f2f2f4);
+  --ink-muted: light-dark(#6a6a6a, #94949c);
+  --ink-faint: light-dark(#9a9aa0, #62626c);
+  --hairline: light-dark(rgba(24, 24, 24, 0.08), rgba(255, 255, 255, 0.085));
+  --hairline-strong: light-dark(rgba(24, 24, 24, 0.16), rgba(255, 255, 255, 0.16));
+  --primary: light-dark(#181818, #f5f5f7);
+  --primary-fg: light-dark(#ffffff, #0e0e10);
+  --accent: light-dark(#d97706, #f59e0b);
+  --accent-soft: light-dark(rgba(217, 119, 6, 0.1), rgba(245, 158, 11, 0.16));
+  --mark-bg: light-dark(rgba(217, 119, 6, 0.2), rgba(245, 158, 11, 0.28));
+  --mark-fg: light-dark(#181818, #fef3c7);
+  --kbd-bg: light-dark(#efefef, #26262c);
+  --kbd-border: light-dark(rgba(24, 24, 24, 0.12), rgba(255, 255, 255, 0.14));
+  --checker-a: light-dark(#ececef, #242429);
+  --checker-b: light-dark(#ffffff, #1c1c20);
+  --panel-shadow: light-dark(
+    0 28px 72px -28px rgba(0, 0, 0, 0.16),
+    0 36px 90px -24px rgba(0, 0, 0, 0.72)
+  );
+  --toast-bg: light-dark(rgba(24, 24, 24, 0.94), rgba(44, 44, 50, 0.96));
+  --toast-fg: #f5f5f7;
+
+  &:has(> head > meta[name='color-scheme'][content='dark']) {
+    color-scheme: dark;
+  }
+
+  &:has(> head > meta[name='color-scheme'][content='light']) {
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='petal'] {
+  color-scheme: light;
+  --page-bg: #fcf8f9;
+  --stage-bg: #f5ebee;
+  --surface: #ffffff;
+  --surface-subtle: #f4eaed;
+  --ink: #24181d;
+  --ink-muted: #725d65;
+  --ink-faint: #9d8790;
+  --hairline: rgba(110, 50, 72, 0.09);
+  --hairline-strong: rgba(110, 50, 72, 0.18);
+  --primary: #9f3c5c;
+  --primary-fg: #ffffff;
+  --accent: #9f3c5c;
+  --accent-soft: rgba(159, 60, 92, 0.1);
+  --mark-bg: rgba(159, 60, 92, 0.16);
+  --mark-fg: #24181d;
+  --kbd-bg: #f1e6ea;
+  --kbd-border: rgba(110, 50, 72, 0.14);
+  --checker-a: #f2e8ec;
+  --checker-b: #ffffff;
+  --panel-shadow: 0 28px 72px -28px rgba(110, 50, 72, 0.18);
+  --toast-bg: rgba(48, 28, 36, 0.95);
+  --toast-fg: #fdf7f9;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background: var(--page-bg);
+    color: var(--ink);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--page-bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+    transition:
+      background-color 240ms ease,
+      color 240ms ease;
+  }
+
+  ::selection {
+    background: var(--mark-bg);
+    color: var(--ink);
+  }
+}
+
+.kbd-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.375rem;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-muted);
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
+}
+
+.img-checkerboard {
+  background-color: var(--checker-b);
+  background-image:
+    linear-gradient(45deg, var(--checker-a) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-a) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-a) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-a) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+.qb-panel {
+  background: var(--surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.qb-mark {
+  background: var(--mark-bg);
+  color: var(--mark-fg);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.curtain-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.curtain-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.curtain-range::-moz-range-thumb {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+dialog.cl-dialog {
+  margin: auto;
+  max-width: min(520px, calc(100vw - 2rem));
+  width: 100%;
+  padding: 0;
+  border-radius: 24px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--panel-shadow);
+  opacity: 0;
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.24s;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  transition-behavior: allow-discrete;
+
+  @media (prefers-reduced-motion: no-preference) {
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+dialog.cl-dialog::backdrop {
+  background-color: rgb(0 0 0 / 0);
+  backdrop-filter: blur(0px);
+  transition-property: background-color, backdrop-filter, display, overlay;
+  transition-duration: 0.24s;
+  transition-timing-function: ease-out;
+  transition-behavior: allow-discrete;
+}
+
+:is(dialog.cl-dialog[open]):where(:not([data-closing])) {
+  opacity: 1;
+
+  @starting-style {
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    transform: translateY(0) scale(1);
+
+    @starting-style {
+      transform: translateY(8px) scale(0.97);
+    }
+  }
+
+  &::backdrop {
+    background-color: rgb(0 0 0 / 0.42);
+    backdrop-filter: blur(6px);
+
+    @starting-style {
+      background-color: rgb(0 0 0 / 0);
+      backdrop-filter: blur(0px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  dialog.cl-dialog,
+  dialog.cl-dialog::backdrop {
+    transition-duration: 0.1s;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes leaf-pop {
+    0% {
+      transform: scale(0.75);
+    }
+    55% {
+      transform: scale(1.18);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  .animate-leaf-pop {
+    animation: leaf-pop 240ms cubic-bezier(0.22, 1.35, 0.36, 1) both;
+  }
+}

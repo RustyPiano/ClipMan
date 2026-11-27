@@ -61,6 +61,7 @@ export default [
   {
     ignores: [
       'dist/',
+      'website/dist/',
       'node_modules/',
       'src-tauri/target/',
       'src-tauri/gen/',
@@ -108,6 +109,12 @@ export default [
     },
     rules: {
       'local/no-comments': 'error',
+    },
+  },
+  {
+    files: ['website/src/**'],
+    languageOptions: {
+      globals: { __RELEASE_VERSION__: 'readonly' },
     },
   },
   {

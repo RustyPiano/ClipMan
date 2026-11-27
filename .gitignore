@@ -13,6 +13,7 @@ node_modules/
 .svelte-kit/
 build/
 dist/
+website/dist/
 dist-ssr/
 
 src-tauri/target/
@@ -51,3 +52,5 @@ ClipMan-signing/
 /.comment-audit/
 /test-results/
 /playwright-report/
+.vercel
+.env*

@@ -12,6 +12,10 @@
     "test": "bun test tests/",
     "test:types": "tsc -p tests/tsconfig.json --noEmit",
     "format": "prettier --write \"src/**/*.{ts,svelte}\"",
+    "website:dev": "bun --bun vite --config website/vite.config.ts",
+    "website:build": "bun --bun vite build --config website/vite.config.ts",
+    "website:preview": "bun --bun vite preview --config website/vite.config.ts",
+    "website:check": "bun --bun svelte-check --tsconfig ./website/tsconfig.json",
     "tauri": "tauri",
     "test:ui": "playwright test"
   },
