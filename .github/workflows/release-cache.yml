@@ -1,0 +1,68 @@
+name: 'Release cache'
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/Cargo.toml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/release-cache.yml'
+  schedule:
+    - cron: '0 3 */5 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            cache-key: 'release-macos-aarch64'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            cache-key: 'release-macos-x86_64'
+          - platform: 'ubuntu-22.04'
+            args: ''
+            cache-key: 'release-linux'
+          - platform: 'windows-latest'
+            args: ''
+            cache-key: 'release-windows'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          shared-key: ${{ matrix.cache-key }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: release build without bundles
+        run: bun tauri build --no-bundle ${{ matrix.args }}

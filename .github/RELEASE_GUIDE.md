@@ -46,7 +46,7 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipLeaf/actions`
 2. 查看 "Release" workflow 运行状态
 3. `preflight` 核对版本、发布说明和上一公开版本的更新公钥；`draft-release` 为该标签创建（或复用）唯一的草稿 Release。
-4. `quality` 调用 CI，前端及 macOS/Linux/Windows Rust 检查并行运行，全部通过后才启动四个打包任务。
+4. `quality` 调用 CI，与四个打包任务同时运行。打包只上传到草稿；`verify-release` 要等 `quality` 和打包都通过才运行。
 5. 等待 `verify-release` 通过。该作业核对 `latest.json` 的版本、平台、附件归属和更新签名。失败时保持草稿，处理原因后重新运行 Release。
 
 构建产物（具体的 updater 压缩包/签名后缀随 Tauri 版本变化，以 Draft Release 为准）：
@@ -201,3 +201,4 @@ A:
 | `.github/workflows/prepare-release.yml` | 检查输入、同步版本、原子推送提交与标签（需 `RELEASE_PAT`）                         |
 | `.github/workflows/ci.yml`              | push/PR 与 Release 共用的前端、发布脚本及 macOS/Linux/Windows Rust 检查           |
 | `.github/workflows/release.yml`         | 校验发布输入和公钥、调用 CI、构建签名与草稿、统一验证产物                         |
+| `.github/workflows/release-cache.yml`   | 在 main 上预编译四个打包平台的 release 依赖，供标签构建恢复缓存                     |

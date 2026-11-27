@@ -40,7 +40,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   draft-release:
-    needs: [preflight, quality]
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,7 +71,7 @@ jobs:
           echo "id=$IDS" >> "$GITHUB_OUTPUT"
 
   publish-tauri:
-    needs: [preflight, quality, draft-release]
+    needs: [preflight, draft-release]
     permissions:
       contents: write
     strategy:
@@ -80,12 +80,16 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            cache-key: 'release-macos-aarch64'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
+            cache-key: 'release-macos-x86_64'
           - platform: 'ubuntu-22.04'
             args: ''
+            cache-key: 'release-linux'
           - platform: 'windows-latest'
             args: ''
+            cache-key: 'release-windows'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -106,6 +110,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          shared-key: ${{ matrix.cache-key }}
+          save-if: false
 
       - name: install frontend dependencies
         run: bun install --frozen-lockfile
@@ -170,7 +176,7 @@ jobs:
           args: ${{ matrix.args }}
 
   verify-release:
-    needs: publish-tauri
+    needs: [publish-tauri, quality]
     runs-on: ubuntu-latest
     permissions:
       contents: write
