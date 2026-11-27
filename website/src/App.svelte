@@ -40,8 +40,8 @@
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
     document.title =
       locale === 'zh'
-        ? 'ClipLeaf — 复制过的，都在手边'
-        : 'ClipLeaf — Everything you copy. Kept light.';
+        ? 'ClipLeaf — 轻快、干净的本地剪贴板'
+        : 'ClipLeaf — The fast, clean local clipboard manager.';
   });
 
   function selectTheme(next: ResolvedTheme): void {
@@ -233,22 +233,22 @@
             <div class="flex items-center justify-between font-mono text-sm">
               <div class="flex items-center gap-2 text-[var(--ink)]">
                 <span class="text-[var(--ink-faint)]">/</span>
-                <span>{locale === 'zh' ? '本地 剪贴' : 'sqlite trigram'}</span>
+                <span>{locale === 'zh' ? '接口 密钥' : 'release notes'}</span>
                 <span class="inline-block h-4 w-[2px] bg-[var(--accent)]"></span>
               </div>
               <span class="text-xs text-[var(--accent)]">1.4 ms</span>
             </div>
             <div class="mt-6 space-y-3 text-sm text-[var(--ink-muted)]">
               <p>
-                {locale === 'zh' ? 'ClipLeaf 是一款' : 'Sub-millisecond '}
-                <mark class="qb-mark">{locale === 'zh' ? '本地' : 'sqlite'}</mark>
-                {locale === 'zh' ? '优先的' : ' FTS5 '}
-                <mark class="qb-mark">{locale === 'zh' ? '剪贴' : 'trigram'}</mark>
-                {locale === 'zh' ? '板管理器' : ' full-text lookup'}
+                {locale === 'zh' ? '测试环境' : 'Summarize the git diff into crisp '}
+                <mark class="qb-mark">{locale === 'zh' ? '接口' : 'release'}</mark>
+                {locale === 'zh' ? '地址与调试' : ' '}
+                <mark class="qb-mark">{locale === 'zh' ? '密钥' : 'notes'}</mark>
+                {locale === 'zh' ? '说明（仅内网访问）' : ' for users'}
               </p>
               <p class="font-mono text-xs text-[var(--ink-faint)]">
                 {locale === 'zh'
-                  ? 'macOS 原生中文输入法候选窗无冲突'
+                  ? '拼音选词按回车不误触粘贴 · 中英文关键词毫秒级高亮'
                   : 'Zero conflict with macOS CJK IME candidate windows'}
               </p>
             </div>
@@ -337,6 +337,32 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="mt-24 border-t border-[var(--hairline)] pt-16 sm:mt-32 sm:pt-20">
+        <h3
+          class="text-balance text-2xl font-semibold tracking-[-0.02em] text-[var(--ink)] sm:text-3xl"
+        >
+          {copy.detailGridHeading}
+        </h3>
+
+        <div class="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {#each copy.detailGridItems as item (item.title)}
+            <div class="flex flex-col justify-between rounded-[24px] bg-[var(--stage-bg)] p-6">
+              <div>
+                <h4 class="text-base font-semibold tracking-tight text-[var(--ink)]">
+                  {item.title}
+                </h4>
+                <p class="mt-2.5 text-sm leading-relaxed text-[var(--ink-muted)]">
+                  {item.body}
+                </p>
+              </div>
+              <div class="mt-5 font-mono text-[11px] text-[var(--ink-faint)]">
+                {item.tag}
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
     </section>
