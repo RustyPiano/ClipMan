@@ -6,19 +6,19 @@
 
 ## 当前状态
 
-v2.4.6 已准备发布，包含 macOS QuickBar 焦点修复和 11 月的代码精简，说明见 `release_notes_2.4.6.md`。
-
-v2.4.5 已于 2026-10-22 正式发布，发布提交为 `4142f4d`，产品页已重新部署。发布内容为 `6171173` 和 `57df30e` 两次修复及版本信息，说明见 `release_notes_2.4.5.md`。
+v2.4.6 已于 2026-11-27 正式发布，发布提交为 `beddb1d`，包含 macOS QuickBar 焦点修复和 11 月的代码精简，说明见 `release_notes_2.4.6.md`。Vercel 生产部署已更新，公开下载页已显示 v2.4.6。
 
 文件摘要最多提供两个路径，允许重复路径正常显示，界面使用实际文件总数；设置保存拒绝非法值，存储目录读取失败可重新读取；纯文本写入共用，重复判断、异常包装、注释和文档已精简。QuickBar 忽略输入法确认按键，避免回车确认中文时触发粘贴。
 
-main 的 macOS QuickBar 使用 NSPanel 并同步鼠标激活标记，保持目标应用激活；该焦点修复尚未发布。
+macOS QuickBar 使用 NSPanel 并同步鼠标激活标记，保持目标应用激活。
 
 代码不再写注释：注释里的设计决定迁入 `docs/adr/` 的 22 份 ADR；ESLint `local/no-comments` 和 `src-tauri/tests/no_comments.rs` 阻止新增注释，存量上限已清零。审查记录见 `docs/archive/COMMENT-AUDIT-2026-11-22.md`，权宜实现对应 Issue #3–#11，其中 #4 已随删除 `unlistenQuietly` 修复。
 
 代码精简（2026-11-22）：删除只用一次的包装、重复逻辑和兜底，FTS 重建改为一条 INSERT…SELECT，密钥检测改为 RegexSet 表，快捷键变更与回滚合成一组循环，前台窗口按值传递，e2e 模拟环境抽到 `e2e/tauri-mock.ts`。顺带修正：迁移回填缩略图不再放大小图；数据库辅助文件路径不经 `display()` 拼接；托盘菜单不再出现相邻或开头的分隔符；设置页托盘说明不再重复显示。测试删去重复和无效断言，Rust 107→65、Bun 64→53、浏览器 66→64。Windows 剪贴板隐私标记和系统语言改用 windows crate 的 `Win32_System_Memory`、`Win32_Globalization` 接口，不再手写 kernel32 FFI；Windows 分支只能由 CI 编译验证。
 
 ## 最近验证
+
+- v2.4.6 的 Release 运行 `45922189200` 通过全部质量检查、四个构建目标和产物校验。本机独立验证通过 7 份更新签名、macOS 双架构 DMG 的镜像完整性、版本、架构和严格代码签名；公钥延续 v2.4.5，macOS 签名要求与已安装版本一致。公开更新清单已返回 2.4.6。
 
 - 本机（2026-11-22）：注释清理和代码精简后 Rust 65 项、Bun 53 项、Chromium/WebKit 64 项、发布校验 6 项通过；lint（含注释检查）、check、test:types、build、Clippy、rustfmt 和 Prettier 通过。
 
