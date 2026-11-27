@@ -33,6 +33,12 @@ bun tauri build        # platform installers under src-tauri/target/release/bund
 bun run format         # prettier --write "src/**/*.{ts,svelte}"
 ```
 
+The website ships the Latin variable fonts from `@fontsource-variable/geist` and `@fontsource-variable/geist-mono` 5.3.0. Its Noto Serif SC 600 subset comes from `@fontsource/noto-serif-sc` 5.3.1. When adding title characters, collect the text of all `.font-serif` elements in both languages into `headings.txt`, then run the following with the source WOFF2 from that package.
+
+```sh
+pyftsubset noto-serif-sc-chinese-simplified-600-normal.woff2 --text-file=headings.txt --flavor=woff2 --layout-features='*' --name-IDs='*' --output-file=website/src/assets/noto-serif-sc-headings.woff2
+```
+
 ### CI Quality Gates (keep all green before finishing a change)
 
 ```bash

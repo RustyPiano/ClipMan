@@ -7,7 +7,7 @@
 </script>
 
 <img
-  src="/icon.png"
+  src="/favicon.png"
   alt=""
   width={size}
   height={size}

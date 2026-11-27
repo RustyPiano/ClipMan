@@ -1,5 +1,27 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Geist';
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/geist-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/geist-mono-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Noto Serif SC';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/noto-serif-sc-headings.woff2') format('woff2');
+}
+
 @theme {
   --font-sans:
     'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC',

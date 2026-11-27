@@ -11,6 +11,7 @@
     Star,
     X,
   } from 'lucide-svelte';
+  import clipPreview from '../assets/clip-preview.webp';
   import BrandMark from './BrandMark.svelte';
   import {
     COPY,
@@ -702,7 +703,7 @@
               <div class="space-y-3">
                 <div class="img-checkerboard flex h-48 items-center justify-center rounded-2xl p-4">
                   <img
-                    src="/icon.png"
+                    src={clipPreview}
                     alt="ClipLeaf icon preview"
                     width="124"
                     height="124"
