@@ -60,7 +60,7 @@
             >
           {/if}
           <a
-            href="https://github.com/RustyPiano/ClipMan"
+            href="https://github.com/RustyPiano/ClipLeaf"
             target="_blank"
             class="text-xs text-primary hover:underline">GitHub</a
           >

@@ -1,14 +1,14 @@
-# ClipMan
+# ClipLeaf
 
 <div align="center">
 
-<img src="app-icon.png" alt="ClipMan" width="128" />
+<img src="app-icon.png" alt="ClipLeaf" width="128" />
 
 **Lightweight Modern Clipboard Manager**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/github/v/release/RustyPiano/ClipMan?label=Version&color=blue)](https://github.com/RustyPiano/ClipMan/releases/latest)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
+[![Version](https://img.shields.io/github/v/release/RustyPiano/ClipLeaf?label=Version&color=blue)](https://github.com/RustyPiano/ClipLeaf/releases/latest)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipLeaf)
 
 [Download](#installation) · [Features](#features) · [Development](#development)
 
@@ -18,7 +18,7 @@
 
 ## Introduction
 
-ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is stored in a local SQLite database.
+ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and Svelte 5. History is stored in a local SQLite database.
 
 ## Features
 
@@ -29,7 +29,7 @@ ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is 
 - **Full-Text Search & Filters** - SQLite FTS5 + trigram index with match highlighting and SQL-backed category filtering (All / Text / Images / Files / Links)
 - **Rich Inspector Preview** - Store plain text, HTML, images, and file lists; preview images clearly, copy HEX/RGB/HSL color values, open links, and reveal files in Finder/Explorer; macOS shows source app icons
 - **QuickBar Access** - Open or toggle closed from any app (default `Cmd/Ctrl+Shift+V`), with native CJK IME support, keyboard selection, and auto-paste or copy-only modes
-- **Paste Format** - Keep original formatting, strip it only when taking clips through ClipMan, or turn copied rich text into plain text right away; `⌥Enter` flips it for one paste
+- **Paste Format** - Keep original formatting, strip it only when taking clips through ClipLeaf, or turn copied rich text into plain text right away; `⌥Enter` flips it for one paste
 - **Mouse and Keyboard** - Copy, favorite, label, or delete directly from each row; select a range with `⇧↑/↓` or `⇧`-click, toggle rows with `⌘`-click for batch favorite, batch delete, or Enter to merge paste
 - **Tray Menu** - Quick access to open QuickBar or copy recent and favorite items
 - **Multiple Themes** - Light/Dark/Pink themes, follow system
@@ -45,22 +45,22 @@ ClipMan is a desktop clipboard manager built with Rust and Svelte 5. History is 
 
 ## Installation
 
-Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) to download:
+Visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) to download:
 
-- **Windows**: `ClipMan_2.5.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.5.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.5.0_x64.dmg`
-- **Linux**: `ClipMan_2.5.0_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.5.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.5.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.5.1_x64.dmg`
+- **Linux**: `ClipLeaf_2.5.1_amd64.AppImage`
 
 ### macOS Install & Permissions
 
-**First launch**: builds are signed with a self-signed certificate but not Apple-notarized, so Gatekeeper may block the first launch (“cannot be opened because the developer cannot be verified”). To open it: right-click ClipMan in **Finder** → **Open**, or go to **System Settings** → **Privacy & Security** and click **Open Anyway** at the bottom. It launches normally afterwards.
+**First launch**: builds are signed with a self-signed certificate but not Apple-notarized, so Gatekeeper may block the first launch (“cannot be opened because the developer cannot be verified”). To open it: right-click ClipLeaf in **Finder** → **Open**, or go to **System Settings** → **Privacy & Security** and click **Open Anyway** at the bottom. It launches normally afterwards.
 
 **Accessibility permission**: auto-paste (simulating Cmd+V) requires Accessibility access. Grant it when prompted on first run, or add it manually:
 
-**System Settings** → **Privacy & Security** → **Accessibility** → add and enable ClipMan
+**System Settings** → **Privacy & Security** → **Accessibility** → add and enable ClipLeaf
 
-> If auto-paste stops working after an update, the permission was most likely lost. ClipMan will prompt you to re-grant it — just re-enable ClipMan in the list above (copying still works in the meantime; content is placed on the clipboard so you can paste manually).
+> If auto-paste stops working after an update, the permission was most likely lost. ClipLeaf will prompt you to re-grant it — just re-enable ClipLeaf in the list above (copying still works in the meantime; content is placed on the clipboard so you can paste manually).
 
 ## Usage
 
@@ -100,8 +100,8 @@ Visit [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) t
 
 ```bash
 # Clone repository
-git clone https://github.com/RustyPiano/ClipMan.git
-cd ClipMan
+git clone https://github.com/RustyPiano/ClipLeaf.git
+cd ClipLeaf
 
 # Install dependencies
 bun install
@@ -126,9 +126,9 @@ See [AGENTS.md](AGENTS.md) and [docs/adr/](docs/adr/) for development convention
 
 Contributions are welcome through issues and pull requests.
 
-- [Report Bug](https://github.com/RustyPiano/ClipMan/issues)
-- [Feature Request](https://github.com/RustyPiano/ClipMan/issues)
-- [Discussions](https://github.com/RustyPiano/ClipMan/discussions)
+- [Report Bug](https://github.com/RustyPiano/ClipLeaf/issues)
+- [Feature Request](https://github.com/RustyPiano/ClipLeaf/issues)
+- [Discussions](https://github.com/RustyPiano/ClipLeaf/discussions)
 
 ## License
 

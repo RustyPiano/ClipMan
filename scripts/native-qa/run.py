@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native smoke test of an already-built com.clipman.nativeqa app (macOS only).
-Usage: python3 scripts/native-qa/run.py '/absolute/path/ClipMan QA.app'
+Usage: python3 scripts/native-qa/run.py '/absolute/path/ClipLeaf QA.app'
 Requires Accessibility permission for the terminal/agent and QA app. See AGENTS.md.
 """
 import json
@@ -22,7 +22,7 @@ def main():
     storage_only = '--storage-only' in sys.argv
     bundle = Path(sys.argv[1]).resolve()
     info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())
-    if info.get('CFBundleIdentifier') != QA: raise RuntimeError('Refusing to use the daily ClipMan database')
+    if info.get('CFBundleIdentifier') != QA: raise RuntimeError('Refusing to use the daily ClipLeaf database')
     work = Path(tempfile.mkdtemp(prefix='clipman-native-qa-'))
     control = work / 'control'
     subprocess.run(['swiftc', str(Path(__file__).with_name('control.swift')), '-o', str(control)], check=True)
@@ -48,7 +48,7 @@ def main():
     state = ctl('state')
     if 'AX=true' not in state: raise RuntimeError('Grant the terminal/agent Accessibility permission first')
     if any(line.startswith('app ') and not line.startswith(f'app {TARGET} ') for line in state.splitlines()):
-        raise RuntimeError('Quit every ClipMan instance before running native QA')
+        raise RuntimeError('Quit every ClipLeaf instance before running native QA')
     app_data = Path.home() / 'Library/Application Support' / QA
     settings_file = app_data / 'settings.json'
     database = app_data / 'clipman.db'
@@ -60,7 +60,7 @@ def main():
             raise RuntimeError('QA must use its default data directory; customDataPath is not allowed')
     receiver = work / f'receiver-{work.name}.txt'
     os.environ['CLIPMAN_QA_RECEIVER'] = receiver.name
-    receiver.write_text('ClipMan native QA target\n')
+    receiver.write_text('ClipLeaf native QA target\n')
     backup = work / 'clipboard.plist'
     ctl('backup', backup)
     print('Test evidence:', work, flush=True)

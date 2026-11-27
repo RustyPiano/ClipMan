@@ -1,4 +1,4 @@
-# ClipMan 发布指南
+# ClipLeaf 发布指南
 
 ## 发布步骤
 
@@ -43,7 +43,7 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 
 ### 3. 等待构建完成
 
-1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipMan/actions`
+1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipLeaf/actions`
 2. 查看 "Release" workflow 运行状态
 3. `preflight` 核对版本、发布说明和上一公开版本的更新公钥。
 4. `quality` 调用 CI，前端及 macOS/Linux/Windows Rust 检查并行运行，全部通过后才启动四个打包任务。
@@ -60,14 +60,14 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 
 `Release` 的全部作业通过后：
 
-1. 进入 Releases: `https://github.com/RustyPiano/ClipMan/releases`
+1. 进入 Releases: `https://github.com/RustyPiano/ClipLeaf/releases`
 2. 找到当前标签对应的 Draft release
 3. 点击 "Edit draft"
 4. 检查自动填入的 `release_notes_<版本号>.md` 内容是否正确
 5. 可选: 添加截图或演示 GIF
 6. 取消勾选 "Set as a pre-release" (如果这是正式版本)
 7. 点击 "Publish release"（或执行 `gh release edit vX.Y.Z --draft=false --prerelease=false`）
-8. **重写 `latest.json` 为公开直链并复验**：`tauri-action` 在草稿阶段生成的 `latest.json` 使用 `api.github.com/repos/.../releases/assets/<id>`，匿名客户端会受 60 次/小时限流导致 403。公开后把 `latest.json` 中的平台 `url` 替换为对应附件的 `browser_download_url`（`https://github.com/RustyPiano/ClipMan/releases/download/vX.Y.Z/...`），用 `gh release upload vX.Y.Z latest.json --clobber` 覆盖，再运行 `python3 scripts/verify-release.py --repo RustyPiano/ClipMan --tag vX.Y.Z` 复验签名。
+8. **重写 `latest.json` 为公开直链并复验**：`tauri-action` 在草稿阶段生成的 `latest.json` 使用 `api.github.com/repos/.../releases/assets/<id>`，匿名客户端会受 60 次/小时限流导致 403。公开后把 `latest.json` 中的平台 `url` 替换为对应附件的 `browser_download_url`（`https://github.com/RustyPiano/ClipLeaf/releases/download/vX.Y.Z/...`），用 `gh release upload vX.Y.Z latest.json --clobber` 覆盖，再运行 `python3 scripts/verify-release.py --repo RustyPiano/ClipLeaf --tag vX.Y.Z` 复验签名。
 
 `verify-release` 的通过记录是公开草稿前的必要检查。GitHub 的手动发布按钮不会自动受到工作流结果限制。
 
@@ -79,12 +79,12 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 # 下载并测试安装包
 # macOS
 VERSION=2.2.1 # 示例：替换为刚发布的版本
-curl -fL "https://github.com/RustyPiano/ClipMan/releases/download/v${VERSION}/ClipMan_${VERSION}_aarch64.dmg" -o ClipMan.dmg
+curl -fL "https://github.com/RustyPiano/ClipLeaf/releases/download/v${VERSION}/ClipLeaf_${VERSION}_aarch64.dmg" -o ClipLeaf.dmg
 
-# 打开 dmg，将 ClipMan 拖入 Applications 后验证签名
-open ClipMan.dmg
-codesign -dv --verbose=2 /Applications/ClipMan.app
-codesign --verify --strict /Applications/ClipMan.app
+# 打开 dmg，将 ClipLeaf 拖入 Applications 后验证签名
+open ClipLeaf.dmg
+codesign -dv --verbose=2 /Applications/ClipLeaf.app
+codesign --verify --strict /Applications/ClipLeaf.app
 
 # 验证签名（自签名证书；spctl 因未公证会判为 rejected，属正常现象）
 # 应显示 Authority=ClipMan Code Signing，且严格验证成功
@@ -127,7 +127,7 @@ bun tauri build
 GitHub Actions secrets 已配置时，GitHub 只能列出 secret 名称，不能读回 secret 值。可用下面命令确认仓库里是否存在对应 secret：
 
 ```bash
-gh secret list --repo RustyPiano/ClipMan
+gh secret list --repo RustyPiano/ClipLeaf
 ```
 
 本机缺少更新私钥，而 GitHub Secrets 仍保存原私钥时，继续通过 Actions 发布，并从独立备份恢复本机所需的原私钥。更新私钥、密码和对应公钥需要妥善备份。
@@ -139,7 +139,7 @@ gh secret list --repo RustyPiano/ClipMan
 本机安装 `gh`、Python 3 和 `minisign` 后，可以只读验证已经构建的草稿或公开版本。校验草稿时，`gh` 登录账户需要该仓库的推送权限：
 
 ```bash
-python3 scripts/verify-release.py --repo RustyPiano/ClipMan --tag v2.3.0
+python3 scripts/verify-release.py --repo RustyPiano/ClipLeaf --tag v2.3.0
 ```
 
 本地四份版本清单应与指定标签一致。下载和验签文件保存在已忽略的 `src-tauri/target/release-verification/`，脚本不会修改 Release。仅核对与上一公开版本的公钥是否一致时，增加 `--check-key-only`。

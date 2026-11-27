@@ -140,7 +140,7 @@ fn spawn_fatal_alert(app: &tauri::AppHandle, message: String) {
     std::thread::spawn(move || {
         app.dialog()
             .message(message)
-            .title("ClipMan 无法启动 / ClipMan cannot start")
+            .title("ClipLeaf 无法启动 / ClipLeaf cannot start")
             .kind(MessageDialogKind::Error)
             .buttons(MessageDialogButtons::Ok)
             .blocking_show();
@@ -157,7 +157,7 @@ fn main() {
         },
     ))
     .init();
-    log::info!("ClipMan starting...");
+    log::info!("ClipLeaf starting...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -202,7 +202,7 @@ fn main() {
             let storage = match resolve_storage(app.handle(), settings.custom_data_path.clone()) {
                 Ok(storage) => storage,
                 Err(fatal_error) => {
-                    log::error!("ClipMan cannot start: {}", fatal_error);
+                    log::error!("ClipLeaf cannot start: {}", fatal_error);
                     for (label, window) in app.webview_windows() {
                         if let Err(e) = window.destroy() {
                             log::warn!(
@@ -213,8 +213,8 @@ fn main() {
                     spawn_fatal_alert(
                         app.handle(),
                         format!(
-                            "ClipMan 无法初始化数据存储，应用即将退出。\n\
-                             ClipMan could not initialize its data storage and will exit.\n\n{fatal_error}"
+                            "ClipLeaf 无法初始化数据存储，应用即将退出。\n\
+                             ClipLeaf could not initialize its data storage and will exit.\n\n{fatal_error}"
                         ),
                     );
                     return Ok(());
@@ -240,6 +240,12 @@ fn main() {
                 log::error!("Failed to set up QuickBar windows: {}", e);
             }
 
+            if settings.enable_autostart {
+                if let Err(e) = commands::migrate_legacy_autostart(app.handle()) {
+                    log::error!("Failed to migrate the legacy autostart entry: {e}");
+                }
+            }
+
             let menu = build_tray_menu(app.handle())?;
 
             #[cfg(target_os = "macos")]
@@ -258,12 +264,12 @@ fn main() {
             log::info!("System tray initialized");
 
             if let Err(e) = clipboard::start_monitor(app.handle().clone(), last_copied_by_us) {
-                log::error!("ClipMan cannot start: {e}");
+                log::error!("ClipLeaf cannot start: {e}");
                 spawn_fatal_alert(
                     app.handle(),
                     format!(
-                        "ClipMan 无法启动剪贴板监听，应用即将退出。\n\
-                         ClipMan could not start clipboard monitoring and will exit.\n\n{e}"
+                        "ClipLeaf 无法启动剪贴板监听，应用即将退出。\n\
+                         ClipLeaf could not start clipboard monitoring and will exit.\n\n{e}"
                     ),
                 );
                 return Ok(());

@@ -539,7 +539,7 @@ impl ClipStorage {
                 id, content, thumbnail, content_hash, content_type, timestamp,
                 is_pinned, pin_order, label, source_app, html
              )
-             VALUES (?1, ?2, NULL, ?3, 'text', ?4, 1, ?5, ?6, 'ClipMan', NULL)",
+             VALUES (?1, ?2, NULL, ?3, 'text', ?4, 1, ?5, ?6, 'ClipLeaf', NULL)",
             params![id, bytes, content_hash, timestamp, pin_order, label],
         )?;
         Self::sync_fts_for_clip_id_with_conn(&tx, &id)?;

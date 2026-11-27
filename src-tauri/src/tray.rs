@@ -28,7 +28,7 @@ impl TrayI18n {
     pub fn new(locale: &str) -> Self {
         if locale.starts_with("zh") {
             Self {
-                open_quickbar: "打开 ClipMan",
+                open_quickbar: "打开 ClipLeaf",
                 pinned_header: "收藏",
                 recent_header: "最近复制",
                 image: "图片",
@@ -39,7 +39,7 @@ impl TrayI18n {
             }
         } else {
             Self {
-                open_quickbar: "Open ClipMan",
+                open_quickbar: "Open ClipLeaf",
                 pinned_header: "Favorites",
                 recent_header: "Recent",
                 image: "Image",

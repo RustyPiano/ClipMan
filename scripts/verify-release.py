@@ -164,7 +164,7 @@ def verify_signature(minisign, artifact, signature_file, public_key_file):
     )
 
 def main():
-    parser = argparse.ArgumentParser(description="校验 ClipMan Release 产物及 updater 公钥")
+    parser = argparse.ArgumentParser(description="校验 ClipLeaf Release 产物及 updater 公钥")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--check-key-only", action="store_true")

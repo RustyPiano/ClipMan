@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ClipMan",
-  "version": "2.5.0",
+  "productName": "ClipLeaf",
+  "version": "2.5.1",
   "identifier": "com.clipman.manager",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ClipMan QuickBar",
+        "title": "ClipLeaf QuickBar",
         "width": 820,
         "height": 600,
         "resizable": false,
@@ -30,7 +30,7 @@
       },
       {
         "label": "settings",
-        "title": "ClipMan Settings",
+        "title": "ClipLeaf Settings",
         "width": 960,
         "height": 720,
         "center": true,
@@ -65,7 +65,22 @@
     "windows": {
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
-      "minimumWebview2Version": "111.0.0.0"
+      "minimumWebview2Version": "111.0.0.0",
+      "wix": {
+        "upgradeCode": "37b0ab03-ac3b-5161-9116-4ffd3268dc29"
+      },
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    },
+    "linux": {
+      "deb": {
+        "conflicts": ["clip-man"],
+        "replaces": ["clip-man"]
+      },
+      "rpm": {
+        "obsoletes": ["clip-man"]
+      }
     },
     "macOS": {
       "frameworks": [],
@@ -77,7 +92,7 @@
       "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQ0NGMkNGMDI5NEZDQkEKUldTNi9KUUN6L0xNazAxVHdBR3VjVHlrK0hidlRtTUM3bWJuVHRrcC9sVnB0TC8rZzV6eFdLU1YK",
       "endpoints": [
-        "https://github.com/RustyPiano/ClipMan/releases/latest/download/latest.json"
+        "https://github.com/RustyPiano/ClipLeaf/releases/latest/download/latest.json"
       ],
       "dialog": false
     }

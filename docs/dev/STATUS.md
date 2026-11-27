@@ -9,7 +9,7 @@
 - **最新正式版：v2.5.0（已公开发布）**：
   - `CI`（`main`）、`Release`（`v2.5.0` 四端构建/签名/`verify-release`）全部通过，`latest.json` 已切换为公开直链并复验通过。
   - 核心变更：macOS 标准浮动窗口修复中文输入法并兼容 macOS 13.3+、复制/粘贴焦点恢复与 500 ms 激活轮询、置顶更名为收藏并支持新建/排序/在线编辑/草稿保留、SQL 全库分类筛选、`tauri-plugin-opener` 外部打开、三套主题重做。
-- **未发布修复（`main` 工作区）**：QuickBar 窗口补回 `Auxiliary` 集合行为，修复 v2.5.0 在其他应用全屏 Space 上无法唤出的回归（QA 包实测通过）；搜索结果行在匹配词前最多保留 12 个字符，前文用省略号代替，避免高亮被行尾截断。
+- **v2.5.1 发布中（更名 ClipLeaf）**：产品名、界面文字、安装包和仓库（`RustyPiano/ClipLeaf`）改用 ClipLeaf，identifier、数据文件、签名证书和可执行文件名保持不变（`docs/adr/0023-clipleaf-rename.md`）；同时修复 macOS 全屏 Space 上无法唤出 QuickBar 的回归，以及搜索高亮被行尾截断。
 - **文档整理**：精简 `AGENTS.md`（去重目录表与 ADR 重复段落）、同步 ADR 0009/0012/0022 与 `.github/RELEASE_GUIDE.md`、清理 14 份已发布的历史 `release_notes_*.md`。
 
 ## 待办
@@ -19,7 +19,7 @@
 
 ## 已知问题 / 注意事项
 
-- 打开 QuickBar 会短暂激活 ClipMan，导致 Finder 文件重命名等失焦即退出的临时编辑框中断（详见 `docs/adr/0014-quickbar-macos-window.md`）。
+- 打开 QuickBar 会短暂激活 ClipLeaf，导致 Finder 文件重命名等失焦即退出的临时编辑框中断（详见 `docs/adr/0014-quickbar-macos-window.md`）。
 - Linux 纯 Wayland（无 XWayland）下剪贴板监听无法启动；Linux 的 `globalPlain` 无法区分外部应用再次复制完全相同的文本及 HTML。
 - 自定义数据目录启动时若数据库损坏会隔离备份为 `.corrupt-*` 并重建空库；若目录本身不可用则弹出致命错误并退出。
 - 搜索最多展示 1000 条；应用排除目前仅支持 macOS；合并粘贴跳过图片；原图预览上限 16 MiB，文本/文件预览与在线编辑上限 1 MiB（复制/粘贴始终使用完整内容）。

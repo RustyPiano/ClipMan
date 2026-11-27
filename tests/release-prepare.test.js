@@ -61,7 +61,7 @@ function fixture(version = '1.2.3') {
     `[[package]]\nname = "clipman"\nversion = "${version}"\n`
   );
   for (const file of ['README.md', 'README_EN.md']) {
-    writeFileSync(join(repository, file), `ClipMan_${version}_aarch64.dmg\n`);
+    writeFileSync(join(repository, file), `ClipLeaf_${version}_aarch64.dmg\n`);
   }
   writeFileSync(join(repository, 'release_notes_1.2.4.md'), '## 修复\n\n- 保存富文本。\n');
   succeeds(repository, ['git', 'init', '-b', 'main']);

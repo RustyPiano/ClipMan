@@ -1,6 +1,6 @@
 ---
 name: delete-comment
-description: 审查 ClipMan 的代码注释并删除：同义重复和过时的直接删，为权宜实现开脱的删后提 GitHub Issue，设计决定迁入 docs/adr/，最后收紧注释检查的上限。用户输入 /delete-comment 或要求清理注释时使用。
+description: 审查 ClipLeaf 的代码注释并删除：同义重复和过时的直接删，为权宜实现开脱的删后提 GitHub Issue，设计决定迁入 docs/adr/，最后收紧注释检查的上限。用户输入 /delete-comment 或要求清理注释时使用。
 ---
 
 # 删除注释

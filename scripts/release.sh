@@ -29,13 +29,13 @@ awk -v v="$VERSION" '
 
 for f in README.md README_EN.md; do
   [ -f "$f" ] || continue
-  sedi -E "s/ClipMan_[0-9]+\.[0-9]+\.[0-9]+_/ClipMan_${VERSION}_/g" "$f"
+  sedi -E "s/ClipLeaf_[0-9]+\.[0-9]+\.[0-9]+_/ClipLeaf_${VERSION}_/g" "$f"
 done
 
 NOTES="release_notes_${VERSION}.md"
 if [ ! -f "$NOTES" ]; then
   cat > "$NOTES" <<EOF
-## ClipMan v${VERSION}
+## ClipLeaf v${VERSION}
 
 ### ✨ 新功能 / New
 

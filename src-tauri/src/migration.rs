@@ -235,7 +235,7 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         .find(|filename| to.join(filename).exists())
     {
         return Err(format!(
-            "Destination already contains ClipMan data ({filename}); choose an empty destination"
+            "Destination already contains ClipLeaf data ({filename}); choose an empty destination"
         ));
     }
 
@@ -328,7 +328,7 @@ mod tests {
             std::fs::write(destination.join(filename), b"existing").unwrap();
 
             let error = prepare_destination_directory(&source, &destination).unwrap_err();
-            assert!(error.contains("already contains ClipMan data"));
+            assert!(error.contains("already contains ClipLeaf data"));
         }
 
         let _ = std::fs::remove_dir_all(&test_root);

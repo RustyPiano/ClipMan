@@ -13,7 +13,7 @@ const zh = {
   previewLimited: '仅预览前 1 MiB，复制和粘贴仍使用完整内容',
   toggleSelection: '选择 / 取消选择',
   searchPendingHint: '搜索尚未完成，请稍后再按回车。',
-  appName: 'ClipMan',
+  appName: 'ClipLeaf',
   appTagline: '高效的剪贴板管理工具',
 
   history: '历史记录',
@@ -57,9 +57,9 @@ const zh = {
   settingsAbout: '关于',
 
   autostart: '开机自启动',
-  autostartDesc: '系统启动时自动运行 ClipMan',
+  autostartDesc: '系统启动时自动运行 ClipLeaf',
   globalHotkey: '全局热键',
-  globalHotkeyDesc: '设置打开 ClipMan 窗口的快捷键',
+  globalHotkeyDesc: '设置打开 ClipLeaf 窗口的快捷键',
   recording: '录入',
   recordingHint: '按下快捷键组合...',
   alreadyCurrentHotkey: '这已经是当前快捷键了',
@@ -76,7 +76,7 @@ const zh = {
   pasteFormatOriginal: '保留原始格式',
   pasteFormatOriginalDesc: '按复制时的原样粘贴，包含富文本格式。',
   pasteFormatTakePlain: '取用时纯文本',
-  pasteFormatTakePlainDesc: '经 ClipMan 取用或复制时去除格式；直接 Cmd+V 仍粘贴原格式。',
+  pasteFormatTakePlainDesc: '经 ClipLeaf 取用或复制时去除格式；直接 Cmd+V 仍粘贴原格式。',
   pasteFormatGlobalPlain: '始终纯文本',
   pasteFormatGlobalPlainDesc:
     '复制被捕获后即去除富文本，之后的直接粘贴即为纯文本（少数跳过捕获的内容除外）。',
@@ -97,7 +97,7 @@ const zh = {
   maxRecentInTray: '托盘最近数量',
   maxRecentInTrayDesc: '托盘菜单中显示的最近项数量',
 
-  dataLocationDesc: '选择 ClipMan 数据的存储位置',
+  dataLocationDesc: '选择 ClipLeaf 数据的存储位置',
   currentLocation: '当前位置',
   changeLocation: '更改位置',
   openFolder: '打开文件夹',
@@ -138,16 +138,17 @@ const zh = {
   emptyContent: '[内容为空]',
 
   clipboardAccessTitle: '无法访问剪贴板',
-  clipboardAccessDesc: 'ClipMan 暂时无法读取系统剪贴板，新复制的内容可能不会被记录。',
+  clipboardAccessDesc: 'ClipLeaf 暂时无法读取系统剪贴板，新复制的内容可能不会被记录。',
   clipboardAccessHint: '请稍后重试；若持续出现，检查是否有其他剪贴板工具正在占用剪贴板。',
   recheck: '重新检查',
   details: '查看详情',
   errorLabel: '错误',
 
   accessibilityTitle: '需要无障碍权限',
-  accessibilityDesc: 'ClipMan 无法自动粘贴（模拟 Cmd+V）：“辅助功能”权限已失效，常见于应用更新后。',
+  accessibilityDesc:
+    'ClipLeaf 无法自动粘贴（模拟 Cmd+V）：“辅助功能”权限已失效，常见于应用更新后。',
   accessibilityHint:
-    '在系统设置中重新勾选 ClipMan 即可恢复自动粘贴；期间内容仍会复制到剪贴板，可手动粘贴。',
+    '在系统设置中重新勾选 ClipLeaf 即可恢复自动粘贴；期间内容仍会复制到剪贴板，可手动粘贴。',
   openSettings: '打开系统设置',
 
   paste: '粘贴',
@@ -244,7 +245,7 @@ const en: Translations = {
   previewLimited: 'Preview limited to 1 MiB. Copy and paste use the full content.',
   toggleSelection: 'Select / deselect',
   searchPendingHint: 'Search is still running. Press Enter again when it finishes.',
-  appName: 'ClipMan',
+  appName: 'ClipLeaf',
   appTagline: 'Efficient clipboard manager',
 
   history: 'History',
@@ -288,9 +289,9 @@ const en: Translations = {
   settingsAbout: 'About',
 
   autostart: 'Launch at startup',
-  autostartDesc: 'Automatically start ClipMan when system boots',
+  autostartDesc: 'Automatically start ClipLeaf when system boots',
   globalHotkey: 'Global hotkey',
-  globalHotkeyDesc: 'Set the shortcut to open ClipMan window',
+  globalHotkeyDesc: 'Set the shortcut to open ClipLeaf window',
   recording: 'Record',
   recordingHint: 'Press key combination...',
   alreadyCurrentHotkey: 'This is already the current hotkey',
@@ -307,9 +308,9 @@ const en: Translations = {
   pasteFormat: 'Paste format',
   pasteFormatOriginal: 'Keep original formatting',
   pasteFormatOriginalDesc: 'Paste exactly as copied, rich formatting included.',
-  pasteFormatTakePlain: 'Plain text via ClipMan',
+  pasteFormatTakePlain: 'Plain text via ClipLeaf',
   pasteFormatTakePlainDesc:
-    'Taking or copying through ClipMan strips formatting; a direct Cmd+V keeps the copied format.',
+    'Taking or copying through ClipLeaf strips formatting; a direct Cmd+V keeps the copied format.',
   pasteFormatGlobalPlain: 'Always plain text',
   pasteFormatGlobalPlainDesc:
     'Rich text is stripped once a copy is captured, so later direct pastes are plain text.',
@@ -331,7 +332,7 @@ const en: Translations = {
   maxRecentInTray: 'Recent in tray',
   maxRecentInTrayDesc: 'Number of recent items shown in tray menu',
 
-  dataLocationDesc: 'Choose where ClipMan stores its data',
+  dataLocationDesc: 'Choose where ClipLeaf stores its data',
   currentLocation: 'Current location',
   changeLocation: 'Change location',
   openFolder: 'Open folder',
@@ -373,7 +374,7 @@ const en: Translations = {
 
   clipboardAccessTitle: 'Cannot access the clipboard',
   clipboardAccessDesc:
-    'ClipMan cannot read the system clipboard right now, so new copies may not be recorded.',
+    'ClipLeaf cannot read the system clipboard right now, so new copies may not be recorded.',
   clipboardAccessHint:
     'Try again shortly. If it keeps happening, check whether another clipboard tool is holding the clipboard.',
   recheck: 'Re-check',
@@ -382,9 +383,9 @@ const en: Translations = {
 
   accessibilityTitle: 'Accessibility permission needed',
   accessibilityDesc:
-    "ClipMan can't auto-paste (simulate Cmd+V): its Accessibility permission is no longer valid, which often happens after an update.",
+    "ClipLeaf can't auto-paste (simulate Cmd+V): its Accessibility permission is no longer valid, which often happens after an update.",
   accessibilityHint:
-    'Re-enable ClipMan under System Settings to restore auto-paste. Until then, content is still copied to the clipboard so you can paste manually.',
+    'Re-enable ClipLeaf under System Settings to restore auto-paste. Until then, content is still copied to the clipboard so you can paste manually.',
   openSettings: 'Open System Settings',
 
   paste: 'Paste',

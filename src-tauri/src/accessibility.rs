@@ -44,17 +44,17 @@ mod imp {
         let (title, body, open_btn, later_btn) = if zh {
             (
                 "需要无障碍权限",
-                "ClipMan 无法自动粘贴，因为“辅助功能/无障碍”权限已失效（常见于应用更新后）。\
-                 \n\n内容已复制到剪贴板，你仍可手动粘贴。请在系统设置中重新授权 ClipMan 以恢复自动粘贴。",
+                "ClipLeaf 无法自动粘贴，因为“辅助功能/无障碍”权限已失效（常见于应用更新后）。\
+                 \n\n内容已复制到剪贴板，你仍可手动粘贴。请在系统设置中重新授权 ClipLeaf 以恢复自动粘贴。",
                 "打开系统设置",
                 "稍后",
             )
         } else {
             (
                 "Accessibility permission needed",
-                "ClipMan couldn't auto-paste because its Accessibility permission is no longer \
+                "ClipLeaf couldn't auto-paste because its Accessibility permission is no longer \
                  valid (this often happens after an update).\n\nThe content has been copied to \
-                 the clipboard, so you can paste manually. Re-grant ClipMan under System Settings \
+                 the clipboard, so you can paste manually. Re-grant ClipLeaf under System Settings \
                  to restore auto-paste.",
                 "Open System Settings",
                 "Later",

@@ -1,14 +1,14 @@
-# ClipMan
+# ClipLeaf
 
 <div align="center">
 
-<img src="app-icon.png" alt="ClipMan" width="128" />
+<img src="app-icon.png" alt="ClipLeaf" width="128" />
 
 **轻量级现代剪贴板管理器**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/github/v/release/RustyPiano/ClipMan?label=Version&color=blue)](https://github.com/RustyPiano/ClipMan/releases/latest)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipMan)
+[![Version](https://img.shields.io/github/v/release/RustyPiano/ClipLeaf?label=Version&color=blue)](https://github.com/RustyPiano/ClipLeaf/releases/latest)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/RustyPiano/ClipLeaf)
 
 [下载使用](#安装) · [功能特性](#功能) · [开发文档](#开发)
 
@@ -18,7 +18,7 @@
 
 ## 简介
 
-ClipMan 是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史记录保存在本地 SQLite 数据库。
+ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史记录保存在本地 SQLite 数据库。
 
 ## 功能
 
@@ -29,7 +29,7 @@ ClipMan 是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史�
 - **全文搜索与分类筛选** - SQLite FTS5 + trigram 索引实时搜索并高亮匹配，支持按全部/文本/图片/文件/链接在全库筛选
 - **多类型预览** - 统一保存纯文本、HTML 富文本、图片和文件列表；预览栏支持图片清晰展示、色值 HEX/RGB/HSL 一键复制、链接直开与在访达/文件夹中显示，macOS 显示来源应用图标
 - **QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`，再次按下可关闭），支持原生中文输入法，键盘选择并按设置自动粘贴或仅复制
-- **粘贴格式** - 保留原始格式、仅经 ClipMan 取用时去除格式，或复制富文本后直接改为纯文本；`⌥Enter` 临时切换一次
+- **粘贴格式** - 保留原始格式、仅经 ClipLeaf 取用时去除格式，或复制富文本后直接改为纯文本；`⌥Enter` 临时切换一次
 - **键鼠操作** - 每行可直接复制、收藏、编辑标签、删除；`⇧↑/↓`、`⇧`+点击选择连续范围，`⌘`+点击单独勾选，支持批量收藏、批量删除与回车合并粘贴
 - **托盘菜单** - 快速打开 QuickBar 或复制最近和收藏内容
 - **多主题** - 浅色/深色/淡粉色主题，跟随系统
@@ -45,22 +45,22 @@ ClipMan 是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史�
 
 ## 安装
 
-访问 [GitHub Releases](https://github.com/RustyPiano/ClipMan/releases/latest) 下载：
+访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
 
-- **Windows**: `ClipMan_2.5.0_x64_en-US.msi`
-- **macOS (Apple Silicon)**: `ClipMan_2.5.0_aarch64.dmg`
-- **macOS (Intel)**: `ClipMan_2.5.0_x64.dmg`
-- **Linux**: `ClipMan_2.5.0_amd64.AppImage`
+- **Windows**: `ClipLeaf_2.5.1_x64_en-US.msi`
+- **macOS (Apple Silicon)**: `ClipLeaf_2.5.1_aarch64.dmg`
+- **macOS (Intel)**: `ClipLeaf_2.5.1_x64.dmg`
+- **Linux**: `ClipLeaf_2.5.1_amd64.AppImage`
 
 ### macOS 安装与权限
 
-**首次打开**：当前版本以自签名证书签名、但未做 Apple 公证，首次启动可能被 Gatekeeper 拦截（“无法打开，因为无法验证开发者”）。解决办法：在 **访达** 中右键点击 ClipMan → **打开**，或前往 **系统设置** → **隐私与安全性**，在底部点击 **仍要打开**。之后即可正常启动。
+**首次打开**：当前版本以自签名证书签名、但未做 Apple 公证，首次启动可能被 Gatekeeper 拦截（“无法打开，因为无法验证开发者”）。解决办法：在 **访达** 中右键点击 ClipLeaf → **打开**，或前往 **系统设置** → **隐私与安全性**，在底部点击 **仍要打开**。之后即可正常启动。
 
 **辅助功能权限**：自动粘贴（模拟 Cmd+V）需要辅助功能权限。首次运行按提示授予，或手动添加：
 
-**系统设置** → **隐私与安全性** → **辅助功能** → 添加并勾选 ClipMan
+**系统设置** → **隐私与安全性** → **辅助功能** → 添加并勾选 ClipLeaf
 
-> 若某次更新后自动粘贴失效，通常是该权限失效了。ClipMan 会弹窗引导你重新授权——在上面的列表里把 ClipMan 重新勾选一次即可（其间复制照常，内容仍会进入剪贴板，可手动粘贴）。
+> 若某次更新后自动粘贴失效，通常是该权限失效了。ClipLeaf 会弹窗引导你重新授权——在上面的列表里把 ClipLeaf 重新勾选一次即可（其间复制照常，内容仍会进入剪贴板，可手动粘贴）。
 
 ## 使用
 
@@ -103,8 +103,8 @@ ClipMan 是使用 Rust 和 Svelte 5 开发的桌面剪贴板管理器，历史�
 
 ```bash
 # 克隆项目
-git clone https://github.com/RustyPiano/ClipMan.git
-cd ClipMan
+git clone https://github.com/RustyPiano/ClipLeaf.git
+cd ClipLeaf
 
 # 安装依赖
 bun install
@@ -129,9 +129,9 @@ bun tauri build
 
 欢迎通过 Issue 或 Pull Request 贡献。
 
-- [报告 Bug](https://github.com/RustyPiano/ClipMan/issues)
-- [功能建议](https://github.com/RustyPiano/ClipMan/issues)
-- [讨论区](https://github.com/RustyPiano/ClipMan/discussions)
+- [报告 Bug](https://github.com/RustyPiano/ClipLeaf/issues)
+- [功能建议](https://github.com/RustyPiano/ClipLeaf/issues)
+- [讨论区](https://github.com/RustyPiano/ClipLeaf/discussions)
 
 ## 许可证
 

@@ -614,9 +614,10 @@ dependencies = [
 
 [[package]]
 name = "clipman"
-version = "2.5.0"
+version = "2.5.1"
 dependencies = [
  "arboard",
+ "auto-launch",
  "chrono",
  "clipboard-master",
  "data-encoding",

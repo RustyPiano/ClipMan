@@ -201,7 +201,7 @@ pub async fn use_clips(
         let _ = app
             .notification()
             .builder()
-            .title("ClipMan")
+            .title("ClipLeaf")
             .body(if chinese {
                 "已复制，请在目标应用手动粘贴。"
             } else {
@@ -357,7 +357,7 @@ fn write_files(
     write_with_marker(marker_state, marker, || write_file_list(clipboard, &paths)).map_err(
         |e| {
             format!(
-                "Failed to write the file list for clip {} ({e}). Check that the files exist and ClipMan can access them.",
+                "Failed to write the file list for clip {} ({e}). Check that the files exist and ClipLeaf can access them.",
                 item.id
             )
         },

@@ -379,7 +379,7 @@ fn remember_foreground_window(store: &ForegroundWindowStore, _quickbar: &Webview
 
     let pid = front.processIdentifier();
     if pid == std::process::id() as i32 {
-        log::debug!("ClipMan is already frontmost; keeping previous paste target");
+        log::debug!("ClipLeaf is already frontmost; keeping previous paste target");
         return;
     }
 

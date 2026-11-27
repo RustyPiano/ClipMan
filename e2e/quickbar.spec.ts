@@ -159,7 +159,7 @@ useTauriMock('main', () => {
         isPinned: true,
         pinOrder: 99,
         label: args.label,
-        sourceApp: 'ClipMan',
+        sourceApp: 'ClipLeaf',
         hasHtml: false,
         contentBytes: args.content.length,
         fileCount: 0,

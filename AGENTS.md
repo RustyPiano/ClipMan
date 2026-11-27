@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Project guidance for AI coding agents working on **ClipMan**. User-facing docs live in [`README.md`](README.md) / [`README_EN.md`](README_EN.md).
+Project guidance for AI coding agents working on **ClipLeaf**. User-facing docs live in [`README.md`](README.md) / [`README_EN.md`](README_EN.md).
 
 ## Overview
 
-ClipMan is a local-first desktop clipboard manager (macOS / Windows / Linux) in a single desktop process with no network tier:
+ClipLeaf is a local-first desktop clipboard manager (macOS / Windows / Linux) in a single desktop process with no network tier:
 
 - **Backend (`src-tauri/`):** Rust 2021 + Tauri 2.11, SQLite (FTS5 + keyset pagination), clipboard monitor, tray, global shortcuts, settings, updater.
 - **Frontend (`src/`):** Svelte 5 (runes) + TypeScript + Tailwind CSS 4 + Vite 8 (`$lib/*` -> `src/lib/*`).
@@ -16,7 +16,7 @@ ClipMan is a local-first desktop clipboard manager (macOS / Windows / Linux) in 
 | --- | --- | --- |
 | [`docs/dev/STATUS.md`](docs/dev/STATUS.md) | Current state, TODOs, known issues | **Read first every session.** Update whenever code or release/CI state changes; keep ≤ 100 lines and delete stale items. |
 | `AGENTS.md` | Commands, enforced conventions, non-inferable gotchas | Update when tooling or core conventions change. Do not duplicate ADR rationales here. |
-| `docs/adr/` | Architectural & platform design decisions (0001–0022) | Read the relevant ADR before modifying capture, paste/focus, SQLite schema, macOS windowing, settings, or release flows; update or replace ADRs when decisions change. |
+| `docs/adr/` | Architectural & platform design decisions (0001–0023) | Read the relevant ADR before modifying capture, paste/focus, SQLite schema, macOS windowing, settings, release flows, or app identity/naming; update or replace ADRs when decisions change. |
 | `README.md` / `README_EN.md` | User-facing feature & install docs | Update at release time when user-visible features change. |
 
 If a doc contradicts the code, the code is truth — fix or delete the stale doc in the same session.
@@ -50,7 +50,7 @@ python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
 
 - `bun run test:ui` runs Chromium + WebKit against compiled Svelte with a synthetic IPC mock (`e2e/`). First-time browser setup: `bunx playwright install chromium webkit`.
 - `test_verify_release.py` needs `minisign` (pass `MINISIGN=/path/to/minisign` if not in `PATH`; verification artifacts live in ignored `src-tauri/target/release-verification/`).
-- Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipMan QA","identifier":"com.clipman.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipMan QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipMan QA.app"` (`--storage-only` skips auto-paste).
+- Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipLeaf QA","identifier":"com.clipman.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipLeaf QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipLeaf QA.app"` (`--storage-only` skips auto-paste).
 - Optional search benchmark: `cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.
 - Release steps and signing rules: [`.github/RELEASE_GUIDE.md`](.github/RELEASE_GUIDE.md).
 

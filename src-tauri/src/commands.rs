@@ -672,6 +672,25 @@ fn apply_shortcut_changes(
     result
 }
 
+pub fn migrate_legacy_autostart(app: &AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let legacy = auto_launch::AutoLaunchBuilder::new()
+        .set_app_name("ClipMan")
+        .set_app_path(&current_exe.display().to_string())
+        .set_use_launch_agent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    if !legacy.is_enabled().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    legacy.disable().map_err(|e| e.to_string())?;
+    app.autolaunch().enable().map_err(|e| e.to_string())?;
+    log::info!("Moved the autostart entry from ClipMan to ClipLeaf");
+    Ok(())
+}
+
 fn apply_autostart_setting(app: &AppHandle, enable_autostart: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
 
