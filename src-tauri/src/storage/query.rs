@@ -414,7 +414,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn recent_clips_exclude_pinned_and_pinned_clips_keep_pin_order() {
         let db_path = temp_db_path("split_queries");

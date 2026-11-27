@@ -227,6 +227,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn active_data_directory_follows_the_opened_database_symlink() {
         let root = std::env::temp_dir().join(format!("clipleaf-active-{}", Uuid::new_v4()));
