@@ -45,7 +45,7 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 
 1. 访问 GitHub Actions: `https://github.com/RustyPiano/ClipLeaf/actions`
 2. 查看 "Release" workflow 运行状态
-3. `preflight` 核对版本、发布说明和上一公开版本的更新公钥。
+3. `preflight` 核对版本、发布说明和上一公开版本的更新公钥；`draft-release` 为该标签创建（或复用）唯一的草稿 Release。
 4. `quality` 调用 CI，前端及 macOS/Linux/Windows Rust 检查并行运行，全部通过后才启动四个打包任务。
 5. 等待 `verify-release` 通过。该作业核对 `latest.json` 的版本、平台、附件归属和更新签名。失败时保持草稿，处理原因后重新运行 Release。
 

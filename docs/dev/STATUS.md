@@ -6,16 +6,16 @@
 
 ## 当前状态
 
-- **最新正式版：v2.5.0（已公开发布）**：
-  - `CI`（`main`）、`Release`（`v2.5.0` 四端构建/签名/`verify-release`）全部通过，`latest.json` 已切换为公开直链并复验通过。
-  - 核心变更：macOS 标准浮动窗口修复中文输入法并兼容 macOS 13.3+、复制/粘贴焦点恢复与 500 ms 激活轮询、置顶更名为收藏并支持新建/排序/在线编辑/草稿保留、SQL 全库分类筛选、`tauri-plugin-opener` 外部打开、三套主题重做。
-- **v2.5.1 发布中（更名 ClipLeaf）**：产品名、界面文字、安装包和仓库（`RustyPiano/ClipLeaf`）改用 ClipLeaf，identifier、数据文件、签名证书和可执行文件名保持不变（`docs/adr/0023-clipleaf-rename.md`）；同时修复 macOS 全屏 Space 上无法唤出 QuickBar 的回归，以及搜索高亮被行尾截断。
+- **最新正式版：v2.5.1（已公开发布，更名 ClipLeaf）**：
+  - `CI`、`Release`（四端构建/签名/`verify-release`）通过，`latest.json` 已切换为公开直链并复验；旧仓库地址的更新清单经 GitHub 跳转同样返回 2.5.1。发布时两个打包作业各建了一个草稿，已手工合并后复验，并在 `release.yml` 新增 `draft-release` 作业防止再次发生（下次发版首次验证）。
+  - 变更：产品名、界面文字、安装包和仓库（`RustyPiano/ClipLeaf`）改用 ClipLeaf，identifier、数据文件、签名证书和可执行文件名保持不变（`docs/adr/0023-clipleaf-rename.md`）；同时修复 macOS 全屏 Space 上无法唤出 QuickBar 的回归，以及搜索高亮被行尾截断。
 - **文档整理**：精简 `AGENTS.md`（去重目录表与 ADR 重复段落）、同步 ADR 0009/0012/0022 与 `.github/RELEASE_GUIDE.md`、清理 14 份已发布的历史 `release_notes_*.md`。
 
 ## 待办
 
-1. 用 `v2.5.0` 正式包在 macOS 实机核对中文输入法候选窗、自动更新安装、复制/粘贴焦点恢复及跨 Space 行为。
-2. 后续可在发布脚本或工作流中自动化草稿公开后的 `latest.json` 直链重写步骤，避免手工操作。
+1. 用 `v2.5.1` 正式包在 macOS 实机核对中文输入法候选窗、全屏 Space 唤出、自动更新安装及复制/粘贴焦点恢复；在 Windows（MSI 与 NSIS 旧安装）和 Linux deb 上核对从 ClipMan 升级的替换与开机自启迁移。
+2. 产品页仍是 `ClipMan-Page`（Vercel `clip-man-page`），其 `src/release.ts` 按 `ClipMan_<版本>` 拼文件名，更名后重新部署会构建失败，线上仍展示 v2.5.0；需改为 ClipLeaf 文件名，或改用本仓库 `website/` 的 ClipLeaf 新页面。
+3. 后续可在发布脚本或工作流中自动化草稿公开后的 `latest.json` 直链重写步骤，避免手工操作。
 
 ## 已知问题 / 注意事项
 

@@ -39,8 +39,39 @@ jobs:
     needs: preflight
     uses: ./.github/workflows/ci.yml
 
-  publish-tauri:
+  draft-release:
     needs: [preflight, quality]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: create or reuse the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          IDS=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\" and .draft) | .id")
+          COUNT=$(printf '%s\n' "$IDS" | grep -c . || true)
+          if [ "$COUNT" -gt 1 ]; then
+            echo "ERROR: multiple draft releases exist for $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          if [ "$COUNT" -eq 0 ]; then
+            IDS=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -f name="$GITHUB_REF_NAME" \
+              -F draft=true -F prerelease=false \
+              -F body=@"release_notes_${GITHUB_REF_NAME#v}.md" --jq .id)
+          fi
+          echo "id=$IDS" >> "$GITHUB_OUTPUT"
+
+  publish-tauri:
+    needs: [preflight, quality, draft-release]
     permissions:
       contents: write
     strategy:
@@ -130,6 +161,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'
         with:
+          releaseId: ${{ needs.draft-release.outputs.release-id }}
           tagName: ${{ github.ref_name }}
           releaseName: '${{ github.ref_name }}'
           releaseBody: ${{ steps.release_notes.outputs.notes }}

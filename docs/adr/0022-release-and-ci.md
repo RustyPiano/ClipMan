@@ -9,6 +9,7 @@
 - tauri-action 固定在 `dev` 分支 2026-07-07 的提交 SHA，冻结发布使用的 action 代码。新版本在这条发布流程上验证后再有意升级，最好升级到正式 tag。
 - Release 工作流的 concurrency 不取消进行中的构建：重新推送同一标签时让已有构建完成；不同标签的 ref 不同，不会共用一组。
 - `releaseName` 只用版本号，保持 Tauri updater 兼容。
+- 草稿 Release 由 `draft-release` 作业在打包前创建一次（重跑时复用已有草稿，同一标签存在多个草稿则失败），四个打包作业通过 `releaseId` 上传到同一草稿。各作业各自用 `tagName` 查找或创建草稿时，几乎同时完成的作业会各建一个草稿（v2.5.1 出现过），附件和 `latest.json` 被拆散。
 - Prepare Release 用 `RELEASE_PAT` 推送：内置 `GITHUB_TOKEN` 推送的标签不会触发 Release 工作流。没有 PAT 时在修改仓库前停止。发布说明必须事先提交，工作流不生成模板，避免发出空说明。
 - `cargo test` 和 `cargo clippy` 会构建 Tauri 应用，需要 `dist/` 存在，CI 的 Rust 作业先构建前端。
 - macOS 的 Rust 作业不编译 `#[cfg(windows)]` 的剪贴板和窗口 FFI，所以单独在 Windows runner 上运行 clippy 和测试。MSVC 目标无法从 macOS 交叉编译，因为 rusqlite 内置的 SQLite（C 代码）需要 MSVC 工具链。
