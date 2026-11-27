@@ -136,7 +136,7 @@
     </div>
 
     <div class="space-y-2">
-      <span class="text-sm font-medium" id="paste-format-label">{t.pasteFormat}</span>
+      <span class="block text-sm font-medium" id="paste-format-label">{t.pasteFormat}</span>
       <div class="space-y-2" role="radiogroup" aria-labelledby="paste-format-label">
         {#each pasteFormats as format (format.value)}
           <label

@@ -29,7 +29,7 @@
 
   <Card class="p-6 space-y-6">
     <div class="space-y-3">
-      <span class="text-sm font-medium" id="theme-label">{t.themeMode}</span>
+      <span class="block text-sm font-medium" id="theme-label">{t.themeMode}</span>
       <div
         class="grid grid-cols-2 sm:grid-cols-4 gap-4"
         role="radiogroup"
@@ -64,7 +64,7 @@
     </div>
 
     <div class="space-y-3 pt-4 border-t border-border">
-      <span class="text-sm font-medium" id="lang-label">{t.language}</span>
+      <span class="block text-sm font-medium" id="lang-label">{t.language}</span>
       <div class="grid grid-cols-2 gap-4" role="radiogroup" aria-labelledby="lang-label">
         {#each languages as lang (lang.value)}
           <label
