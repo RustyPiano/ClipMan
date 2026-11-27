@@ -7,6 +7,7 @@ on:
     paths:
       - 'src-tauri/Cargo.lock'
       - 'src-tauri/Cargo.toml'
+      - 'src-tauri/.cargo/config.toml'
       - 'rust-toolchain.toml'
       - '.github/workflows/release-cache.yml'
   schedule:
@@ -17,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-cache
+  group: release-cache-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,26 +44,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: setup bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Rust cache
+        id: rust-cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
           shared-key: ${{ matrix.cache-key }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: install dependencies (ubuntu only)
+        if: steps.rust-cache.outputs.cache-hit != 'true' && matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: setup bun
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: install frontend dependencies
+        if: steps.rust-cache.outputs.cache-hit != 'true'
         run: bun install --frozen-lockfile
 
       - name: release build without bundles
+        if: steps.rust-cache.outputs.cache-hit != 'true'
         run: bun tauri build --no-bundle ${{ matrix.args }}

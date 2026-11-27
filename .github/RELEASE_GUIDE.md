@@ -29,7 +29,6 @@ git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Ca
 git commit -m "release: v${VERSION}"
 git tag "v${VERSION}"
 git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
-# Release 会检查标签对应的提交，所有检查通过后才开始打包。
 ```
 
 **路径 B —— GitHub「Prepare Release」工作流（在 Actions 页一键触发）**
