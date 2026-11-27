@@ -66,8 +66,9 @@ git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 4. 检查自动填入的 `release_notes_<版本号>.md` 内容是否正确
 5. 可选: 添加截图或演示 GIF
 6. 取消勾选 "Set as a pre-release" (如果这是正式版本)
-7. 点击 "Publish release"（或执行 `gh release edit vX.Y.Z --draft=false --prerelease=false`）
+7. 点击 "Publish release"（或执行 `gh release edit vX.Y.Z --draft=false --prerelease=false`）。公开草稿会让已安装的客户端自动更新：由 AI 代理操作时，每个版本都要先取得维护者的明确同意，上一个版本的同意不延续。
 8. **重写 `latest.json` 为公开直链并复验**：`tauri-action` 在草稿阶段生成的 `latest.json` 使用 `api.github.com/repos/.../releases/assets/<id>`，匿名客户端会受 60 次/小时限流导致 403。公开后把 `latest.json` 中的平台 `url` 替换为对应附件的 `browser_download_url`（`https://github.com/RustyPiano/ClipLeaf/releases/download/vX.Y.Z/...`），用 `gh release upload vX.Y.Z latest.json --clobber` 覆盖，再运行 `python3 scripts/verify-release.py --repo RustyPiano/ClipLeaf --tag vX.Y.Z` 复验签名。
+9. **重新部署产品页**：产品页（`website/`，Vercel 项目 `clipleaf-page`）在构建时读取最新公开的 `latest.json` 生成下载链接。用 `vercel ls clipleaf-page` 取最新生产部署的 URL，执行 `vercel redeploy <URL> --target production`。
 
 `verify-release` 的通过记录是公开草稿前的必要检查。GitHub 的手动发布按钮不会自动受到工作流结果限制。
 

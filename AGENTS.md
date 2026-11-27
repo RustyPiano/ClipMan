@@ -6,8 +6,8 @@ Project guidance for AI coding agents working on **ClipLeaf**. User-facing docs 
 
 ClipLeaf is a local-first desktop clipboard manager (macOS / Windows / Linux) in a single desktop process with no network tier:
 
-- **Backend (`src-tauri/`):** Rust 2021 + Tauri 2.11, SQLite (FTS5 + keyset pagination), clipboard monitor, tray, global shortcuts, settings, updater.
-- **Frontend (`src/`):** Svelte 5 (runes) + TypeScript + Tailwind CSS 4 + Vite 8 (`$lib/*` -> `src/lib/*`).
+- **Backend (`src-tauri/`):** Rust 2021 + Tauri 2, SQLite (FTS5 + keyset pagination), clipboard monitor, tray, global shortcuts, settings, updater.
+- **Frontend (`src/`):** Svelte 5 (runes) + TypeScript + Tailwind CSS 4 + Vite (`$lib/*` -> `src/lib/*`).
 - **Boundary:** Tauri `invoke`/`emit` is the only interface between UI and Rust.
 
 ## Documentation Map
@@ -23,7 +23,7 @@ If a doc contradicts the code, the code is truth — fix or delete the stale doc
 
 ## Commands
 
-Use **Bun** (`bun.lock` is the single frontend lockfile). Toolchain: Bun 1.3+, Rust 1.96.0 (`rust-toolchain.toml`). Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
+Use **Bun** (`bun.lock` is the single frontend lockfile). Toolchain: Bun 1.3+, Rust pinned by `rust-toolchain.toml`. Linux also needs `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
 
 ```bash
 bun install            # install frontend deps
@@ -49,6 +49,7 @@ python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
 ```
 
 - `bun run test:ui` runs Chromium + WebKit against compiled Svelte with a synthetic IPC mock (`e2e/`). First-time browser setup: `bunx playwright install chromium webkit`.
+- After UI changes, run `bun run test:ui -g "screenshots cover"` and open the `quickbar-{wide,dark,narrow,pink}.png` files under `test-results/quickbar-Tab-reaches-*-{chromium,webkit}/` to check layout before finishing.
 - `test_verify_release.py` needs `minisign` (pass `MINISIGN=/path/to/minisign` if not in `PATH`; verification artifacts live in ignored `src-tauri/target/release-verification/`).
 - Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipLeaf QA","identifier":"app.clipleaf.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipLeaf QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipLeaf QA.app"` (`--storage-only` skips auto-paste).
 - Optional search benchmark: `cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.

@@ -7,10 +7,9 @@
 ## 当前状态
 
 - **最新正式版 [v2.5.3](https://github.com/RustyPiano/ClipLeaf/releases/tag/v2.5.3)**：支持中断后继续数据库改名，修复自定义数据目录和开机自启迁移。设置损坏时暂停采集，Windows 无法检查隐私标记时跳过该次复制。搜索切换分类时重新查询，链接按完整内容识别，文件详情保留独立路径。
-- [Release 工作流](https://github.com/RustyPiano/ClipLeaf/actions/runs/45970399049)通过三个系统的质量检查和四个平台构建。草稿的更新清单曾缺少 Windows 和 Linux，已按本版附件及签名补齐；公开清单含 11 个平台与安装格式条目，7 个更新包通过验签。
+- [Release 工作流](https://github.com/RustyPiano/ClipLeaf/actions/runs/45970399049)通过三个系统的质量检查和四个平台构建；公开的更新清单含 11 个平台与安装格式条目，7 个更新包通过验签。
 - 从 ClipMan 升级到 ClipLeaf 时，数据迁移和 macOS 辅助功能重新授权见 [ADR 0023](../adr/0023-clipleaf-rename.md)。
 - **产品页**：[clipleaf.app](https://clipleaf.app) 使用本仓库 `website/`，Vercel 项目 `clipleaf-page` 跟随 `main` 部署。构建时读取最新公开更新清单生成下载链接。
-- **文档整理**：精简 `AGENTS.md`（去重目录表与 ADR 重复段落）、同步 ADR 0009/0012/0022 与 `.github/RELEASE_GUIDE.md`、清理 14 份已发布的历史 `release_notes_*.md`。
 
 ## 待办
 
