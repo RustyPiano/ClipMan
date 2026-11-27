@@ -26,7 +26,7 @@ ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and S
 
 - **Favorites & Snippets** - Star frequently used snippets, commands, or links, create custom favorites directly, reorder them, and edit text inline in the preview pane
 - **Persistent Storage** - SQLite database, survives restarts, smart deduplication
-- **Full-Text Search & Filters** - SQLite FTS5 + trigram index with match highlighting and SQL-backed category filtering (All / Text / Images / Files / Links)
+- **Full-Text Search & Filters** - Search your history with matching terms highlighted. Switch to Text, Images, Files, or Links to run the same search within that category
 - **Rich Inspector Preview** - Store plain text, HTML, images, and file lists; preview images clearly, copy HEX/RGB/HSL color values, open links, and reveal files in Finder/Explorer; macOS shows source app icons
 - **QuickBar Access** - Open or toggle closed from any app (default `Cmd/Ctrl+Shift+V`), with native CJK IME support, keyboard selection, and auto-paste or copy-only modes
 - **Paste Format** - Keep original formatting, strip it only when taking clips through ClipLeaf, or turn copied rich text into plain text right away; `⌥Enter` flips it for one paste
@@ -37,7 +37,7 @@ ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and S
 
 ### Additional Features
 
-- Skip password-like clipboard contents (optional)
+- Filter out private keys and common API tokens. On macOS and Windows, ClipLeaf skips items marked as confidential by default. With this filter enabled, Windows also skips items whose privacy markers it cannot read
 - Auto-update
 - Launch at startup
 - Custom storage location
@@ -45,12 +45,14 @@ ClipLeaf (formerly ClipMan) is a desktop clipboard manager built with Rust and S
 
 ## Installation
 
-Visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) to download:
+Choose an installer on the [website](https://clipleaf.app) or visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) to download:
 
 - **Windows**: `ClipLeaf_2.5.3_x64_en-US.msi`
 - **macOS (Apple Silicon)**: `ClipLeaf_2.5.3_aarch64.dmg`
 - **macOS (Intel)**: `ClipLeaf_2.5.3_x64.dmg`
 - **Linux**: `ClipLeaf_2.5.3_amd64.AppImage`
+
+When you upgrade from ClipMan, ClipLeaf migrates your history, favorites, and settings. If the database rename is interrupted, it resumes the next time you open the app.
 
 ### macOS Install & Permissions
 
@@ -65,7 +67,7 @@ Visit [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 
 ## Usage
 
 1. Use hotkey `Cmd+Shift+V` (macOS) / `Ctrl+Shift+V` (Windows) to open
-2. All copied content is automatically saved in the history list
+2. Copy text, images, or files to see them in your history
 3. Click the star icon to save favorites, or create new snippets directly in the Favorites panel
 4. Use search bar to quickly find history records
 5. Click an item to run the QuickBar default action: auto-paste by default, or copy only when auto-paste is disabled

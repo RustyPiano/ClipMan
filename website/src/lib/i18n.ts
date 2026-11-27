@@ -314,7 +314,7 @@ export const COPY = {
     craftItems: [
       {
         title: '几万条历史秒搜，中文输入不误触',
-        body: '支持中英文全文检索与关键词高亮；专门适配 macOS 原生输入法候选窗，拼音选词时按回车不会误触发粘贴。',
+        body: '输入关键词即可高亮匹配。切换到图片、文件或链接分类时，会沿用当前关键词重新搜索。在 macOS 上用回车选字也不会触发粘贴。',
         meta: '1.4 ms · FTS5 · IME Safe',
       },
       {
@@ -371,7 +371,7 @@ export const COPY = {
       },
       {
         title: '敏感内容与指定应用过滤',
-        body: '自动跳过密码管理器写入系统隐私标记的内容（macOS / Windows），macOS 还支持将指定应用加入排除列表。',
+        body: 'macOS 和 Windows 默认跳过标为机密的内容。开启此过滤时，Windows 也会跳过无法检查标记的记录。在 macOS 上还可排除指定应用。',
       },
     ],
     themesHeading: '三套主题，冷暖自选。',
@@ -477,7 +477,7 @@ export const COPY = {
     craftItems: [
       {
         title: 'Search thousands of clips instantly — CJK IME friendly',
-        body: 'Full-text search with instant keyword highlighting, tuned for macOS native input method candidate windows so pressing Enter to pick characters never triggers an accidental paste.',
+        body: 'Matching words are highlighted as you type. Switch to Images, Files, or Links to search that category with the same keywords. On macOS, pressing Enter to choose an input method candidate keeps the search open.',
         meta: '1.4 ms · FTS5 · IME Safe',
       },
       {
@@ -534,7 +534,7 @@ export const COPY = {
       },
       {
         title: 'Password manager & app filtering',
-        body: 'Automatically skips items marked confidential by password managers on macOS and Windows, plus per-application exclusion rules on macOS.',
+        body: 'ClipLeaf skips items marked confidential by default on macOS and Windows. With this filter on, Windows also skips items when it cannot read their privacy markers. On macOS you can exclude individual apps.',
       },
     ],
     themesHeading: 'Three themes. Easy on the eyes.',

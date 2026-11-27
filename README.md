@@ -26,7 +26,7 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 - **收藏常用内容** - 一键收藏代码片段、命令、链接或直接新建常用文本与提示词，支持排序与预览栏在线编辑
 - **持久化存储** - SQLite 本地数据库，重启不丢失，智能去重
-- **全文搜索与分类筛选** - SQLite FTS5 + trigram 索引实时搜索并高亮匹配，支持按全部/文本/图片/文件/链接在全库筛选
+- **全文搜索与分类筛选** - 搜索历史记录时会高亮关键词。切换到文本、图片、文件或链接分类后，会在该分类下重新搜索
 - **多类型预览** - 统一保存纯文本、HTML 富文本、图片和文件列表；预览栏支持图片清晰展示、色值 HEX/RGB/HSL 一键复制、链接直开与在访达/文件夹中显示，macOS 显示来源应用图标
 - **QuickBar 快捷取用** - 任意应用快速调出（默认 `Cmd/Ctrl+Shift+V`，再次按下可关闭），支持原生中文输入法，键盘选择并按设置自动粘贴或仅复制
 - **粘贴格式** - 保留原始格式、仅经 ClipLeaf 取用时去除格式，或复制富文本后直接改为纯文本；`⌥Enter` 临时切换一次
@@ -37,7 +37,7 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 ### 其他功能
 
-- 跳过密码类剪贴板内容（可选）
+- 可跳过私钥和常见 API 令牌。macOS 和 Windows 默认跳过带隐私标记的内容。开启此过滤时，Windows 也会跳过无法检查标记的记录
 - 自动更新
 - 开机自启动
 - 自定义存储位置
@@ -45,12 +45,14 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 
 ## 安装
 
-访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
+从[官网](https://clipleaf.app)选择安装包，或访问 [GitHub Releases](https://github.com/RustyPiano/ClipLeaf/releases/latest) 下载：
 
 - **Windows**: `ClipLeaf_2.5.3_x64_en-US.msi`
 - **macOS (Apple Silicon)**: `ClipLeaf_2.5.3_aarch64.dmg`
 - **macOS (Intel)**: `ClipLeaf_2.5.3_x64.dmg`
 - **Linux**: `ClipLeaf_2.5.3_amd64.AppImage`
+
+从 ClipMan 升级时，ClipLeaf 会迁移历史记录、收藏和设置。如果数据库改名时中断，下次启动会继续。
 
 ### macOS 安装与权限
 
@@ -65,7 +67,7 @@ ClipLeaf（原名 ClipMan）是使用 Rust 和 Svelte 5 开发的桌面剪贴板
 ## 使用
 
 1. 使用快捷键 `Cmd+Shift+V` (macOS) / `Ctrl+Shift+V` (Windows) 打开
-2. 所有复制内容自动保存在历史列表中
+2. 复制文本、图片或文件后，在历史列表中查看记录
 3. 点击星标图标收藏常用内容，或在「收藏」面板直接新建片段
 4. 搜索框快速查找历史记录
 5. 点击条目执行 QuickBar 默认取用行为：默认自动粘回当前应用；关闭自动粘贴后仅复制
