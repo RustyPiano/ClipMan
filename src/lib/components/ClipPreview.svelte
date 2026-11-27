@@ -113,11 +113,7 @@
           : '')
   );
   const filePaths = $derived(
-    item?.contentType === 'files'
-      ? full?.text
-        ? full.text.split('\n').filter(Boolean)
-        : decodeFilePaths(item)
-      : []
+    item?.contentType === 'files' ? (full?.filePaths ?? decodeFilePaths(item)) : []
   );
   const imageUrl = $derived(full?.imageUrl || item?.content || '');
   const color = $derived(item?.contentType === 'text' ? parseColorValue(text) : null);
@@ -206,6 +202,7 @@
           id: targetId,
           contentType: 'text',
           text: nextContent,
+          filePaths: [],
           imageUrl: null,
           truncated: false,
         };

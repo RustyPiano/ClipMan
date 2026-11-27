@@ -6,7 +6,13 @@
     ${If} $R7 != ""
       StrCpy $R9 "1"
     ${EndIf}
-    ExecWait '"$R8\uninstall.exe" /S _?=$R8'
+    ClearErrors
+    ExecWait '"$R8\uninstall.exe" /S _?=$R8' $R6
+    ${If} ${Errors}
+    ${OrIf} $R6 != 0
+      MessageBox MB_ICONSTOP|MB_OK "Could not uninstall the previous version in $R8 (exit code: $R6). Close ClipLeaf or ClipMan and run Setup again." /SD IDOK
+      Abort "Could not uninstall the previous version in $R8."
+    ${EndIf}
     Delete "$R8\uninstall.exe"
     RMDir "$R8"
   ${EndIf}

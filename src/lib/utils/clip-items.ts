@@ -215,8 +215,7 @@ export function matchesClipFilter(item: ClipItem, filter: ClipFilter): boolean {
   if (filter === 'image') return item.contentType === 'image';
   if (filter === 'files') return item.contentType === 'files';
   if (filter === 'text') return item.contentType === 'text';
-  if (filter === 'link')
-    return item.contentType === 'text' && isSingleUrl(decodeClipText(item, ''));
+  if (filter === 'link') return item.contentType === 'text' && item.isLink;
   return true;
 }
 

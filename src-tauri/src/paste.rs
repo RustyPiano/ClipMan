@@ -262,16 +262,41 @@ fn merge_clip_texts<'a>(
     Ok(merged)
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn with_write_clipboard<T>(
+    write: impl FnOnce(&mut Clipboard) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    write(&mut clipboard)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn with_write_clipboard<T>(
+    write: impl FnOnce(&mut Clipboard) -> Result<T, String>,
+) -> Result<T, String> {
+    static OWNER: Mutex<Option<Clipboard>> = Mutex::new(None);
+    let mut owner = OWNER.lock().unwrap();
+    if owner.is_none() {
+        *owner = Some(Clipboard::new().map_err(|e| e.to_string())?);
+    }
+    write(
+        owner
+            .as_mut()
+            .expect("the clipboard owner was created above"),
+    )
+}
+
 pub fn write_plain_text_to_system_clipboard(
     text: &str,
     marker_state: &Mutex<Option<CopyWrite>>,
 ) -> Result<(), String> {
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let marker = CopyMarker::from_payload(ContentType::Text, text.as_bytes());
-    write_with_marker(marker_state, marker, || {
-        clipboard
-            .set_text(text)
-            .map_err(|e| format!("Failed to write plain text clipboard: {e}"))
+    with_write_clipboard(|clipboard| {
+        write_with_marker(marker_state, marker, || {
+            clipboard
+                .set_text(text)
+                .map_err(|e| format!("Failed to write plain text clipboard: {e}"))
+        })
     })?;
 
     log::info!("Copied plain text to clipboard: {} bytes", text.len());
@@ -307,12 +332,11 @@ fn write_clip_to_system_clipboard(
     marker_state: &Mutex<Option<CopyWrite>>,
     plain_text_only: bool,
 ) -> Result<(), String> {
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
-    match &item.content_type {
-        ContentType::Text => write_text(&mut clipboard, item, marker_state, plain_text_only),
-        ContentType::Image => write_image(&mut clipboard, item, marker_state),
-        ContentType::Files => write_files(&mut clipboard, item, marker_state),
-    }
+    with_write_clipboard(|clipboard| match &item.content_type {
+        ContentType::Text => write_text(clipboard, item, marker_state, plain_text_only),
+        ContentType::Image => write_image(clipboard, item, marker_state),
+        ContentType::Files => write_files(clipboard, item, marker_state),
+    })
 }
 
 fn write_text(

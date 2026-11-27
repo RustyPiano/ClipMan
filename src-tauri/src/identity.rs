@@ -4,18 +4,16 @@ use std::path::{Path, PathBuf};
 pub const LEGACY_IDENTIFIER: &str = "com.clipman.manager";
 pub const DATABASE_FILE: &str = "clipleaf.db";
 const LEGACY_DATABASE_FILE: &str = "clipman.db";
-const DATABASE_SUFFIXES: [&str; 4] = ["", "-shm", "-wal", "-journal"];
+const DATABASE_SUFFIXES: [&str; 4] = ["-wal", "-shm", "-journal", ""];
 const SETTINGS_FILE: &str = "settings.json";
 
 pub fn migrate_legacy_identity(identifier: &str) -> Result<bool, String> {
     let data_root =
         dirs::data_dir().ok_or_else(|| "Failed to resolve the data directory".to_string())?;
-    let legacy = data_root.join(LEGACY_IDENTIFIER);
-    let current = data_root.join(identifier);
-    let migrated = move_dir_contents(&legacy, &current)?;
-    if migrated {
-        rewrite_custom_data_path(&current.join(SETTINGS_FILE), &legacy, &current)?;
-    }
+    let migrated = migrate_app_data_dir(
+        &data_root.join(LEGACY_IDENTIFIER),
+        &data_root.join(identifier),
+    )?;
     for root in webview_data_roots() {
         if root == data_root {
             continue;
@@ -35,6 +33,11 @@ pub fn migrate_legacy_identity(identifier: &str) -> Result<bool, String> {
         }
     }
     Ok(migrated)
+}
+
+fn migrate_app_data_dir(legacy: &Path, current: &Path) -> Result<bool, String> {
+    rewrite_custom_data_path(&legacy.join(SETTINGS_FILE), legacy, current)?;
+    move_dir_contents(legacy, current)
 }
 
 fn webview_data_roots() -> Vec<PathBuf> {
@@ -117,18 +120,37 @@ fn rewrite_custom_data_path(
     if changed {
         let text = serde_json::to_string_pretty(&store)
             .map_err(|e| format!("Failed to serialize {}: {e}", settings_file.display()))?;
-        fs::write(settings_file, text)
-            .map_err(|e| format!("Failed to write {}: {e}", settings_file.display()))?;
+        let staged = settings_file.with_extension("json.migrating");
+        fs::write(&staged, text)
+            .map_err(|e| format!("Failed to write {}: {e}", staged.display()))?;
+        fs::rename(&staged, settings_file).map_err(|e| {
+            format!(
+                "Failed to replace {} with {}: {e}",
+                settings_file.display(),
+                staged.display()
+            )
+        })?;
     }
     Ok(())
 }
 
 pub fn rename_legacy_database(data_dir: &Path) -> Result<(), String> {
-    let legacy = data_dir.join(LEGACY_DATABASE_FILE);
-    if !legacy.exists() {
+    let pending: Vec<(PathBuf, PathBuf)> = DATABASE_SUFFIXES
+        .iter()
+        .map(|suffix| {
+            (
+                data_dir.join(format!("{LEGACY_DATABASE_FILE}{suffix}")),
+                data_dir.join(format!("{DATABASE_FILE}{suffix}")),
+            )
+        })
+        .filter(|(from, _)| from.exists())
+        .collect();
+    if pending.is_empty() {
         return Ok(());
     }
-    if data_dir.join(DATABASE_FILE).exists() {
+    let legacy_exists = data_dir.join(LEGACY_DATABASE_FILE).exists();
+    let current_exists = data_dir.join(DATABASE_FILE).exists();
+    if legacy_exists && current_exists {
         return Err(format!(
             "Both {} and {} exist in {}; keep one of them and restart",
             LEGACY_DATABASE_FILE,
@@ -136,20 +158,34 @@ pub fn rename_legacy_database(data_dir: &Path) -> Result<(), String> {
             data_dir.display()
         ));
     }
-    for suffix in DATABASE_SUFFIXES {
-        let from = data_dir.join(format!("{LEGACY_DATABASE_FILE}{suffix}"));
-        if from.exists() {
-            let to = data_dir.join(format!("{DATABASE_FILE}{suffix}"));
-            fs::rename(&from, &to).map_err(|e| {
-                format!(
-                    "Failed to rename {} to {}: {e}",
-                    from.display(),
-                    to.display()
-                )
-            })?;
-        }
+    if !legacy_exists && !current_exists {
+        return Err(format!(
+            "Found {LEGACY_DATABASE_FILE} journal files without {LEGACY_DATABASE_FILE} or {DATABASE_FILE} in {}; remove them and restart",
+            data_dir.display()
+        ));
     }
-    log::info!("Renamed {} to {}", legacy.display(), DATABASE_FILE);
+    if let Some((from, to)) = pending.iter().find(|(_, to)| to.exists()) {
+        return Err(format!(
+            "Cannot rename {} because {} already exists; keep one of them and restart",
+            from.display(),
+            to.display()
+        ));
+    }
+    for (from, to) in &pending {
+        fs::rename(from, to).map_err(|e| {
+            format!(
+                "Failed to rename {} to {}: {e}",
+                from.display(),
+                to.display()
+            )
+        })?;
+    }
+    log::info!(
+        "Renamed {} database files to {} in {}",
+        LEGACY_DATABASE_FILE,
+        DATABASE_FILE,
+        data_dir.display()
+    );
     Ok(())
 }
 
@@ -207,11 +243,40 @@ mod tests {
         )
         .unwrap();
 
-        assert!(move_dir_contents(&legacy, &current).unwrap());
-        rewrite_custom_data_path(&current.join(SETTINGS_FILE), &legacy, &current).unwrap();
+        assert!(migrate_app_data_dir(&legacy, &current).unwrap());
 
         assert!(!legacy.exists());
+        assert!(!current.join("settings.json.migrating").exists());
         assert_eq!(fs::read(current.join(LEGACY_DATABASE_FILE)).unwrap(), b"db");
+        let store: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(current.join(SETTINGS_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(
+            store["settings"]["customDataPath"],
+            current.join("data").display().to_string()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_custom_path_rewrite_keeps_legacy_dir_for_retry() {
+        let root = temp_root("rewrite_retry");
+        let legacy = root.join(LEGACY_IDENTIFIER);
+        let current = root.join("app.clipleaf.desktop");
+        fs::create_dir_all(legacy.join("data")).unwrap();
+        fs::write(legacy.join(SETTINGS_FILE), b"{").unwrap();
+
+        assert!(migrate_app_data_dir(&legacy, &current).is_err());
+        assert!(legacy.join("data").is_dir());
+        assert!(!current.exists());
+
+        let custom = legacy.join("data").display().to_string();
+        fs::write(
+            legacy.join(SETTINGS_FILE),
+            serde_json::json!({ "settings": { "customDataPath": custom } }).to_string(),
+        )
+        .unwrap();
+        assert!(migrate_app_data_dir(&legacy, &current).unwrap());
         let store: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(current.join(SETTINGS_FILE)).unwrap())
                 .unwrap();
@@ -258,6 +323,89 @@ mod tests {
 
         fs::write(root.join(LEGACY_DATABASE_FILE), b"old").unwrap();
         assert!(rename_legacy_database(&root).unwrap_err().contains("Both"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resumes_an_interrupted_rename_and_keeps_committed_wal_rows() {
+        let source = temp_root("db_source");
+        let root = temp_root("db_resume");
+        let conn = rusqlite::Connection::open(source.join(LEGACY_DATABASE_FILE)).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("CREATE TABLE t(v TEXT); INSERT INTO t VALUES('committed');")
+            .unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            fs::copy(
+                source.join(format!("{LEGACY_DATABASE_FILE}{suffix}")),
+                root.join(format!("{LEGACY_DATABASE_FILE}{suffix}")),
+            )
+            .unwrap();
+        }
+        drop(conn);
+        assert!(
+            fs::metadata(root.join(format!("{LEGACY_DATABASE_FILE}-wal")))
+                .unwrap()
+                .len()
+                > 0
+        );
+        fs::rename(root.join(LEGACY_DATABASE_FILE), root.join(DATABASE_FILE)).unwrap();
+
+        rename_legacy_database(&root).unwrap();
+
+        assert!(!root.join(format!("{LEGACY_DATABASE_FILE}-wal")).exists());
+        let reopened = rusqlite::Connection::open(root.join(DATABASE_FILE)).unwrap();
+        let value: String = reopened
+            .query_row("SELECT v FROM t", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "committed");
+        drop(reopened);
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finishes_a_rename_that_stopped_before_the_main_file() {
+        let root = temp_root("db_sidecar_first");
+        fs::write(root.join(LEGACY_DATABASE_FILE), b"db").unwrap();
+        fs::write(root.join(format!("{DATABASE_FILE}-wal")), b"wal").unwrap();
+        fs::write(root.join(format!("{LEGACY_DATABASE_FILE}-shm")), b"shm").unwrap();
+
+        rename_legacy_database(&root).unwrap();
+
+        assert_eq!(fs::read(root.join(DATABASE_FILE)).unwrap(), b"db");
+        assert_eq!(
+            fs::read(root.join(format!("{DATABASE_FILE}-wal"))).unwrap(),
+            b"wal"
+        );
+        assert_eq!(
+            fs::read(root.join(format!("{DATABASE_FILE}-shm"))).unwrap(),
+            b"shm"
+        );
+        assert!(!root.join(LEGACY_DATABASE_FILE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_conflicting_or_orphaned_legacy_sidecars() {
+        let root = temp_root("db_conflict");
+        fs::write(root.join(DATABASE_FILE), b"db").unwrap();
+        fs::write(root.join(format!("{DATABASE_FILE}-wal")), b"new").unwrap();
+        fs::write(root.join(format!("{LEGACY_DATABASE_FILE}-wal")), b"old").unwrap();
+        assert!(rename_legacy_database(&root)
+            .unwrap_err()
+            .contains("already exists"));
+        assert_eq!(
+            fs::read(root.join(format!("{LEGACY_DATABASE_FILE}-wal"))).unwrap(),
+            b"old"
+        );
+
+        fs::remove_file(root.join(DATABASE_FILE)).unwrap();
+        fs::remove_file(root.join(format!("{DATABASE_FILE}-wal"))).unwrap();
+        assert!(rename_legacy_database(&root)
+            .unwrap_err()
+            .contains("without"));
+        assert!(root.join(format!("{LEGACY_DATABASE_FILE}-wal")).exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

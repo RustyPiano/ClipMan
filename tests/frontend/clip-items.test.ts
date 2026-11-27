@@ -36,6 +36,7 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     hasHtml: false,
     contentBytes: 5,
     fileCount: 0,
+    isLink: false,
     ...overrides,
   };
 }
@@ -237,7 +238,7 @@ describe('row display helpers', () => {
       { text: '并返回', match: false },
     ]);
     expect(highlightSegments('short 本地', '本地', 6)[0]).toEqual({ text: 'short ', match: false });
-    const urlItem = clip({ content: encodeText('https://clipleaf.app') });
+    const urlItem = clip({ content: encodeText('…/tail-of-a-long-link'), isLink: true });
     const textItem = clip({ content: encodeText('plain note') });
     const imgItem = clip({ contentType: 'image', content: 'data:image/png;base64,AA==' });
     expect(matchesClipFilter(urlItem, 'link')).toBe(true);

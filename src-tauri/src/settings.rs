@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "zh-CN";
 const SETTINGS_KEY: &str = "settings";
+const SETTINGS_FILE: &str = "settings.json";
 
 fn locale_for_language(language: &str) -> String {
     if language.to_ascii_lowercase().starts_with("zh") {
@@ -258,6 +261,15 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
     candidate
 }
 
+fn read_settings_store(path: &Path) -> Result<HashMap<String, serde_json::Value>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Failed to parse {}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(e) => Err(format!("Failed to read {}: {e}", path.display())),
+    }
+}
+
 #[derive(Default)]
 pub struct SettingsManager {
     settings: Mutex<Settings>,
@@ -266,13 +278,13 @@ pub struct SettingsManager {
 impl SettingsManager {
     pub fn load(&self, app: &AppHandle) -> Result<(), String> {
         let result = (|| {
-            let store = app
-                .store("settings.json")
-                .map_err(|e| format!("Failed to access store: {e}"))?;
+            let path = tauri_plugin_store::resolve_store_path(app, SETTINGS_FILE)
+                .map_err(|e| format!("Failed to resolve the settings file: {e}"))?;
+            let store = read_settings_store(&path)?;
             match store.get(SETTINGS_KEY) {
-                Some(value) => serde_json::from_value(value)
+                Some(value) => serde_json::from_value(value.clone())
                     .map_err(|e| format!("Failed to parse settings store: {e}")),
-                None => Ok(settings_from_legacy_store(|key| store.get(key))),
+                None => Ok(settings_from_legacy_store(|key| store.get(key).cloned())),
             }
         })();
         self.apply_load_result(result)
@@ -293,7 +305,7 @@ impl SettingsManager {
 
     pub fn save(&self, app: &AppHandle, settings: &Settings) -> Result<(), String> {
         let store = app
-            .store("settings.json")
+            .store(SETTINGS_FILE)
             .map_err(|e| format!("Failed to access store: {}", e))?;
 
         let value = serde_json::to_value(settings)
@@ -323,6 +335,28 @@ impl SettingsManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_file_is_empty_only_when_missing() {
+        let root = std::env::temp_dir().join(format!("clipleaf_settings_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join(SETTINGS_FILE);
+
+        assert!(read_settings_store(&path).unwrap().is_empty());
+
+        std::fs::write(&path, b"{\"settings\": {").unwrap();
+        assert!(read_settings_store(&path)
+            .unwrap_err()
+            .contains("Failed to parse"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"settings\": {");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(read_settings_store(&path)
+            .unwrap_err()
+            .contains("Failed to read"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn failed_load_keeps_privacy_preferences_and_pauses_capture() {

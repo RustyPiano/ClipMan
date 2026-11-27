@@ -96,6 +96,7 @@ pub struct ClipPreviewItem {
     pub has_html: bool,
     pub content_bytes: usize,
     pub file_count: usize,
+    pub is_link: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +113,7 @@ pub struct FrontendClipItem {
     pub has_html: bool,
     pub content_bytes: usize,
     pub file_count: usize,
+    pub is_link: bool,
 }
 
 impl FrontendClipItem {
@@ -143,6 +145,7 @@ impl FrontendClipItem {
             has_html: item.has_html,
             content_bytes: item.content_bytes,
             file_count: item.file_count,
+            is_link: item.is_link,
         }
     }
 }
@@ -153,6 +156,7 @@ pub struct FrontendClipDetail {
     pub id: String,
     pub content_type: ContentType,
     pub text: String,
+    pub file_paths: Vec<String>,
     pub image_url: Option<String>,
     pub truncated: bool,
 }
@@ -188,7 +192,9 @@ fn preview_columns(text_preview: &str) -> String {
        ELSE x'' END AS preview_content,
      thumbnail, content_type, timestamp, is_pinned, pin_order, label, source_app,
      (html IS NOT NULL) AS has_html, length(content) AS content_bytes,
-     CASE WHEN content_type='files' THEN json_array_length(CAST(content AS TEXT)) ELSE 0 END AS file_count"
+     CASE WHEN content_type='files' THEN json_array_length(CAST(content AS TEXT)) ELSE 0 END AS file_count,
+     ({}) AS is_link",
+        ClipFilter::Link.sql_clause()
     )
 }
 
@@ -683,9 +689,11 @@ impl ClipStorage {
         let result = self
             .conn
             .query_row(
-                &format!("WITH payload AS (SELECT content_type, {FILES_TEXT_SQL} AS data FROM clips WHERE id=?1)
-                 SELECT content_type, length(data), CASE WHEN content_type='image' THEN
-                   CASE WHEN length(data)<=?3 THEN data ELSE x'' END ELSE substr(data,1,?2) END FROM payload"),
+                "SELECT content_type, length(content), CASE
+                   WHEN content_type='image' THEN CASE WHEN length(content)<=?3 THEN content ELSE x'' END
+                   WHEN content_type='files' THEN content
+                   ELSE substr(content,1,?2) END
+                 FROM clips WHERE id=?1",
                 params![id, MAX_TEXT_DETAIL_BYTES, IMAGE_LIMIT],
                 |row| {
                     Ok((
@@ -700,27 +708,60 @@ impl ClipStorage {
         let Some((content_type, size, bytes)) = result else {
             return Ok(None);
         };
-        let image = content_type == ContentType::Image;
-        if image && size > IMAGE_LIMIT {
-            return Err("Image exceeds the 16 MiB preview limit".into());
-        }
-        let truncated = !image && size > bytes.len();
-        let end = if truncated {
-            std::str::from_utf8(&bytes).map_or_else(|e| e.valid_up_to(), |_| bytes.len())
-        } else {
-            bytes.len()
+        let detail = match content_type {
+            ContentType::Image => {
+                if size > IMAGE_LIMIT {
+                    return Err("Image exceeds the 16 MiB preview limit".into());
+                }
+                FrontendClipDetail {
+                    id: id.into(),
+                    content_type,
+                    text: String::new(),
+                    file_paths: Vec::new(),
+                    image_url: Some(png_data_url(&bytes)),
+                    truncated: false,
+                }
+            }
+            ContentType::Files => {
+                let paths = split_file_paths(&String::from_utf8_lossy(&bytes));
+                let total = paths.len();
+                let mut file_paths = Vec::new();
+                let mut text_bytes = 0;
+                for path in paths {
+                    let added = usize::from(!file_paths.is_empty()) + path.len();
+                    if text_bytes + added > MAX_TEXT_DETAIL_BYTES {
+                        break;
+                    }
+                    text_bytes += added;
+                    file_paths.push(path);
+                }
+                FrontendClipDetail {
+                    id: id.into(),
+                    content_type,
+                    text: join_file_paths(&file_paths),
+                    truncated: file_paths.len() < total,
+                    file_paths,
+                    image_url: None,
+                }
+            }
+            ContentType::Text => {
+                let truncated = size > bytes.len();
+                let end = if truncated {
+                    std::str::from_utf8(&bytes).map_or_else(|e| e.valid_up_to(), |_| bytes.len())
+                } else {
+                    bytes.len()
+                };
+                FrontendClipDetail {
+                    id: id.into(),
+                    content_type,
+                    text: String::from_utf8_lossy(&bytes[..end]).into_owned(),
+                    file_paths: Vec::new(),
+                    image_url: None,
+                    truncated,
+                }
+            }
         };
-        Ok(Some(FrontendClipDetail {
-            id: id.into(),
-            content_type,
-            truncated,
-            text: if image {
-                String::new()
-            } else {
-                String::from_utf8_lossy(&bytes[..end]).into_owned()
-            },
-            image_url: image.then(|| png_data_url(&bytes)),
-        }))
+        Ok(Some(detail))
     }
 
     pub fn get_for_merge(&self, id: &str, budget: usize) -> Result<Option<ClipItem>> {
@@ -911,6 +952,7 @@ impl ClipStorage {
             has_html: row.get::<_, i32>(9)? != 0,
             content_bytes: row.get(10)?,
             file_count: row.get(11)?,
+            is_link: row.get(12)?,
         })
     }
 
@@ -1352,6 +1394,10 @@ mod tests {
         assert_eq!(
             storage.get_detail("files").unwrap().unwrap().text,
             join_file_paths(&paths)
+        );
+        assert_eq!(
+            storage.get_detail("files").unwrap().unwrap().file_paths,
+            paths
         );
         assert!(!storage.get_detail("files").unwrap().unwrap().truncated);
         assert_eq!(storage.search_clip_previews("two").unwrap().len(), 1);
@@ -2482,6 +2528,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["img1"]
         );
+
+        let long_url = format!("https://example.com/{}/tailneedle", "segment".repeat(40));
+        storage
+            .insert(
+                &test_item("url-long", long_url.as_bytes(), 8, false, None),
+                100,
+            )
+            .unwrap();
+        let tail_hits = storage
+            .search_clip_previews_filtered("tailneedle", ClipFilter::All)
+            .unwrap();
+        assert_eq!(tail_hits.len(), 1);
+        assert!(!tail_hits[0].preview_content.starts_with(b"https://"));
+        assert!(tail_hits[0].is_link);
+        assert!(!storage
+            .search_clip_previews_filtered("alpha", ClipFilter::All)
+            .unwrap()
+            .iter()
+            .find(|item| item.id == "url-multi" || item.id == "t1")
+            .is_some_and(|item| item.is_link));
 
         drop(storage);
         cleanup_db(&db_path);

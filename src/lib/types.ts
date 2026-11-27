@@ -14,12 +14,14 @@ export interface ClipItem {
   hasHtml: boolean;
   contentBytes: number;
   fileCount: number;
+  isLink: boolean;
 }
 
 export interface ClipDetail {
   id: string;
   contentType: ContentType;
   text: string;
+  filePaths: string[];
   imageUrl: string | null;
   truncated: boolean;
 }

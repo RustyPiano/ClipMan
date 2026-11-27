@@ -52,6 +52,7 @@ class ClipboardStore {
   private pageRequests = new RequestSequencer();
   private pendingSearch: Promise<void> | null = null;
   private pendingSearchQuery = '';
+  private pendingSearchFilter: ClipFilter = 'all';
   private static readonly PAGE_SIZE = 100;
   private historyRequests = new RequestSequencer();
   private searchRequests = new RequestSequencer();
@@ -308,12 +309,14 @@ class ClipboardStore {
     if (
       this.pendingSearch &&
       this.pendingSearchQuery === query &&
+      this.pendingSearchFilter === this.filter &&
       this.searchQuery === query &&
       this.isSearchPending
     ) {
       return this.pendingSearch;
     }
     this.pendingSearchQuery = query;
+    this.pendingSearchFilter = this.filter;
     const task = this.runSearch(query, options);
     this.pendingSearch = task;
     void task.finally(() => {

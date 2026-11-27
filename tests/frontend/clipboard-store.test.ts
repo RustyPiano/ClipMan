@@ -40,6 +40,7 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
     hasHtml: false,
     contentBytes: 5,
     fileCount: 0,
+    isLink: false,
     ...overrides,
   };
 }
@@ -694,6 +695,27 @@ describe('clipboard store races', () => {
     expect(clipboardStore.recentItems.map((c) => c.id)).toEqual(['r1']);
     expect(clipboardStore.pinnedItems.map((c) => c.id)).toEqual(['p1']);
     expect(toastStore.toasts.map((t) => t.type)).toEqual(['error']);
+  });
+
+  test('switching the category during a search sends a new query for the new category', async () => {
+    const filters: unknown[] = [];
+    const pending: Array<(items: ClipItem[]) => void> = [];
+    installTauriInvoke((cmd, args) => {
+      if (cmd !== 'search_clips') return [];
+      filters.push(args?.filter);
+      return new Promise<ClipItem[]>((resolve) => pending.push(resolve));
+    });
+    clipboardStore.setSearchQuery('needle');
+    const textSearch = clipboardStore.search('needle');
+    clipboardStore.setFilter('text');
+    clipboardStore.setFilter('files');
+    expect(filters).toEqual([undefined, 'text', 'files']);
+    pending[2]([clip({ id: 'file-hit', contentType: 'files' })]);
+    pending[1]([clip({ id: 'text-hit' })]);
+    pending[0]([clip({ id: 'any-hit' })]);
+    await textSearch;
+    await Promise.resolve();
+    expect(clipboardStore.searchResults.map((item) => item.id)).toEqual(['file-hit']);
   });
 
   test('setFilter forwards category filter to backend history and search queries', async () => {

@@ -16,7 +16,11 @@ useTauriMock('main', () => {
     hasHtml: false,
     contentBytes: 20,
     fileCount: 0,
+    isLink: false,
   }));
+  const isLinkText = (text: string) => /^\s*https?:\/\/\S+\s*$/.test(text);
+  const decodeContent = (content: string) =>
+    new TextDecoder().decode(Uint8Array.from(atob(content), (c) => c.charCodeAt(0)));
   const examples = [
     'Keep common actions close to the content.\n\nThe list should be easy to scan, with room for text and a consistent visual rhythm.',
     'https://developer.apple.com/design/human-interface-guidelines/',
@@ -28,7 +32,10 @@ useTauriMock('main', () => {
     'Release notes — clipboard history and search improvements',
   ];
   examples.forEach((text, index) => {
-    if (text) clips[index].content = btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+    if (text) {
+      clips[index].content = btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+      clips[index].isLink = isLinkText(text);
+    }
   });
   const canvas = document.createElement('canvas');
   canvas.width = 80;
@@ -89,13 +96,7 @@ useTauriMock('main', () => {
       if (filter === 'image') return item.contentType === 'image';
       if (filter === 'files') return item.contentType === 'files';
       if (filter === 'text') return item.contentType === 'text';
-      if (filter === 'link') {
-        if (item.contentType !== 'text') return false;
-        const decoded = new TextDecoder().decode(
-          Uint8Array.from(atob(item.content), (c) => c.charCodeAt(0))
-        );
-        return /^\s*https?:\/\/\S+\s*$/.test(decoded);
-      }
+      if (filter === 'link') return item.contentType === 'text' && item.isLink;
       return true;
     };
     if (cmd === 'get_recent_clips') {
@@ -147,6 +148,7 @@ useTauriMock('main', () => {
         item.content = btoa(String.fromCharCode(...new TextEncoder().encode(args.content)));
         item.contentBytes = args.content.length;
         item.hasHtml = false;
+        item.isLink = isLinkText(args.content);
       }
       return null;
     }
@@ -163,26 +165,41 @@ useTauriMock('main', () => {
         hasHtml: false,
         contentBytes: args.content.length,
         fileCount: 0,
+        isLink: isLinkText(args.content),
       };
       clips.unshift(created);
       return structuredClone(created);
     }
     if (cmd === 'get_clip' && args.id === 'clip-2')
-      return { id: args.id, contentType: 'image', text: '', imageUrl: clips[2].content };
-    if (cmd === 'get_clip')
+      return {
+        id: args.id,
+        contentType: 'image',
+        text: '',
+        filePaths: [],
+        imageUrl: clips[2].content,
+      };
+    if (cmd === 'get_clip') {
+      const item = clips.find((entry) => entry.id === args.id);
+      if (item?.contentType === 'files') {
+        const filePaths: string[] = JSON.parse(decodeContent(item.content));
+        return {
+          id: args.id,
+          contentType: 'files',
+          text: filePaths.join('\n'),
+          filePaths,
+          truncated: false,
+          imageUrl: null,
+        };
+      }
       return {
         id: args.id,
         contentType: 'text',
-        text: clips.find((item) => item.id === args.id)
-          ? new TextDecoder().decode(
-              Uint8Array.from(atob(clips.find((item) => item.id === args.id)!.content), (c) =>
-                c.charCodeAt(0)
-              )
-            )
-          : `Detail for ${args.id}`,
+        text: item ? decodeContent(item.content) : `Detail for ${args.id}`,
+        filePaths: [],
         truncated: args.id === 'large',
         imageUrl: null,
       };
+    }
     if (cmd === 'paste_clip' || cmd === 'paste_clips' || cmd === 'hide_quickbar') {
       w.emitTestEvent('quickbar-hidden');
       return 'pasteRequested';
@@ -552,6 +569,7 @@ test('duplicate file preview paths render both entries and keep the total count'
       hasHtml: false,
       contentBytes: 60,
       fileCount: 3,
+      isLink: false,
     });
   });
   const row = page.locator('#clip-item-duplicate-files');

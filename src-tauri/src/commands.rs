@@ -683,15 +683,19 @@ pub fn migrate_legacy_autostart(app: &AppHandle, reregister: bool) -> Result<(),
         .build()
         .map_err(|e| e.to_string())?;
     let legacy_enabled = legacy.is_enabled().map_err(|e| e.to_string())?;
-    if legacy_enabled {
-        legacy.disable().map_err(|e| e.to_string())?;
-    }
     if legacy_enabled || reregister {
-        app.autolaunch().enable().map_err(|e| e.to_string())?;
+        let autolaunch = app.autolaunch();
+        autolaunch.enable().map_err(|e| e.to_string())?;
+        if !autolaunch.is_enabled().map_err(|e| e.to_string())? {
+            return Err("The ClipLeaf autostart entry was not registered".to_string());
+        }
         log::info!(
             "Registered the ClipLeaf autostart entry at {}",
             current_exe.display()
         );
+    }
+    if legacy_enabled {
+        legacy.disable().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
