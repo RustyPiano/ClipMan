@@ -1,6 +1,6 @@
 <script lang="ts">
   import { MoveHorizontal } from 'lucide-svelte';
-  import { COPY, type Locale, type PlainModeId } from '../lib/i18n';
+  import { COPY, splitPhrases, type Locale, type PlainModeId } from '../lib/i18n';
 
   interface Props {
     locale: Locale;
@@ -20,12 +20,14 @@
   }
 </script>
 
-<section id="plain-paste" class="mx-auto max-w-5xl px-4 py-28 sm:px-6 sm:py-40">
+<section id="plain-paste" class="mx-auto max-w-5xl px-4 py-20 sm:px-6 sm:py-28">
   <div class="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
     <h2
-      class="max-w-2xl text-balance text-3xl font-semibold tracking-[-0.03em] text-[var(--ink)] sm:text-[44px] sm:leading-[1.1]"
+      class="max-w-2xl font-serif text-3xl font-semibold tracking-[-0.01em] text-[var(--ink)] sm:text-[44px] sm:leading-[1.15]"
     >
-      {copy.heading}
+      {#each splitPhrases(copy.heading) as phrase, index (index)}
+        <span class="inline-block">{phrase}</span>
+      {/each}
     </h2>
 
     <div
@@ -63,7 +65,30 @@
   </div>
 
   <div class="mt-10 rounded-[28px] bg-[var(--stage-bg)] p-4 sm:mt-12 sm:rounded-[36px] sm:p-10">
-    <div class="mb-4 flex items-center justify-between px-1 text-xs">
+    <div class="space-y-4 sm:hidden">
+      <div>
+        <div class="mb-2 px-1 text-xs font-medium text-[var(--ink-faint)]">{copy.labelMessy}</div>
+        <div class="qb-panel rounded-2xl p-4">
+          <div
+            class="rounded-sm bg-[#e5e7eb] px-3 py-2 text-[#1f2937]"
+            style:font-family="Georgia, 'Times New Roman', serif"
+          >
+            <span class="text-[18px] font-bold text-[#0f172a]">{copy.messyLead}</span>
+            <span class="bg-[#fef08a] px-1 text-[13px]">{copy.messyMid}</span>
+            <span class="text-[12px] text-[#2563eb] underline">{copy.messyLink}</span>
+            <span class="text-[15px] italic text-[#475569]">{copy.messyTail}</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="mb-2 px-1 text-xs font-medium text-[var(--accent)]">{copy.labelPlain}</div>
+        <div class="qb-panel rounded-2xl p-4">
+          <p class="text-sm leading-relaxed text-[var(--ink)]">{copy.sampleParagraph}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="mb-4 hidden items-center justify-between px-1 text-xs sm:flex">
       <button
         type="button"
         onclick={() => (split = 100)}
@@ -87,14 +112,16 @@
       </button>
     </div>
 
-    <div class="qb-panel relative overflow-hidden rounded-[20px] select-none">
+    <div class="qb-panel relative hidden overflow-hidden rounded-[20px] select-none sm:block">
       {#if docKind === 'ppt'}
         <div class="p-7 sm:p-12">
           <div class="flex items-center justify-between font-mono text-xs text-[var(--ink-faint)]">
             <span>{copy.pptHeader}</span>
             <span>04 / 12</span>
           </div>
-          <h3 class="mt-5 max-w-lg text-2xl font-semibold tracking-tight text-[var(--ink)] sm:text-3xl">
+          <h3
+            class="mt-5 max-w-lg text-2xl font-semibold tracking-tight text-[var(--ink)] sm:text-3xl"
+          >
             {copy.pptTitle}
           </h3>
           <div class="mt-8 grid grid-cols-1 gap-8 sm:grid-cols-12">
@@ -121,7 +148,9 @@
             <span>{copy.pptHeader}</span>
             <span>04 / 12</span>
           </div>
-          <h3 class="mt-5 max-w-lg text-2xl font-semibold tracking-tight text-[var(--ink)] sm:text-3xl">
+          <h3
+            class="mt-5 max-w-lg text-2xl font-semibold tracking-tight text-[var(--ink)] sm:text-3xl"
+          >
             {copy.pptTitle}
           </h3>
           <div class="mt-8 grid grid-cols-1 gap-8 sm:grid-cols-12">
@@ -178,7 +207,9 @@
           style:clip-path={`inset(0 ${100 - split}% 0 0)`}
         >
           <div class="mx-auto max-w-2xl p-7 sm:p-12">
-            <div class="flex items-center justify-between font-mono text-xs text-[var(--ink-faint)]">
+            <div
+              class="flex items-center justify-between font-mono text-xs text-[var(--ink-faint)]"
+            >
               <span>{copy.wordDocName}</span>
               <span>10.5pt</span>
             </div>
@@ -240,7 +271,9 @@
           <span
             class={[
               'text-base font-semibold transition-colors',
-              selected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)] group-hover:text-[var(--ink)]',
+              selected
+                ? 'text-[var(--ink)]'
+                : 'text-[var(--ink-muted)] group-hover:text-[var(--ink)]',
             ]}
           >
             {mode.title}

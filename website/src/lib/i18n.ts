@@ -66,13 +66,33 @@ export const DOWNLOADS: Record<
   },
 };
 
-export function detectOs(): OsKind | null {
-  if (typeof navigator === 'undefined') return null;
+export function detectMobile(): boolean {
   const ua = navigator.userAgent.toLowerCase();
-  if (/iphone|ipad|ipod|android|mobile/.test(ua)) return null;
+  if (/iphone|ipad|ipod|android|mobile/.test(ua)) return true;
+  return ua.includes('macintosh') && navigator.maxTouchPoints > 1;
+}
+
+export function isApplePlatform(): boolean {
+  return /macintosh|mac os x|iphone|ipad/.test(navigator.userAgent.toLowerCase());
+}
+
+export function detectOs(): OsKind | null {
+  if (detectMobile()) return null;
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('macintosh')) return 'mac-arm';
   if (ua.includes('windows nt')) return 'win';
   if (ua.includes('linux') && (ua.includes('x86_64') || ua.includes('amd64'))) return 'linux';
   return null;
+}
+
+export async function detectMacArchitecture(): Promise<'mac-arm' | 'mac-x64'> {
+  if (!navigator.userAgentData) return 'mac-arm';
+  const { architecture } = await navigator.userAgentData.getHighEntropyValues(['architecture']);
+  return architecture === 'x86' ? 'mac-x64' : 'mac-arm';
+}
+
+export function splitPhrases(text: string): string[] {
+  return text.match(/[^，、。：；！？]+[，、。：；！？]*/g) ?? [text];
 }
 
 export function detectLocale(): Locale {
@@ -100,7 +120,8 @@ export function createInitialClips(locale: Locale): SandboxClip[] {
         id: 'c2',
         kind: 'text',
         title: 'SQLite FTS5 trigram query',
-        preview: 'SELECT id, content FROM clips_fts WHERE clips_fts MATCH ? ORDER BY created_at DESC;',
+        preview:
+          'SELECT id, content FROM clips_fts WHERE clips_fts MATCH ? ORDER BY created_at DESC;',
         content:
           'SELECT id, content, created_at\nFROM clips_fts\nWHERE clips_fts MATCH ?\nORDER BY created_at DESC\nLIMIT 100;',
         sourceApp: 'Zed',
@@ -177,7 +198,8 @@ export function createInitialClips(locale: Locale): SandboxClip[] {
       id: 'c2',
       kind: 'text',
       title: 'SQLite FTS5 全文检索',
-      preview: 'SELECT id, content FROM clips_fts WHERE clips_fts MATCH ? ORDER BY created_at DESC;',
+      preview:
+        'SELECT id, content FROM clips_fts WHERE clips_fts MATCH ? ORDER BY created_at DESC;',
       content:
         'SELECT id, content, created_at\nFROM clips_fts\nWHERE clips_fts MATCH ?\nORDER BY created_at DESC\nLIMIT 100;',
       sourceApp: 'Zed',
@@ -242,13 +264,27 @@ export const COPY = {
     themePaper: '素纸',
     themeInk: '墨夜',
     themePetal: '落樱',
-    heroTitle: '轻快、干净的本地剪贴板。',
-    heroSub: '粘贴自动去格式 · 几万条历史秒搜 · 数据只留本机 · 免费开源',
+    heroTitle: '离线、轻量的本地剪贴板',
+    heroSub: '一键纯文本粘贴 · 几万条历史秒搜 · 数据只留本机 · 免费开源',
     downloadFor: '下载',
     chooseInstaller: '选择平台安装包',
     allPlatforms: '全部平台',
     macGuideTrigger: 'macOS 首次打开指引',
-    sandboxShortcutTip: '点击聚焦搜索（或按 ⌘K）',
+    macIntelLink: 'Intel 芯片版',
+    macArmLink: 'Apple 芯片版',
+    mobileCopyLink: '复制下载链接',
+    mobileNote: 'ClipLeaf 是电脑端应用，支持 macOS、Windows 和 Linux。',
+    mobileLinkCopied: '已复制链接，在电脑上打开即可下载。',
+    mobileLinkFailed: (url: string) => `无法写入剪贴板，请手动复制：${url}`,
+    sandboxShortcutTip: (keys: string) => `点击聚焦搜索（或按 ${keys}）`,
+    sandboxCoach: '复制本页任意文字，都会收进这里',
+    sandboxCopyVerb: '复制',
+    sandboxDockTry: '复制本页任意文字试试',
+    sandboxDockCount: (count: number) => `已收进 ${count} 条`,
+    sandboxDockView: '查看',
+    sandboxDockClose: '关闭',
+    sandboxNow: '刚刚',
+    sandboxCharCount: (count: number) => `${count} 个字符`,
     sandboxSearchPlaceholder: '搜索历史记录，或按 ↑ ↓ 切换…',
     sandboxTabHistory: '历史',
     sandboxTabFavorites: '收藏',
@@ -315,17 +351,14 @@ export const COPY = {
       {
         title: '几万条历史秒搜，中文输入不误触',
         body: '输入关键词即可高亮匹配。切换到图片、文件或链接分类时，会沿用当前关键词重新搜索。在 macOS 上用回车选字也不会触发粘贴。',
-        meta: '1.4 ms · FTS5 · IME Safe',
       },
       {
         title: '色值、图片、文件，预览即所得',
         body: '复制色号自动识别，点击色块即可复制 HEX / RGB / HSL；透明 PNG 棋盘格高清预览，链接一键打开，本地文件直达所在目录。',
-        meta: 'HEX · RGB · HSL · PNG',
       },
       {
         title: '常用内容收藏，支持在线改字与合并粘贴',
         body: '把高频 Prompt、终端命令或常用回复加入收藏；粘贴前可在预览栏直接修改文字，或按 ⇧↑↓ 多选后一次合并粘贴。',
-        meta: '⇧↑↓ Merge · Inline Edit',
       },
     ],
     detailGridHeading: '顺手好用的细节，藏在每一次操作里。',
@@ -333,32 +366,26 @@ export const COPY = {
       {
         title: '回车直粘原窗口',
         body: '选中按 Enter 自动切回刚才的窗口光标处完成粘贴，支持在 macOS 全屏应用空间直接唤出，也可切换为仅复制模式。',
-        tag: 'Auto-Paste · Fullscreen',
       },
       {
         title: '直接新建收藏片段',
         body: '不必先复制再收藏，支持直接在收藏夹新建常用 Prompt 与文本模板、自定义备注标题，并按最近使用或收藏时间排序。',
-        tag: 'New Snippet · Custom Label',
       },
       {
         title: '来源应用与智能去重',
         body: '自动记录内容来自哪个应用并展示原生应用图标；重复复制同一段内容自动合并置顶，不会把历史列表刷满重复项。',
-        tag: 'Source App · Deduplication',
       },
       {
         title: '批量多选与面板伸缩',
         body: '支持 ⇧+点击 连续多选、⌘+点击 跳选，一键批量收藏、批量删除或合并粘贴；悬浮窗可在单栏紧凑与双栏预览间随时切换。',
-        tag: 'Multi-Select · Compact / Wide',
       },
       {
         title: '菜单栏 / 托盘即点即取',
         body: '常驻顶部菜单栏与系统托盘，不想按快捷键时，点开托盘菜单即可直接复制最近的剪贴板记录与常用收藏。',
-        tag: 'Menu Bar · System Tray',
       },
       {
         title: 'Rust 原生轻量常驻',
         body: '基于 Rust 与 Tauri 2 构建，安装包仅数 MB，后台常驻几乎不占内存与 CPU；支持设置历史保留上限与数据库空间自动回收。',
-        tag: 'Rust + Tauri 2 · Low Memory',
       },
     ],
     privacyHeading: '不联网，免登录，数据只存在你电脑里。',
@@ -371,14 +398,14 @@ export const COPY = {
       },
       {
         title: '敏感内容与指定应用过滤',
-        body: 'macOS 和 Windows 默认跳过标为机密的内容。开启此过滤时，Windows 也会跳过无法检查标记的记录。在 macOS 上还可排除指定应用。',
+        body: '自动跳过密码管理器里复制的密码，以及私钥和 API 令牌。macOS 上还可以排除指定应用。',
       },
     ],
     themesHeading: '三套主题，冷暖自选。',
     themeCards: [
-      { id: 'paper' as const, name: '素纸', sub: 'Paper' },
-      { id: 'ink' as const, name: '墨夜', sub: 'Ink' },
-      { id: 'petal' as const, name: '落樱', sub: 'Petal' },
+      { id: 'paper' as const, name: '素纸' },
+      { id: 'ink' as const, name: '墨夜' },
+      { id: 'petal' as const, name: '落樱' },
     ],
     downloadHeading: '免费开源，即装即用。',
     downloadNote: `当前版本 v${RELEASE_VERSION} · MIT 开源协议 · 支持应用内自动更新`,
@@ -386,6 +413,7 @@ export const COPY = {
     dialogTitle: 'macOS 首次打开与自动粘贴指引',
     dialogIntro:
       '当前开源版本使用自签名证书发布、尚未做 Apple 公证，首次打开按下面两步即可永久放行：',
+    dialogDownloadStarted: '安装包已开始下载。下载完成后，按下面两步打开 ClipLeaf。',
     dialogStep1Title: '1. 解除 Gatekeeper 拦截（仅首次）',
     dialogStep1Body:
       '在访达中右键点击应用 → 选择「打开」；或前往「系统设置 → 隐私与安全性」，在底部点击「仍要打开」。',
@@ -393,7 +421,6 @@ export const COPY = {
     dialogStep2Body:
       '前往「系统设置 → 隐私与安全性 → 辅助功能」，勾选应用即可回车自动粘回原窗口（未授权时仍可正常复制，手动 ⌘V 粘贴）。',
     dialogClose: '知道了',
-    footerLicense: 'MIT Open Source',
     footerReleases: 'Releases',
     footerIssues: 'Issues',
   },
@@ -402,13 +429,27 @@ export const COPY = {
     themePaper: 'Paper',
     themeInk: 'Ink',
     themePetal: 'Petal',
-    heroTitle: 'The fast, clean local clipboard manager.',
-    heroSub: 'Clean plain-text paste · Instant local search · 100% offline & open source',
+    heroTitle: 'A fast, local clipboard manager',
+    heroSub: 'One-key plain-text paste · Instant local search · 100% offline & open source',
     downloadFor: 'Download for',
     chooseInstaller: 'Choose your installer',
     allPlatforms: 'All platforms',
     macGuideTrigger: 'macOS first-launch guide',
-    sandboxShortcutTip: 'Focus search (or press ⌘K)',
+    macIntelLink: 'Intel version',
+    macArmLink: 'Apple silicon version',
+    mobileCopyLink: 'Copy download link',
+    mobileNote: 'ClipLeaf is a desktop app for macOS, Windows and Linux.',
+    mobileLinkCopied: 'Link copied. Open it on your computer to download.',
+    mobileLinkFailed: (url: string) => `Clipboard access blocked — please copy manually: ${url}`,
+    sandboxShortcutTip: (keys: string) => `Focus search (or press ${keys})`,
+    sandboxCoach: 'Copy any text on this page. It lands here.',
+    sandboxCopyVerb: 'Copy',
+    sandboxDockTry: 'Try copying any text here',
+    sandboxDockCount: (count: number) => `${count} new clip${count === 1 ? '' : 's'}`,
+    sandboxDockView: 'View',
+    sandboxDockClose: 'Close',
+    sandboxNow: 'Now',
+    sandboxCharCount: (count: number) => `${count} characters`,
     sandboxSearchPlaceholder: 'Search history, or use ↑ ↓…',
     sandboxTabHistory: 'History',
     sandboxTabFavorites: 'Favorites',
@@ -478,17 +519,14 @@ export const COPY = {
       {
         title: 'Search thousands of clips instantly — CJK IME friendly',
         body: 'Matching words are highlighted as you type. Switch to Images, Files, or Links to search that category with the same keywords. On macOS, pressing Enter to choose an input method candidate keeps the search open.',
-        meta: '1.4 ms · FTS5 · IME Safe',
       },
       {
         title: 'Colors, images, and files — clear at a glance',
         body: 'Auto-detects copied color codes (click any swatch to copy HEX / RGB / HSL), previews transparent PNGs on a crisp checkerboard, opens links, and reveals local files in Finder.',
-        meta: 'HEX · RGB · HSL · PNG',
       },
       {
         title: 'Save favorite snippets, edit inline, or merge-paste',
         body: 'Star frequent prompts, commands, and replies into Favorites. Edit text inline right inside the preview pane, or select multiple items with ⇧↑↓ to merge-paste in one stroke.',
-        meta: '⇧↑↓ Merge · Inline Edit',
       },
     ],
     detailGridHeading: 'Thoughtful details in every interaction.',
@@ -496,32 +534,26 @@ export const COPY = {
       {
         title: 'Auto-paste back to your active window',
         body: 'Press Enter to restore focus and paste directly where your cursor was — even over macOS fullscreen Spaces — or switch to copy-only mode.',
-        tag: 'Auto-Paste · Fullscreen',
       },
       {
         title: 'Create snippets from scratch',
         body: 'No need to copy first. Create reusable prompts and templates directly in Favorites, add custom labels, and sort by recently used.',
-        tag: 'New Snippet · Custom Label',
       },
       {
         title: 'Source app icons & smart deduplication',
         body: 'Shows which app each clip came from with native app icons on macOS. Re-copying identical content bumps the existing item instead of cluttering history.',
-        tag: 'Source App · Deduplication',
       },
       {
         title: 'Batch selection & flexible layout',
         body: 'Use ⇧+Click or ⌘+Click to batch-star, batch-delete, or merge-paste multiple clips. Switch QuickBar between compact single-column and wide split-preview modes.',
-        tag: 'Multi-Select · Compact / Wide',
       },
       {
         title: 'Menu bar & system tray access',
         body: 'Lives quietly in your menu bar or system tray so you can grab recent clips and favorite snippets with a single click.',
-        tag: 'Menu Bar · System Tray',
       },
       {
         title: 'Lightweight native Rust core',
         body: 'Built with Rust and Tauri 2 in a few-megabyte installer with minimal RAM and CPU footprint, configurable history limits, and automatic SQLite space reclamation.',
-        tag: 'Rust + Tauri 2 · Low Memory',
       },
     ],
     privacyHeading: 'Offline by design. No account required.',
@@ -534,14 +566,14 @@ export const COPY = {
       },
       {
         title: 'Password manager & app filtering',
-        body: 'ClipLeaf skips items marked confidential by default on macOS and Windows. With this filter on, Windows also skips items when it cannot read their privacy markers. On macOS you can exclude individual apps.',
+        body: 'Passwords from password managers, private keys and API tokens are skipped automatically. On macOS you can also exclude specific apps.',
       },
     ],
     themesHeading: 'Three themes. Easy on the eyes.',
     themeCards: [
-      { id: 'paper' as const, name: 'Paper', sub: 'Light' },
-      { id: 'ink' as const, name: 'Ink', sub: 'Dark' },
-      { id: 'petal' as const, name: 'Petal', sub: 'Blush' },
+      { id: 'paper' as const, name: 'Paper' },
+      { id: 'ink' as const, name: 'Ink' },
+      { id: 'petal' as const, name: 'Petal' },
     ],
     downloadHeading: 'Free, open source, ready to go.',
     downloadNote: `Version v${RELEASE_VERSION} · MIT License · Built-in auto-updates`,
@@ -549,6 +581,8 @@ export const COPY = {
     dialogTitle: 'macOS First Launch & Auto-Paste Setup',
     dialogIntro:
       'Open-source builds are self-signed (not yet Apple-notarized). Two quick one-time steps unlock everything:',
+    dialogDownloadStarted:
+      'Your download has started. Once it finishes, open ClipLeaf in two steps.',
     dialogStep1Title: '1. Allow past Gatekeeper (one-time)',
     dialogStep1Body:
       'Right-click the app in Finder and choose "Open", or go to System Settings → Privacy & Security and click "Open Anyway".',
@@ -556,7 +590,6 @@ export const COPY = {
     dialogStep2Body:
       'Go to System Settings → Privacy & Security → Accessibility and toggle the app on so pressing Enter pastes straight into your active window.',
     dialogClose: 'Got it',
-    footerLicense: 'MIT Open Source',
     footerReleases: 'Releases',
     footerIssues: 'Issues',
   },

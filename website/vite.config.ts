@@ -34,5 +34,6 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: ['es2022', 'chrome117', 'safari17.4'],
+    assetsInlineLimit: (filePath) => (/\.woff2?$/.test(filePath) ? false : undefined),
   },
 });

@@ -1,3 +1,5 @@
+import { tick } from 'svelte';
+
 export type ThemeChoice = 'system' | 'paper' | 'ink' | 'petal';
 export type ResolvedTheme = Exclude<ThemeChoice, 'system'>;
 
@@ -64,7 +66,37 @@ class ThemeStore {
     };
   }
 
-  set(next: ThemeChoice): void {
+  set(next: ThemeChoice, origin?: HTMLElement): void {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const nextResolved = next === 'system' ? (this.systemDark ? 'ink' : 'paper') : next;
+    if (
+      !origin ||
+      reduceMotion ||
+      nextResolved === this.resolved ||
+      !('startViewTransition' in document)
+    ) {
+      this.commit(next);
+      return;
+    }
+
+    const rect = origin.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const radius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+    const root = document.documentElement;
+    root.style.setProperty('--theme-reveal-x', `${x}px`);
+    root.style.setProperty('--theme-reveal-y', `${y}px`);
+    root.style.setProperty('--theme-reveal-r', `${radius}px`);
+    document.startViewTransition(async () => {
+      this.commit(next);
+      await tick();
+    });
+  }
+
+  private commit(next: ThemeChoice): void {
     this.choice = next;
     applyThemeToDom(next);
     try {

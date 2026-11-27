@@ -6,9 +6,10 @@
   interface Props {
     locale: Locale;
     openSignal: number;
+    downloadStarted: boolean;
   }
 
-  let { locale, openSignal }: Props = $props();
+  let { locale, openSignal, downloadStarted }: Props = $props();
   let dialogEl = $state<HTMLDialogElement | null>(null);
   let lastSignal = 0;
 
@@ -57,6 +58,11 @@
       </button>
     </div>
 
+    {#if downloadStarted}
+      <p class="mt-3 text-sm font-medium leading-relaxed text-[var(--ink)]">
+        {copy.dialogDownloadStarted}
+      </p>
+    {/if}
     <p class="mt-3 text-sm leading-relaxed text-[var(--ink-muted)]">
       {copy.dialogIntro}
     </p>
