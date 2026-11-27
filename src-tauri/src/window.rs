@@ -288,7 +288,8 @@ fn setup_quickbar_macos(window: &WebviewWindow) -> Result<(), String> {
     ns_window.setLevel(NSFloatingWindowLevel);
     ns_window.setHidesOnDeactivate(false);
     ns_window.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
+        NSWindowCollectionBehavior::Auxiliary
+            | NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::Transient
             | NSWindowCollectionBehavior::IgnoresCycle,

@@ -229,6 +229,14 @@ describe('row display helpers', () => {
       { text: 'foo', match: true },
       { text: ' bar', match: false },
     ]);
+    expect(
+      highlightSegments('请使用 Paratera 的 API 生成图片，保存到本地并返回', '本地', 6)
+    ).toEqual([
+      { text: '…图片，保存到', match: false },
+      { text: '本地', match: true },
+      { text: '并返回', match: false },
+    ]);
+    expect(highlightSegments('short 本地', '本地', 6)[0]).toEqual({ text: 'short ', match: false });
     const urlItem = clip({ content: encodeText('https://clipman.top') });
     const textItem = clip({ content: encodeText('plain note') });
     const imgItem = clip({ contentType: 'image', content: 'data:image/png;base64,AA==' });

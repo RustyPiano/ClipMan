@@ -4,7 +4,7 @@
 
 ## 决定
 
-- macOS 上 QuickBar 使用标准浮动窗口（`NSFloatingWindowLevel` + `CanJoinAllSpaces | FullScreenAuxiliary | Transient | IgnoresCycle`），打开时通过 `window.set_focus()`（tao 内部调用 `makeKeyAndOrderFront` 与 `activateIgnoringOtherApps:YES`）激活 Accessory 应用，不使用 macOS 14.0+ 专属的 `NSApp.activate()` 以保持 macOS 13.3 兼容。
+- macOS 上 QuickBar 使用标准浮动窗口（`NSFloatingWindowLevel` + `Auxiliary | CanJoinAllSpaces | FullScreenAuxiliary | Transient | IgnoresCycle`），打开时通过 `window.set_focus()`（tao 内部调用 `makeKeyAndOrderFront` 与 `activateIgnoringOtherApps:YES`）激活 Accessory 应用，不使用 macOS 14.0+ 专属的 `NSApp.activate()` 以保持 macOS 13.3 兼容。`Auxiliary`（macOS 13.0+）不可省略：缺少它时 ClipMan 会被激活，但窗口不会出现在其他应用的全屏 Space 上。
 - 不使用 `object_setClass` 运行时替换 `NSPanel` 或私有接口 `_setPreventsActivation:`：在 `WKWebView`（跨进程 WebContent）下阻止应用激活会导致 macOS 输入法服务无法挂载中/日/韩候选窗，并引入私有 API 风险。
 - 打开前记录原前台应用 PID。粘贴前轮询 `NSWorkspace.frontmostApplication`（上限 500 ms）确认原应用回到前台后再发送 `⌘V`，超时降级为 `copiedOnly`。复制模式隐藏或按 `Esc` / 再次按下同一面板全局快捷键隐藏（且设置窗口未显示）时同样恢复原应用焦点。
 

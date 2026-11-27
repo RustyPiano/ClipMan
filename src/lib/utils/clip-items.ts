@@ -229,7 +229,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function highlightSegments(text: string, query: string): TextSegment[] {
+export function highlightSegments(
+  text: string,
+  query: string,
+  maxLeadingChars = Infinity
+): TextSegment[] {
   const needle = query.trim();
   if (!needle) return [{ text, match: false }];
   const regex = new RegExp(escapeRegExp(needle), 'gi');
@@ -247,7 +251,15 @@ export function highlightSegments(text: string, query: string): TextSegment[] {
   if (cursor < text.length) {
     segments.push({ text: text.slice(cursor), match: false });
   }
-  return segments.length ? segments : [{ text, match: false }];
+  if (!segments.length) return [{ text, match: false }];
+  const leading = Array.from(segments[0].text);
+  if (!segments[0].match && segments.length > 1 && leading.length > maxLeadingChars) {
+    segments[0] = {
+      text: '…' + leading.slice(-maxLeadingChars).join('').trimStart(),
+      match: false,
+    };
+  }
+  return segments;
 }
 
 export function formatBytes(bytes: number): string {

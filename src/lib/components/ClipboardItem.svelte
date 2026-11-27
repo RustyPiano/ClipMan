@@ -37,6 +37,8 @@
   import { appIconStore } from '$lib/stores/app-icons.svelte';
   import Button from './ui/Button.svelte';
 
+  const MATCH_LEADING_CHARS = 12;
+
   const GLYPHS = {
     image: ImageIcon,
     files: Files,
@@ -124,8 +126,10 @@
   );
 
   const appIcon = $derived(item.sourceApp ? appIconStore.get(item.sourceApp) : null);
-  const textSegments = $derived(highlightSegments(text, searchQuery));
-  const labelSegments = $derived(item.label ? highlightSegments(item.label, searchQuery) : []);
+  const textSegments = $derived(highlightSegments(text, searchQuery, MATCH_LEADING_CHARS));
+  const labelSegments = $derived(
+    item.label ? highlightSegments(item.label, searchQuery, MATCH_LEADING_CHARS) : []
+  );
 
   let editing = $state(false);
   let draft = $state('');
