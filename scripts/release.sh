@@ -23,7 +23,7 @@ sedi -E "s/^(  \"version\": \")[^\"]+\"/\1${VERSION}\"/" package.json
 sedi -E "s/^(  \"version\": \")[^\"]+\"/\1${VERSION}\"/" src-tauri/tauri.conf.json
 sedi -E "s/^(version = \")[^\"]+\"/\1${VERSION}\"/" src-tauri/Cargo.toml
 awk -v v="$VERSION" '
-  prev == "name = \"clipman\"" && /^version = / { sub(/"[^"]+"/, "\"" v "\"") }
+  prev == "name = \"clipleaf\"" && /^version = / { sub(/"[^"]+"/, "\"" v "\"") }
   { print; prev = $0 }
 ' src-tauri/Cargo.lock > src-tauri/Cargo.lock.tmp && mv src-tauri/Cargo.lock.tmp src-tauri/Cargo.lock
 

@@ -18,19 +18,19 @@ SPEC.loader.exec_module(VERIFY)
 
 
 def release_fixture():
-    config = {"version": "2.3.0", "productName": "ClipMan"}
+    config = {"version": "2.3.0", "productName": "ClipLeaf"}
     formats = {
-        "darwin-aarch64-app": "ClipMan_2.3.0_aarch64.app.tar.gz",
-        "darwin-x86_64-app": "ClipMan_2.3.0_x64.app.tar.gz",
-        "windows-x86_64-msi": "ClipMan_2.3.0_x64_en-US.msi",
-        "windows-x86_64-nsis": "ClipMan_2.3.0_x64-setup.exe",
-        "linux-x86_64-appimage": "ClipMan_2.3.0_amd64.AppImage",
-        "linux-x86_64-deb": "ClipMan_2.3.0_amd64.deb",
-        "linux-x86_64-rpm": "ClipMan-2.3.0-1.x86_64.rpm",
+        "darwin-aarch64-app": "ClipLeaf_2.3.0_aarch64.app.tar.gz",
+        "darwin-x86_64-app": "ClipLeaf_2.3.0_x64.app.tar.gz",
+        "windows-x86_64-msi": "ClipLeaf_2.3.0_x64_en-US.msi",
+        "windows-x86_64-nsis": "ClipLeaf_2.3.0_x64-setup.exe",
+        "linux-x86_64-appimage": "ClipLeaf_2.3.0_amd64.AppImage",
+        "linux-x86_64-deb": "ClipLeaf_2.3.0_amd64.deb",
+        "linux-x86_64-rpm": "ClipLeaf-2.3.0-1.x86_64.rpm",
     }
     names = list(formats.values())
     names += [name + ".sig" for name in names]
-    names += ["ClipMan_2.3.0_aarch64.dmg", "ClipMan_2.3.0_x64.dmg", "latest.json"]
+    names += ["ClipLeaf_2.3.0_aarch64.dmg", "ClipLeaf_2.3.0_x64.dmg", "latest.json"]
     assets = [{
         "id": index,
         "name": name,
@@ -68,7 +68,7 @@ class ReleaseVerificationTests(unittest.TestCase):
         for url in (
             "https://example.com/update.exe",
             "https://api.github.com/repos/owner/repo/releases/assets/999999",
-            "https://github.com/owner/repo/releases/download/v2.2.1/ClipMan.exe",
+            "https://github.com/owner/repo/releases/download/v2.2.1/ClipLeaf.exe",
             assets[0]["url"] + "?token=untrusted",
         ):
             with self.subTest(url=url):
@@ -93,7 +93,7 @@ class ReleaseVerificationTests(unittest.TestCase):
             VERIFY.plan_assets(config, "v2.3.0", changed, assets)
         with self.assertRaisesRegex(ValueError, "缺少附件签名"):
             VERIFY.plan_assets(config, "v2.3.0", manifest, [asset for asset in assets
-                               if asset["name"] != "ClipMan_2.3.0_x64-setup.exe.sig"])
+                               if asset["name"] != "ClipLeaf_2.3.0_x64-setup.exe.sig"])
         for value in ("", "not-base64!"):
             changed = copy.deepcopy(manifest)
             changed["platforms"]["windows-x86_64-nsis"]["signature"] = value

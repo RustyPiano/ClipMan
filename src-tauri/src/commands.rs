@@ -672,7 +672,7 @@ fn apply_shortcut_changes(
     result
 }
 
-pub fn migrate_legacy_autostart(app: &AppHandle) -> Result<(), String> {
+pub fn migrate_legacy_autostart(app: &AppHandle, reregister: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
 
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -682,12 +682,17 @@ pub fn migrate_legacy_autostart(app: &AppHandle) -> Result<(), String> {
         .set_use_launch_agent(true)
         .build()
         .map_err(|e| e.to_string())?;
-    if !legacy.is_enabled().map_err(|e| e.to_string())? {
-        return Ok(());
+    let legacy_enabled = legacy.is_enabled().map_err(|e| e.to_string())?;
+    if legacy_enabled {
+        legacy.disable().map_err(|e| e.to_string())?;
     }
-    legacy.disable().map_err(|e| e.to_string())?;
-    app.autolaunch().enable().map_err(|e| e.to_string())?;
-    log::info!("Moved the autostart entry from ClipMan to ClipLeaf");
+    if legacy_enabled || reregister {
+        app.autolaunch().enable().map_err(|e| e.to_string())?;
+        log::info!(
+            "Registered the ClipLeaf autostart entry at {}",
+            current_exe.display()
+        );
+    }
     Ok(())
 }
 
@@ -953,7 +958,7 @@ fn migrate_data_location_blocking(
     let _settings_write_guard = state.settings_write_lock.lock().unwrap();
     let old_path = state.storage.lock().unwrap().data_directory().to_path_buf();
     let new_path_buf = std::path::PathBuf::from(&new_path);
-    let new_db_path = new_path_buf.join("clipman.db");
+    let new_db_path = new_path_buf.join(crate::identity::DATABASE_FILE);
 
     migration::prepare_destination_directory(&old_path, &new_path_buf)?;
 

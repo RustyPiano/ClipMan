@@ -87,7 +87,7 @@ codesign -dv --verbose=2 /Applications/ClipLeaf.app
 codesign --verify --strict /Applications/ClipLeaf.app
 
 # 验证签名（自签名证书；spctl 因未公证会判为 rejected，属正常现象）
-# 应显示 Authority=ClipMan Code Signing，且严格验证成功
+# 应显示 Authority=ClipLeaf Code Signing，且严格验证成功
 ```
 
 ## Release 说明
@@ -181,8 +181,8 @@ git tag -d v1.0.0
 A:
 
 - **macOS**: 已配置。Release 构建用**自签名证书**签名（无需 Apple Developer 账号）。目的是让 app 的签名要求（Designated Requirement）在各版本间保持稳定——用户只需授予一次辅助功能权限，更新后也不会失效（ad-hoc 签名每次构建哈希都变，会反复要求重新授权）。涉及：
-  - GitHub Secrets：`APPLE_CERTIFICATE`（`.p12` 的 base64）、`APPLE_CERTIFICATE_PASSWORD`；`release.yml` 中写死 `APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'`。
-  - 证书与私钥保存在仓库之外（本机 `~/ClipMan-signing/`），**必须永久复用同一张**；一旦更换，所有用户在下次更新后都要重新授权辅助功能。务必备份该目录。
+  - GitHub Secrets：`APPLE_CERTIFICATE`（`.p12` 的 base64）、`APPLE_CERTIFICATE_PASSWORD`；`release.yml` 中写死 `APPLE_SIGNING_IDENTITY: 'ClipLeaf Code Signing'`。
+  - 证书、私钥和 p12 密码保存在仓库根目录被忽略的 `ClipLeaf-signing/`（`cert.cnf` 是生成参数，`password.txt` 是 p12 密码），**必须永久复用同一张**；一旦更换，所有用户在下次更新后都要重新授权辅助功能。务必另行备份该目录。v2.5.2 起使用这张证书，`ClipMan-signing/` 是此前的旧证书，仅作存档。
   - **未做公证（notarization）**：用户首次打开仍会遇到 Gatekeeper“无法验证开发者”提示（右键打开 / “仍要打开”一次即可）。要彻底消除该提示，需付费的 Apple Developer ID + 公证。
 - **Windows**: 需要 Code Signing 证书（未配置）。
 - **Linux**: 通常不需要。

@@ -50,7 +50,7 @@ python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
 
 - `bun run test:ui` runs Chromium + WebKit against compiled Svelte with a synthetic IPC mock (`e2e/`). First-time browser setup: `bunx playwright install chromium webkit`.
 - `test_verify_release.py` needs `minisign` (pass `MINISIGN=/path/to/minisign` if not in `PATH`; verification artifacts live in ignored `src-tauri/target/release-verification/`).
-- Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipLeaf QA","identifier":"com.clipman.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipLeaf QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipLeaf QA.app"` (`--storage-only` skips auto-paste).
+- Optional native macOS QA smoke: build an isolated bundle with `bun tauri build --bundles app --config '{"productName":"ClipLeaf QA","identifier":"app.clipleaf.nativeqa","bundle":{"createUpdaterArtifacts":false}}'`, grant Accessibility to terminal + `ClipLeaf QA.app`, then run `python3 scripts/native-qa/run.py "$PWD/src-tauri/target/release/bundle/macos/ClipLeaf QA.app"` (`--storage-only` skips auto-paste).
 - Optional search benchmark: `cd src-tauri && cargo test --release search_latency_baseline -- --ignored --nocapture`.
 - Release steps and signing rules: [`.github/RELEASE_GUIDE.md`](.github/RELEASE_GUIDE.md).
 

@@ -42,8 +42,8 @@ function clip(overrides: Partial<ClipItem>): ClipItem {
 
 describe('clip item helpers', () => {
   test('decodes base64 text content', () => {
-    expect(decodeClipText(clip({ content: encodeText('ClipMan 文本') }), '[empty]')).toBe(
-      'ClipMan 文本'
+    expect(decodeClipText(clip({ content: encodeText('ClipLeaf 文本') }), '[empty]')).toBe(
+      'ClipLeaf 文本'
     );
   });
 
@@ -220,9 +220,9 @@ describe('row display helpers', () => {
   });
 
   test('highlights matching search terms case-insensitively and filters by type', () => {
-    expect(highlightSegments('ClipMan QuickBar', 'clip')).toEqual([
+    expect(highlightSegments('ClipLeaf QuickBar', 'clip')).toEqual([
       { text: 'Clip', match: true },
-      { text: 'Man QuickBar', match: false },
+      { text: 'Leaf QuickBar', match: false },
     ]);
     expect(highlightSegments('İfoo bar', 'foo')).toEqual([
       { text: 'İ', match: false },
@@ -237,7 +237,7 @@ describe('row display helpers', () => {
       { text: '并返回', match: false },
     ]);
     expect(highlightSegments('short 本地', '本地', 6)[0]).toEqual({ text: 'short ', match: false });
-    const urlItem = clip({ content: encodeText('https://clipman.top') });
+    const urlItem = clip({ content: encodeText('https://clipleaf.app') });
     const textItem = clip({ content: encodeText('plain note') });
     const imgItem = clip({ contentType: 'image', content: 'data:image/png;base64,AA==' });
     expect(matchesClipFilter(urlItem, 'link')).toBe(true);

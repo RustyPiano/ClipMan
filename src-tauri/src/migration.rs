@@ -3,10 +3,10 @@ use std::io::{Cursor, ErrorKind};
 use std::path::Path;
 
 const DATA_FILES: [&str; 4] = [
-    "clipman.db",
-    "clipman.db-shm",
-    "clipman.db-wal",
-    "clipman.db-journal",
+    "clipleaf.db",
+    "clipleaf.db-shm",
+    "clipleaf.db-wal",
+    "clipleaf.db-journal",
 ];
 pub const CURRENT_DB_USER_VERSION: i64 = 3;
 const THUMBNAIL_SIZE: u32 = 256;
@@ -232,6 +232,7 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
 
     if let Some(filename) = DATA_FILES
         .iter()
+        .chain(["clipman.db"].iter())
         .find(|filename| to.join(filename).exists())
     {
         return Err(format!(
@@ -239,7 +240,7 @@ pub fn prepare_destination_directory(from: &Path, to: &Path) -> Result<(), Strin
         ));
     }
 
-    let test_file = to.join(format!(".clipman_test_{}", uuid::Uuid::new_v4()));
+    let test_file = to.join(format!(".clipleaf_test_{}", uuid::Uuid::new_v4()));
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -290,7 +291,7 @@ mod tests {
     #[test]
     fn prepare_destination_rejects_same_path() {
         let test_dir =
-            std::env::temp_dir().join(format!("clipman_prepare_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("clipleaf_prepare_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&test_dir).unwrap();
 
         let result = prepare_destination_directory(&test_dir, &test_dir);
@@ -303,7 +304,7 @@ mod tests {
     #[test]
     fn prepare_destination_rejects_symlink_to_source() {
         let test_root =
-            std::env::temp_dir().join(format!("clipman_prepare_symlink_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("clipleaf_prepare_symlink_{}", uuid::Uuid::new_v4()));
         let source = test_root.join("source");
         let link = test_root.join("link");
         std::fs::create_dir_all(&source).unwrap();
@@ -317,8 +318,10 @@ mod tests {
 
     #[test]
     fn prepare_destination_rejects_existing_database_files() {
-        let test_root =
-            std::env::temp_dir().join(format!("clipman_prepare_existing_{}", uuid::Uuid::new_v4()));
+        let test_root = std::env::temp_dir().join(format!(
+            "clipleaf_prepare_existing_{}",
+            uuid::Uuid::new_v4()
+        ));
         let source = test_root.join("source");
         std::fs::create_dir_all(&source).unwrap();
 
@@ -337,22 +340,22 @@ mod tests {
     #[test]
     fn remove_data_files_reports_failed_deletions() {
         let test_dir =
-            std::env::temp_dir().join(format!("clipman_remove_failure_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(test_dir.join("clipman.db")).unwrap();
+            std::env::temp_dir().join(format!("clipleaf_remove_failure_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(test_dir.join("clipleaf.db")).unwrap();
 
         let error = remove_data_files(&test_dir).unwrap_err();
 
-        assert!(error.contains("clipman.db"));
-        assert!(test_dir.join("clipman.db").is_dir());
+        assert!(error.contains("clipleaf.db"));
+        assert!(test_dir.join("clipleaf.db").is_dir());
         let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[test]
     fn upgrade_database_to_current_removes_legacy_key_and_resets_encrypted_rows() {
         let test_dir =
-            std::env::temp_dir().join(format!("clipman_migration_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("clipleaf_migration_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&test_dir).unwrap();
-        let db_path = test_dir.join("clipman.db");
+        let db_path = test_dir.join("clipleaf.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "CREATE TABLE clips (
@@ -397,9 +400,9 @@ mod tests {
     #[test]
     fn upgrade_database_to_current_backfills_v2_search_columns() {
         let test_dir =
-            std::env::temp_dir().join(format!("clipman_migration_v2_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("clipleaf_migration_v2_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&test_dir).unwrap();
-        let db_path = test_dir.join("clipman.db");
+        let db_path = test_dir.join("clipleaf.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "CREATE TABLE clips (

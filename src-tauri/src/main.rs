@@ -3,6 +3,7 @@
 mod accessibility;
 mod clipboard;
 mod commands;
+mod identity;
 mod migration;
 mod paste;
 mod secrets;
@@ -55,7 +56,8 @@ fn initialize_storage_core(
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create data directory {}: {}", dir.display(), e))?;
 
-    let db_path = dir.join("clipman.db");
+    identity::rename_legacy_database(&dir)?;
+    let db_path = dir.join(identity::DATABASE_FILE);
     log::info!("Database path: {:?}", db_path);
     let open_error =
         |e: rusqlite::Error| format!("Failed to open database at {}: {}", db_path.display(), e);
@@ -159,6 +161,16 @@ fn main() {
     .init();
     log::info!("ClipLeaf starting...");
 
+    #[cfg(target_os = "macos")]
+    match identity::relaunch_from_renamed_bundle() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => log::error!("Failed to rename the app bundle to ClipLeaf.app: {e}"),
+    }
+
+    let context = tauri::generate_context!();
+    let identity_migration = identity::migrate_legacy_identity(&context.config().identifier);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             log::info!("Second app instance launch detected; showing QuickBar");
@@ -187,9 +199,31 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            let identity_migrated = match identity_migration {
+                Ok(migrated) => migrated,
+                Err(fatal_error) => {
+                    log::error!("ClipLeaf cannot migrate ClipMan data: {fatal_error}");
+                    for (label, window) in app.webview_windows() {
+                        if let Err(e) = window.destroy() {
+                            log::warn!(
+                                "Failed to destroy window '{label}' during fatal startup: {e}"
+                            );
+                        }
+                    }
+                    spawn_fatal_alert(
+                        app.handle(),
+                        format!(
+                            "ClipLeaf 无法迁移 ClipMan 的数据，应用即将退出。原数据未被删除。\n\
+                             ClipLeaf could not migrate the ClipMan data and will exit. The original data was not deleted.\n\n{fatal_error}"
+                        ),
+                    );
+                    return Ok(());
+                }
+            };
 
             let settings_manager = Arc::new(SettingsManager::default());
             if let Err(e) = settings_manager.load(app.handle()) {
@@ -241,7 +275,7 @@ fn main() {
             }
 
             if settings.enable_autostart {
-                if let Err(e) = commands::migrate_legacy_autostart(app.handle()) {
+                if let Err(e) = commands::migrate_legacy_autostart(app.handle(), identity_migrated) {
                     log::error!("Failed to migrate the legacy autostart entry: {e}");
                 }
             }
@@ -344,7 +378,7 @@ fn main() {
             migrate_data_location,
             get_current_data_path
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 
@@ -355,7 +389,7 @@ mod storage_init_tests {
     use uuid::Uuid;
 
     fn temp_root(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("clipman_main_init_{}_{}", name, Uuid::new_v4()))
+        std::env::temp_dir().join(format!("clipleaf_main_init_{}_{}", name, Uuid::new_v4()))
     }
 
     #[test]
@@ -375,7 +409,7 @@ mod storage_init_tests {
         );
 
         assert!(result.is_err());
-        assert!(!default_dir.join("clipman.db").exists());
+        assert!(!default_dir.join("clipleaf.db").exists());
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -383,7 +417,7 @@ mod storage_init_tests {
     fn corrupt_database_is_quarantined_and_rebuilt() {
         let root = temp_root("corrupt_db");
         fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("clipman.db"), b"not a sqlite database").unwrap();
+        fs::write(root.join("clipleaf.db"), b"not a sqlite database").unwrap();
 
         let mut reset_backup_path = None;
         let result = initialize_storage_core(&root, None, |backup_path| {
@@ -409,7 +443,7 @@ mod storage_init_tests {
     #[test]
     fn non_corruption_open_failure_preserves_database_path() {
         let root = temp_root("non_corrupt_open_failure");
-        let db_path = root.join("clipman.db");
+        let db_path = root.join("clipleaf.db");
         fs::create_dir_all(&db_path).unwrap();
 
         let result = initialize_storage_core(&root, None, |_backup| {

@@ -48,10 +48,10 @@ case "state":
     "AX=\(AXIsProcessTrusted()) capture=\(CGPreflightScreenCaptureAccess()) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none")"
   )
   for a in NSWorkspace.shared.runningApplications
-  where ["com.clipman.nativeqa", "com.clipman.manager", "com.apple.TextEdit"].contains(
-    a.bundleIdentifier ?? "") || a.executableURL?.lastPathComponent == "clipman"
+  where ["app.clipleaf.nativeqa", "app.clipleaf.desktop", "com.clipman.manager", "com.apple.TextEdit"].contains(
+    a.bundleIdentifier ?? "") || a.executableURL?.lastPathComponent == "clipleaf"
   {
-    print("app \(a.bundleIdentifier ?? "unbundled-clipman") pid=\(a.processIdentifier)")
+    print("app \(a.bundleIdentifier ?? "unbundled-clipleaf") pid=\(a.processIdentifier)")
   }
 case "tree": tree(AXUIElementCreateApplication(app(args[2]).processIdentifier))
 case "focus": print(app(args[2]).activate(options: [.activateAllWindows]))
@@ -91,7 +91,7 @@ case "key":
   let actual = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
   guard actual == expected else { fatalError("Wrong foreground: \(actual), expected \(expected)") }
   if expected == "com.apple.TextEdit",
-    let name = ProcessInfo.processInfo.environment["CLIPMAN_QA_RECEIVER"]
+    let name = ProcessInfo.processInfo.environment["CLIPLEAF_QA_RECEIVER"]
   {
     let target = AXUIElementCreateApplication(app(expected).processIdentifier)
     let window = attr(target, "AXFocusedWindow")
@@ -143,7 +143,7 @@ case "restore":
     for (type, data) in values {
       guard item.setData(data, forType: NSPasteboard.PasteboardType(type)) else {
         throw NSError(
-          domain: "ClipManQA", code: 1,
+          domain: "ClipLeafQA", code: 1,
           userInfo: [
             NSLocalizedDescriptionKey:
               "Clipboard representation could not be restored; backup retained"
@@ -155,7 +155,7 @@ case "restore":
   NSPasteboard.general.clearContents()
   if !items.isEmpty && !NSPasteboard.general.writeObjects(items) {
     throw NSError(
-      domain: "ClipManQA", code: 2,
+      domain: "ClipLeafQA", code: 2,
       userInfo: [NSLocalizedDescriptionKey: "Clipboard restore failed; backup retained"])
   }
   let restored = NSPasteboard.general.pasteboardItems ?? []
@@ -168,7 +168,7 @@ case "restore":
       })
   else {
     throw NSError(
-      domain: "ClipManQA", code: 3,
+      domain: "ClipLeafQA", code: 3,
       userInfo: [NSLocalizedDescriptionKey: "Clipboard restore was incomplete; backup retained"])
   }
   print("Clipboard restored")

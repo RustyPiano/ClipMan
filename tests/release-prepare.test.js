@@ -49,16 +49,16 @@ function fixture(version = '1.2.3') {
   for (const file of ['package.json', 'src-tauri/tauri.conf.json']) {
     writeFileSync(
       join(repository, file),
-      JSON.stringify({ name: 'clipman', version }, null, 2) + '\n'
+      JSON.stringify({ name: 'clipleaf', version }, null, 2) + '\n'
     );
   }
   writeFileSync(
     join(repository, 'src-tauri/Cargo.toml'),
-    `[package]\nname = "clipman"\nversion = "${version}"\n`
+    `[package]\nname = "clipleaf"\nversion = "${version}"\n`
   );
   writeFileSync(
     join(repository, 'src-tauri/Cargo.lock'),
-    `[[package]]\nname = "clipman"\nversion = "${version}"\n`
+    `[[package]]\nname = "clipleaf"\nversion = "${version}"\n`
   );
   for (const file of ['README.md', 'README_EN.md']) {
     writeFileSync(join(repository, file), `ClipLeaf_${version}_aarch64.dmg\n`);

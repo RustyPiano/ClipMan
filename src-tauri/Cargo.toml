@@ -1,6 +1,6 @@
 [package]
-name = "clipman"
-version = "2.5.1"
+name = "clipleaf"
+version = "2.5.2"
 description = "Modern clipboard manager for Windows, macOS, and Linux"
 authors = ["ClipLeaf Team"]
 license = "MIT"
@@ -21,6 +21,7 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2.5.1"
 auto-launch = "0.5"
+dirs = "6"
 tauri-plugin-single-instance = "2"
 
 arboard = "3.4"

@@ -212,7 +212,7 @@ impl ClipStorage {
             |row| row.get(0),
         )?;
         if existing && version < crate::migration::CURRENT_DB_USER_VERSION {
-            let backup_path = data_dir.join(format!("clipman.pre-v3-{}.db", uuid::Uuid::new_v4()));
+            let backup_path = data_dir.join(format!("clipleaf.pre-v3-{}.db", uuid::Uuid::new_v4()));
             backup_connection(&conn, &backup_path)?;
             let legacy_key = data_dir.join(".clipman.key");
             if legacy_key.exists() {
@@ -1178,7 +1178,7 @@ mod tests {
     use uuid::Uuid;
 
     fn temp_db_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("clipman_{}_{}.db", name, Uuid::new_v4()))
+        std::env::temp_dir().join(format!("clipleaf_{}_{}.db", name, Uuid::new_v4()))
     }
 
     fn cleanup_db(path: &Path) {
@@ -1208,9 +1208,9 @@ mod tests {
 
     #[test]
     fn history_limit_applies_to_recopies_unpins_and_delayed_images() {
-        let root = std::env::temp_dir().join(format!("clipman-limit-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("clipleaf-limit-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
+        let storage = ClipStorage::new(&root.join("clipleaf.db")).unwrap();
         for i in 0..3 {
             storage
                 .insert(&test_item(&i.to_string(), &[i as u8], i, false, None), 3)
@@ -1239,9 +1239,9 @@ mod tests {
 
     #[test]
     fn v3_upgrade_backs_up_then_converts_files_once_and_rejects_newer_formats() {
-        let root = std::env::temp_dir().join(format!("clipman-upgrade-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("clipleaf-upgrade-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        let path = root.join("clipman.db");
+        let path = root.join("clipleaf.db");
         {
             let conn = Connection::open(&path).unwrap();
             ClipStorage::initialize_schema(&conn).unwrap();
@@ -1257,7 +1257,7 @@ mod tests {
                     .unwrap()
                     .to_str()
                     .unwrap()
-                    .starts_with("clipman.pre-v3-")
+                    .starts_with("clipleaf.pre-v3-")
                     .then_some(p)
             })
             .collect::<Vec<_>>();
@@ -1304,7 +1304,7 @@ mod tests {
                     .unwrap()
                     .file_name()
                     .to_string_lossy()
-                    .starts_with("clipman.pre-v3-"))
+                    .starts_with("clipleaf.pre-v3-"))
                 .count(),
             1
         );
@@ -1326,9 +1326,9 @@ mod tests {
 
     #[test]
     fn json_file_paths_and_bounded_merge_reads_preserve_content() {
-        let root = std::env::temp_dir().join(format!("clipman-paths-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("clipleaf-paths-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        let storage = ClipStorage::new(&root.join("clipman.db")).unwrap();
+        let storage = ClipStorage::new(&root.join("clipleaf.db")).unwrap();
         let paths = vec![
             "中".repeat(4097),
             "/tmp/one\ntwo.txt".to_string(),
@@ -1372,13 +1372,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn active_data_directory_follows_the_opened_database_symlink() {
-        let root = std::env::temp_dir().join(format!("clipman-active-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("clipleaf-active-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let actual = root.join("actual");
         fs::create_dir(&actual).unwrap();
-        drop(ClipStorage::new(&actual.join("clipman.db")).unwrap());
+        drop(ClipStorage::new(&actual.join("clipleaf.db")).unwrap());
         let alias = root.join("alias.db");
-        std::os::unix::fs::symlink(actual.join("clipman.db"), &alias).unwrap();
+        std::os::unix::fs::symlink(actual.join("clipleaf.db"), &alias).unwrap();
         let storage = ClipStorage::new(&alias).unwrap();
         assert_eq!(storage.data_directory(), fs::canonicalize(&actual).unwrap());
         drop(storage);
@@ -2399,7 +2399,7 @@ mod tests {
             .unwrap();
         storage
             .insert(
-                &test_item("url2", b"HTTPS://CLIPMAN.TOP/alpha", 5, false, None),
+                &test_item("url2", b"HTTPS://CLIPLEAF.APP/alpha", 5, false, None),
                 100,
             )
             .unwrap();

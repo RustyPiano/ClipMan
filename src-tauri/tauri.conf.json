@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClipLeaf",
-  "version": "2.5.1",
-  "identifier": "com.clipman.manager",
+  "version": "2.5.2",
+  "identifier": "app.clipleaf.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -76,10 +76,16 @@
     "linux": {
       "deb": {
         "conflicts": ["clip-man"],
-        "replaces": ["clip-man"]
+        "replaces": ["clip-man"],
+        "files": {
+          "/usr/bin/clipman": "linux/clipman"
+        }
       },
       "rpm": {
-        "obsoletes": ["clip-man"]
+        "obsoletes": ["clip-man"],
+        "files": {
+          "/usr/bin/clipman": "linux/clipman"
+        }
       }
     },
     "macOS": {

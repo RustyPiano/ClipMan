@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native smoke test of an already-built com.clipman.nativeqa app (macOS only).
+"""Native smoke test of an already-built app.clipleaf.nativeqa app (macOS only).
 Usage: python3 scripts/native-qa/run.py '/absolute/path/ClipLeaf QA.app'
 Requires Accessibility permission for the terminal/agent and QA app. See AGENTS.md.
 """
@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-QA = 'com.clipman.nativeqa'
+QA = 'app.clipleaf.nativeqa'
 TARGET = 'com.apple.TextEdit'
 
 def main():
@@ -23,7 +23,7 @@ def main():
     bundle = Path(sys.argv[1]).resolve()
     info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())
     if info.get('CFBundleIdentifier') != QA: raise RuntimeError('Refusing to use the daily ClipLeaf database')
-    work = Path(tempfile.mkdtemp(prefix='clipman-native-qa-'))
+    work = Path(tempfile.mkdtemp(prefix='clipleaf-native-qa-'))
     control = work / 'control'
     subprocess.run(['swiftc', str(Path(__file__).with_name('control.swift')), '-o', str(control)], check=True)
 
@@ -51,7 +51,7 @@ def main():
         raise RuntimeError('Quit every ClipLeaf instance before running native QA')
     app_data = Path.home() / 'Library/Application Support' / QA
     settings_file = app_data / 'settings.json'
-    database = app_data / 'clipman.db'
+    database = app_data / 'clipleaf.db'
     if app_data.is_symlink(): raise RuntimeError('QA data directory must not be a symlink')
     if settings_file.exists():
         saved = json.loads(settings_file.read_text())
@@ -59,7 +59,7 @@ def main():
         if configured.get('customDataPath') or configured.get('custom_data_path'):
             raise RuntimeError('QA must use its default data directory; customDataPath is not allowed')
     receiver = work / f'receiver-{work.name}.txt'
-    os.environ['CLIPMAN_QA_RECEIVER'] = receiver.name
+    os.environ['CLIPLEAF_QA_RECEIVER'] = receiver.name
     receiver.write_text('ClipLeaf native QA target\n')
     backup = work / 'clipboard.plist'
     ctl('backup', backup)
@@ -67,7 +67,7 @@ def main():
     results = []
     started = False
     try:
-        ctl('copy', 'CLIPMAN_QA_START_' + work.name)
+        ctl('copy', 'CLIPLEAF_QA_START_' + work.name)
         if not storage_only:
             subprocess.run(['open', '-a', 'TextEdit', str(receiver)], check=True)
         subprocess.run(['open', str(bundle)], check=True)
@@ -92,11 +92,11 @@ def main():
                 return conn.execute('SELECT count(*) FROM clips WHERE content=?', (value.encode(),)).fetchone()[0] > 0
 
         for index in range(0 if storage_only else 8):
-            value = f'CLIPMAN_QA_{work.name}_MATCH_{index}_中文'
+            value = f'CLIPLEAF_QA_{work.name}_MATCH_{index}_中文'
             ctl('copy', value)
             wait(lambda: captured(value), 'Synthetic clipboard text was not captured')
             if index % 2:
-                distractor = f'CLIPMAN_QA_{work.name}_DISTRACTOR_{index}'
+                distractor = f'CLIPLEAF_QA_{work.name}_DISTRACTOR_{index}'
                 ctl('copy', distractor)
                 wait(lambda: captured(distractor), 'Distractor was not captured')
             ctl('focus', TARGET)
@@ -119,7 +119,7 @@ def main():
                 return conn.execute("SELECT content = thumbnail FROM clips WHERE content_type='image' ORDER BY timestamp DESC LIMIT 1").fetchone() == (1,)
         wait(small_image, 'Small image thumbnail differs from original PNG')
         results.append({'smallImageReusesOriginal': True})
-        before = {line for line in ctl('tree', QA).splitlines() if 'CLIPMAN_QA_' in line}
+        before = {line for line in ctl('tree', QA).splitlines() if 'CLIPLEAF_QA_' in line}
         if not before:
             raise RuntimeError('QA entries were not visible in the native menu tree')
         with sqlite3.connect(database) as conn:

@@ -8,7 +8,7 @@ source "$ROOT/scripts/version-utils.sh"
 pkg=$(grep -m1 '"version"' package.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
 conf=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": *"([^"]+)".*/\1/')
 cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-lock=$(grep -A1 -m1 '^name = "clipman"$' src-tauri/Cargo.lock | grep '^version' | sed -E 's/.*"([^"]+)".*/\1/')
+lock=$(grep -A1 -m1 '^name = "clipleaf"$' src-tauri/Cargo.lock | grep '^version' | sed -E 's/.*"([^"]+)".*/\1/')
 
 printf '  package.json    : %s\n' "$pkg"
 printf '  tauri.conf.json : %s\n' "$conf"

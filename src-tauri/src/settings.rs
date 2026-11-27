@@ -534,7 +534,7 @@ mod tests {
             "trayTextLength": 80,
             "maxPinnedInTray": 7,
             "maxRecentInTray": 30,
-            "customDataPath": "/tmp/clipman-data",
+            "customDataPath": "/tmp/clipleaf-data",
             "enableAutostart": true,
             "locale": " en ",
             "maxTextBytes": 123456,
@@ -552,7 +552,7 @@ mod tests {
             "tray_text_length": 80,
             "max_pinned_in_tray": 7,
             "max_recent_in_tray": 30,
-            "custom_data_path": "/tmp/clipman-data",
+            "custom_data_path": "/tmp/clipleaf-data",
             "enable_autostart": true,
             "locale": " en "
         });
@@ -576,7 +576,7 @@ mod tests {
             assert_eq!(7, loaded.max_pinned_in_tray);
             assert_eq!(30, loaded.max_recent_in_tray);
             assert_eq!(
-                Some("/tmp/clipman-data".to_string()),
+                Some("/tmp/clipleaf-data".to_string()),
                 loaded.custom_data_path
             );
             assert!(loaded.enable_autostart);

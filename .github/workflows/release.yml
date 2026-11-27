@@ -126,10 +126,10 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
-          KEYCHAIN="$RUNNER_TEMP/clipman-signing.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/clipleaf-signing.keychain-db"
           KEYCHAIN_PWD="$(openssl rand -base64 24)"
-          CERT_P12="$RUNNER_TEMP/clipman-cert.p12"
-          CERT_PEM="$RUNNER_TEMP/clipman-cert.pem"
+          CERT_P12="$RUNNER_TEMP/clipleaf-cert.p12"
+          CERT_PEM="$RUNNER_TEMP/clipleaf-cert.pem"
 
           echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_P12"
 
@@ -143,14 +143,14 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN"
           security default-keychain -d user -s "$KEYCHAIN"
 
-          security find-certificate -c "ClipMan Code Signing" -p "$KEYCHAIN" > "$CERT_PEM"
+          security find-certificate -c "ClipLeaf Code Signing" -p "$KEYCHAIN" > "$CERT_PEM"
           sudo security add-trusted-cert -d -r trustRoot -p codeSign \
             -k /Library/Keychains/System.keychain "$CERT_PEM"
 
           echo "Valid code-signing identities:"
           security find-identity -v -p codesigning "$KEYCHAIN"
-          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q '"ClipMan Code Signing"'; then
-            echo "ERROR: 'ClipMan Code Signing' is not a valid codesigning identity after trust setup" >&2
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q '"ClipLeaf Code Signing"'; then
+            echo "ERROR: 'ClipLeaf Code Signing' is not a valid codesigning identity after trust setup" >&2
             exit 1
           fi
 
@@ -159,7 +159,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: 'ClipMan Code Signing'
+          APPLE_SIGNING_IDENTITY: 'ClipLeaf Code Signing'
         with:
           releaseId: ${{ needs.draft-release.outputs.release-id }}
           tagName: ${{ github.ref_name }}

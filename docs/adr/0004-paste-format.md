@@ -8,7 +8,7 @@
 
 ## 决定
 
-- `paste_format` 有三个取值：original 保留格式；takePlain 在从 ClipMan 取用时只写入纯文本；globalPlain 在采集后把系统剪贴板换成纯文本。
+- `paste_format` 有三个取值：original 保留格式；takePlain 在从 ClipLeaf 取用时只写入纯文本；globalPlain 在采集后把系统剪贴板换成纯文本。
 - 回车按粘贴格式执行，⌥回车对这一次取反，由前端决定 `plain` 后传给后端。只复制不粘贴（托盘、复制按钮）也遵循粘贴格式，用户随后手动粘贴时同样没有格式。
 - globalPlain 下，内容相同的富文本也要重新经过应用排除、密钥和大小检查，保存成功后才剥离格式。存储时的大小限制不改变系统剪贴板，剥离时仍核对完整的 HTML。
 - 在 `clipboard_use_lock` 内剥离格式。剥离前先确认采集之后剪贴板没有再次写入，以免覆盖保存期间发生的另一次复制或粘贴。macOS 和 Windows 核对系统剪贴板序号；Linux 的 arboard 不提供序号，只能核对完整文本和 HTML 一致且没有文件列表，因此分辨不出外部应用再次复制了完全相同的内容。

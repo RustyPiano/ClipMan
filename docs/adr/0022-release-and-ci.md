@@ -14,7 +14,7 @@
 - `cargo test` 和 `cargo clippy` 会构建 Tauri 应用，需要 `dist/` 存在，CI 的 Rust 作业先构建前端。
 - macOS 的 Rust 作业不编译 `#[cfg(windows)]` 的剪贴板和窗口 FFI，所以单独在 Windows runner 上运行 clippy 和测试。MSVC 目标无法从 macOS 交叉编译，因为 rusqlite 内置的 SQLite（C 代码）需要 MSVC 工具链。
 - 依赖不生成调试信息（`[profile.dev.package."*"] debug = false`），`target/debug` 约减小一半；本 crate 保留完整调试信息，便于断点调试。
-- `scripts/release.sh` 用锚定的正则改版本号：package.json 和 tauri.conf.json 只改两格缩进的顶层 `"version"`，Cargo.toml 只改从第 0 列开始的 `version =`，Cargo.lock 只改 clipman 包名的下一行，不碰依赖的版本。README 下载文件名里的版本整体重写，README 和清单已经不一致时也能修正；版本徽章是动态的，不需要修改。原地修改文件的 sed 写法同时兼容 GNU 和 BSD。
+- `scripts/release.sh` 用锚定的正则改版本号：package.json 和 tauri.conf.json 只改两格缩进的顶层 `"version"`，Cargo.toml 只改从第 0 列开始的 `version =`，Cargo.lock 只改 clipleaf 包名的下一行，不碰依赖的版本。README 下载文件名里的版本整体重写，README 和清单已经不一致时也能修正；版本徽章是动态的，不需要修改。原地修改文件的 sed 写法同时兼容 GNU 和 BSD。
 - `scripts/check-versions.sh` 只用 grep 和 sed，在 macOS 和 Ubuntu runner 上行为一致。
 - `scripts/verify-release.py` 对每个附件只验签一次，默认平台条目和安装格式条目可能指向同一个附件。附件被替换后 ID 会改变，已下载的内容仍要经过验签。
 - `tauri-action` 在 `releaseDraft: true` 阶段生成的 `latest.json` 会把平台下载地址写成 GitHub REST API 路径（`https://api.github.com/repos/.../releases/assets/<id>`）。草稿公开后，客户端无 token 请求该地址容易触发 60 次/小时的匿名 API 限流（403）；公开正式版后须将 `latest.json` 中的各平台 `url` 重写为公开直链（`https://github.com/<repo>/releases/download/<tag>/<asset>`）并重新执行 `verify-release.py`。

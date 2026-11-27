@@ -44,6 +44,7 @@ Thumbs.db
 *.local
 
 ClipMan-signing/
+ClipLeaf-signing/
 *.p12
 *.pem
 *_CERTIFICATE.base64.txt
