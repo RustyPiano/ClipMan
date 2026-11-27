@@ -16,7 +16,7 @@ ClipLeaf is a local-first desktop clipboard manager (macOS / Windows / Linux) in
 | --- | --- | --- |
 | [`docs/dev/STATUS.md`](docs/dev/STATUS.md) | Current state, TODOs, known issues | **Read first every session.** Update whenever code or release/CI state changes; keep ≤ 100 lines and delete stale items. |
 | `AGENTS.md` | Commands, enforced conventions, non-inferable gotchas | Update when tooling or core conventions change. Do not duplicate ADR rationales here. |
-| `docs/adr/` | Architectural & platform design decisions (0001–0023) | Read the relevant ADR before modifying capture, paste/focus, SQLite schema, macOS windowing, settings, release flows, or app identity/naming; update or replace ADRs when decisions change. |
+| `docs/adr/` | Architectural & platform design decisions (0001–0024) | Read the relevant ADR before modifying capture, paste/focus, SQLite schema, macOS windowing, settings, release flows, or app identity/naming; update or replace ADRs when decisions change. |
 | `README.md` / `README_EN.md` | User-facing feature & install docs | Update at release time when user-visible features change. |
 
 If a doc contradicts the code, the code is truth — fix or delete the stale doc in the same session.
@@ -58,7 +58,7 @@ python3 -B -m unittest discover -s scripts -p 'test_verify_release.py' -v
 ## Enforced Conventions & Gotchas
 
 - **No code comments** (`docs/adr/0001-no-code-comments.md`): ESLint (`bun run lint`) and `src-tauri/tests/no_comments.rs` (`cargo test`) enforce zero new comments in code, tests, scripts, and configs; legacy suppression counts can only decrease. Put non-obvious rationale in `docs/adr/`.
-- **IPC contract:** Tauri command names are `snake_case` and must be registered in `invoke_handler![]` in `src-tauri/src/main.rs`. Payloads serialize as `camelCase` (`#[serde(rename_all = "camelCase")]`) and must stay in sync with `src/lib/types.ts`. Commands return `Result<T, String>`.
+- **IPC contract:** Tauri command names are `snake_case` and must be registered in `invoke_handler![]` in `src-tauri/src/main.rs`. Payloads serialize as `camelCase` (`#[serde(rename_all = "camelCase")]`). Structs and enums crossing IPC derive `ts_rs::TS` with `#[ts(export)]`; `cargo test` regenerates `src/lib/bindings/` (re-exported from `src/lib/types.ts`), and CI fails if the committed bindings differ. Commands return `Result<T, String>`.
 - **Fail fast:** Return errors or panic at the fault site instead of silently falling back to alternate paths, formats, or modes, and never treat failed commands as success in UI. `std::sync::Mutex::lock().unwrap()` is intentional because release builds use `panic = "abort"`.
 - **TypeScript & Prettier:** Strict TS (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`; prefix unused params with `_`). Prettier: 2 spaces, single quotes, semicolons, `es5` trailing commas, width 100.
 - **Settings & threading:** Settings persistence and data migration run via `spawn_blocking`; never wait on `settings_write_lock` from a Tauri main-thread callback. Backend owns defaults (`update_settings(null)` resets) and input validation; frontend never duplicates defaults. Locale lives in backend `settings.locale`; theme lives in frontend `localStorage`.

@@ -10,41 +10,48 @@
   import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
   import { isMac } from '$lib/utils/platform';
+  import { formatShortcut, formatShortcutKey } from '$lib/utils/shortcut';
   import type { Settings } from '$lib/types';
 
-  let { settings = $bindable() } = $props<{
+  let { settings = $bindable(), resetSettings } = $props<{
     settings: Settings;
+    resetSettings: () => void;
   }>();
+
+  const traySliders = [
+    {
+      id: 'tray-text-length',
+      field: 'trayTextLength',
+      labelKey: 'trayTextLength',
+      descKey: 'trayTextLengthDesc',
+      min: 10,
+      max: 200,
+      step: 5,
+    },
+    {
+      id: 'max-pinned',
+      field: 'maxPinnedInTray',
+      labelKey: 'maxPinnedInTray',
+      descKey: 'maxPinnedInTrayDesc',
+      min: 0,
+      max: 50,
+      step: 1,
+    },
+    {
+      id: 'max-recent',
+      field: 'maxRecentInTray',
+      labelKey: 'maxRecentInTray',
+      descKey: 'maxRecentInTrayDesc',
+      min: 0,
+      max: 100,
+      step: 1,
+    },
+  ] as const;
 
   const t = $derived(i18n.t);
 
   const shortcutPresets = ['CommandOrControl+Shift+V', 'CommandOrControl+Shift+C', 'Alt+V'];
   const pinnedShortcutPresets = ['CommandOrControl+Shift+P', 'CommandOrControl+Alt+V'];
-
-  function formatShortcut(shortcut: string): string[] {
-    if (!shortcut) return [];
-
-    return shortcut.split('+').map(formatShortcutKey);
-  }
-
-  function formatShortcutKey(key: string): string {
-    switch (key) {
-      case 'CommandOrControl':
-        return isMac ? '⌘' : 'Ctrl';
-      case 'Command':
-        return '⌘';
-      case 'Control':
-        return isMac ? '⌃' : 'Ctrl';
-      case 'Alt':
-        return isMac ? '⌥' : 'Alt';
-      case 'Option':
-        return '⌥';
-      case 'Shift':
-        return isMac ? '⇧' : 'Shift';
-      default:
-        return key;
-    }
-  }
 
   let isRecording = $state(false);
   let recordedKeys = $state<string[]>([]);
@@ -147,7 +154,7 @@
     }
   }
 
-  function handlePinnedShortcutInput(event: Event) {
+  function handlePinnedShortcutChange(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value.trim();
     settings.pinnedShortcut = value.length > 0 ? value : null;
   }
@@ -164,11 +171,8 @@
   }}
 />
 
-<div class="space-y-6 duration-300">
-  <div>
-    <h2 class="text-lg font-semibold mb-1">{t.settingsGeneral}</h2>
-    <p class="text-sm text-muted-foreground">{t.globalHotkeyDesc}</p>
-  </div>
+<div class="space-y-6">
+  <h2 class="text-lg font-semibold">{t.settingsGeneral}</h2>
 
   <Card class="p-6 space-y-6">
     <div class="flex items-center justify-between">
@@ -282,7 +286,8 @@
         <div class="mt-2">
           <Input
             id="shortcut-input"
-            bind:value={settings.globalShortcut}
+            value={settings.globalShortcut}
+            onchange={(event) => (settings.globalShortcut = event.currentTarget.value.trim())}
             placeholder="CommandOrControl+Shift+V"
             class="text-sm font-mono"
           />
@@ -302,7 +307,7 @@
         <Input
           id="pinned-shortcut-input"
           value={settings.pinnedShortcut ?? ''}
-          oninput={handlePinnedShortcutInput}
+          onchange={handlePinnedShortcutChange}
           placeholder="CommandOrControl+Shift+P"
           class="text-sm font-mono"
         />
@@ -328,5 +333,39 @@
         {/each}
       </div>
     </div>
+  </Card>
+
+  <section class="space-y-3">
+    <h3 class="text-sm font-semibold">{t.settingsTray}</h3>
+    <Card class="space-y-6 p-6">
+      {#each traySliders as slider (slider.id)}
+        <div class="space-y-3">
+          <div class="flex justify-between">
+            <div class="space-y-0.5">
+              <label for={slider.id} class="text-sm font-medium">{t[slider.labelKey]}</label>
+              <p class="text-xs text-muted-foreground">{t[slider.descKey]}</p>
+            </div>
+            <span class="text-sm font-semibold tabular-nums">{settings[slider.field]}</span>
+          </div>
+          <input
+            id={slider.id}
+            type="range"
+            min={slider.min}
+            max={slider.max}
+            step={slider.step}
+            bind:value={settings[slider.field]}
+            class="h-2 w-full cursor-pointer appearance-none rounded-lg bg-muted accent-primary"
+          />
+        </div>
+      {/each}
+    </Card>
+  </section>
+
+  <Card class="flex items-center justify-between gap-4 p-6">
+    <div class="space-y-0.5">
+      <span class="text-sm font-medium">{t.resetSettings}</span>
+      <p class="text-xs text-muted-foreground">{t.resetSettingsDesc}</p>
+    </div>
+    <Button variant="outline" onclick={resetSettings}>{t.reset}</Button>
   </Card>
 </div>

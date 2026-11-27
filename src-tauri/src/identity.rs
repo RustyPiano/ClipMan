@@ -134,6 +134,12 @@ fn rewrite_custom_data_path(
     Ok(())
 }
 
+pub fn has_history_database(data_dir: &Path) -> bool {
+    [DATABASE_FILE, LEGACY_DATABASE_FILE]
+        .into_iter()
+        .any(|name| data_dir.join(name).exists())
+}
+
 pub fn rename_legacy_database(data_dir: &Path) -> Result<(), String> {
     let pending: Vec<(PathBuf, PathBuf)> = DATABASE_SUFFIXES
         .iter()

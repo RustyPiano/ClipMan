@@ -24,11 +24,8 @@
   ];
 </script>
 
-<div class="space-y-6 duration-300">
-  <div>
-    <h2 class="text-lg font-semibold mb-1">{t.settingsAppearance}</h2>
-    <p class="text-sm text-muted-foreground">{t.themeMode}</p>
-  </div>
+<div class="space-y-6">
+  <h2 class="text-lg font-semibold">{t.settingsAppearance}</h2>
 
   <Card class="p-6 space-y-6">
     <div class="space-y-3">

@@ -13,7 +13,7 @@ use enigo::{
 };
 use image::GenericImageView;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     storage::{
@@ -63,8 +63,9 @@ impl TryFrom<&str> for PasteMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum UseOutcome {
     Copied,
     PasteRequested,
@@ -153,17 +154,15 @@ pub async fn use_clips(
         if hide && !simulate {
             let app_for_hide = app.clone();
             let store_for_hide = foreground_store.clone();
-            crate::commands::run_action_on_main_thread(
-                app,
-                "hide_quickbar_and_restore",
-                move || crate::window::hide_quickbar_and_restore(&app_for_hide, &store_for_hide),
-            )
+            crate::window::run_action_on_main_thread(app, "hide_quickbar_and_restore", move || {
+                crate::window::hide_quickbar_and_restore(&app_for_hide, &store_for_hide)
+            })
             .map_err(|e| format!("Failed to hide QuickBar after copy: {e}"))?;
             return Ok(());
         }
         if hide {
             let app_for_hide = app.clone();
-            crate::commands::run_action_on_main_thread(app, "hide_quickbar", move || {
+            crate::window::run_action_on_main_thread(app, "hide_quickbar", move || {
                 crate::window::hide_quickbar(&app_for_hide)
             })
             .map_err(|e| format!("Failed to hide QuickBar before paste: {e}"))?;
@@ -173,7 +172,7 @@ pub async fn use_clips(
             if result.is_err() && hide && crate::accessibility::is_trusted() {
                 let app_for_restore = app.clone();
                 let store_for_restore = foreground_store.clone();
-                if let Err(restore_error) = crate::commands::run_action_on_main_thread(
+                if let Err(restore_error) = crate::window::run_action_on_main_thread(
                     app,
                     "restore_after_paste_failure",
                     move || {
@@ -316,7 +315,7 @@ pub(crate) fn clipboard_sequence() -> Option<u64> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn clipboard_sequence() -> Option<u64> {
-    None
+    crate::clipboard::x11_clipboard_sequence()
 }
 
 fn should_simulate_paste(mode: PasteMode, auto_paste: bool) -> bool {
@@ -559,7 +558,7 @@ fn simulate_paste_blocking(app: &AppHandle, foreground: Option<isize>) -> Result
         return Err("Accessibility permission missing; cannot auto-paste".into());
     }
 
-    crate::commands::run_action_on_main_thread(app, "foreground restore", move || {
+    crate::window::run_action_on_main_thread(app, "foreground restore", move || {
         crate::window::restore_recorded_foreground_window(foreground)
     })
     .map_err(|e| format!("Could not reactivate previous app before paste: {e}"))?;
@@ -630,6 +629,26 @@ fn paste_key() -> Key {
 #[cfg(not(target_os = "macos"))]
 fn paste_key() -> Key {
     Key::Unicode('v')
+}
+
+pub async fn copy_clip_to_clipboard_internal(
+    app: &AppHandle,
+    clip_id: &str,
+) -> Result<UseOutcome, String> {
+    let state = app.state::<AppState>();
+    let plain = state.settings.get().takes_plain_text();
+    use_clips(
+        app,
+        state.inner(),
+        UseRequest {
+            ids: vec![clip_id.to_string()],
+            mode: "copy".into(),
+            plain,
+            merge: false,
+            hide: false,
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -80,6 +80,10 @@ fn record_marker_and_decide_dispatch(
 }
 
 impl ClipboardHandler for Handler {
+    fn sleep_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(100)
+    }
+
     fn on_clipboard_change(&mut self) -> CallbackResult {
         let app_handle = &self.app_handle;
         let settings = app_handle.state::<AppState>().settings.get();
@@ -88,6 +92,12 @@ impl ClipboardHandler for Handler {
         }
         let sequence = crate::paste::clipboard_sequence();
         if settings.ignore_concealed {
+            if sequence.is_none() {
+                log::warn!(
+                    "Skipping clipboard change because clipboard changes cannot be tracked, so privacy markers cannot be tied to the content"
+                );
+                return CallbackResult::Next;
+            }
             match clipboard_has_sensitive_marker() {
                 Ok(false) => {}
                 Ok(true) => {
@@ -594,7 +604,251 @@ fn windows_clipboard_dword(format: u32) -> Option<u32> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn clipboard_has_sensitive_marker() -> Result<bool, String> {
-    Ok(false)
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
+    use x11rb::rust_connection::RustConnection;
+
+    let (connection, screen) = RustConnection::connect(None)
+        .map_err(|e| format!("Failed to connect to the X11 display: {e}"))?;
+    let screen = &connection.setup().roots[screen];
+    let window = connection
+        .generate_id()
+        .map_err(|e| format!("Failed to allocate an X11 window id: {e}"))?;
+    connection
+        .create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            window,
+            screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new(),
+        )
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| format!("Failed to create the X11 clipboard probe window: {e}"))?;
+
+    let clipboard = x11_atom(&connection, "CLIPBOARD")?;
+    let owner = connection
+        .get_selection_owner(clipboard)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("Failed to query the X11 clipboard owner: {e}"))?
+        .owner;
+    if owner == x11rb::NONE {
+        return Ok(false);
+    }
+
+    let probe = X11ClipboardProbe {
+        connection: &connection,
+        window,
+        clipboard,
+        property: x11_atom(&connection, "CLIPLEAF_PRIVACY_MARKER")?,
+        incr: x11_atom(&connection, "INCR")?,
+    };
+    let password_hint = x11_atom(&connection, "x-kde-passwordManagerHint")?;
+    let targets = probe.read(x11_atom(&connection, "TARGETS")?, "TARGETS")?;
+    let has_password_hint = targets
+        .value32()
+        .ok_or("The X11 clipboard owner returned TARGETS in a non-32-bit format")?
+        .any(|target| target == password_hint);
+    if !has_password_hint {
+        return Ok(false);
+    }
+
+    let secret = probe
+        .read(password_hint, "x-kde-passwordManagerHint")?
+        .value
+        == b"secret";
+    if secret {
+        log::info!("Skipping X11 clipboard marked with x-kde-passwordManagerHint=secret");
+    }
+    Ok(secret)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+struct X11SelectionWatch {
+    connection: x11rb::rust_connection::RustConnection,
+    clipboard: u32,
+    changes: u64,
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+impl X11SelectionWatch {
+    fn connect() -> Result<Self, String> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xfixes::{ConnectionExt, SelectionEventMask};
+        use x11rb::rust_connection::RustConnection;
+
+        let (connection, screen) = RustConnection::connect(None)
+            .map_err(|e| format!("Failed to connect to the X11 display: {e}"))?;
+        let root = connection.setup().roots[screen].root;
+        connection
+            .xfixes_query_version(5, 0)
+            .map_err(|e| e.to_string())?
+            .reply()
+            .map_err(|e| format!("The X11 server does not support XFixes: {e}"))?;
+        let clipboard = x11_atom(&connection, "CLIPBOARD")?;
+        connection
+            .xfixes_select_selection_input(
+                root,
+                clipboard,
+                SelectionEventMask::SET_SELECTION_OWNER
+                    | SelectionEventMask::SELECTION_WINDOW_DESTROY
+                    | SelectionEventMask::SELECTION_CLIENT_CLOSE,
+            )
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| format!("Failed to watch X11 clipboard owner changes: {e}"))?;
+        Ok(Self {
+            connection,
+            clipboard,
+            changes: 0,
+        })
+    }
+
+    fn sequence(&mut self) -> Result<u64, String> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::ConnectionExt;
+        use x11rb::protocol::Event;
+
+        self.connection
+            .get_input_focus()
+            .map_err(|e| e.to_string())?
+            .reply()
+            .map_err(|e| format!("Lost the X11 connection: {e}"))?;
+        while let Some(event) = self
+            .connection
+            .poll_for_event()
+            .map_err(|e| format!("Lost the X11 connection: {e}"))?
+        {
+            if let Event::XfixesSelectionNotify(event) = event {
+                if event.selection == self.clipboard {
+                    self.changes += 1;
+                }
+            }
+        }
+        Ok(self.changes)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+static X11_SELECTION_WATCH: LazyLock<Mutex<Option<X11SelectionWatch>>> =
+    LazyLock::new(Default::default);
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn x11_clipboard_sequence() -> Option<u64> {
+    let mut watch = X11_SELECTION_WATCH.lock().unwrap();
+    let result = match watch.as_mut() {
+        Some(watch) => watch.sequence(),
+        None => X11SelectionWatch::connect().and_then(|mut connected| {
+            let sequence = connected.sequence()?;
+            *watch = Some(connected);
+            Ok(sequence)
+        }),
+    };
+    match result {
+        Ok(sequence) => Some(sequence),
+        Err(e) => {
+            log::warn!("Cannot track X11 clipboard changes: {e}");
+            *watch = None;
+            None
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn x11_atom(
+    connection: &x11rb::rust_connection::RustConnection,
+    name: &str,
+) -> Result<u32, String> {
+    use x11rb::protocol::xproto::ConnectionExt;
+
+    Ok(connection
+        .intern_atom(false, name.as_bytes())
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| format!("Failed to intern X11 atom {name}: {e}"))?
+        .atom)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+struct X11ClipboardProbe<'a> {
+    connection: &'a x11rb::rust_connection::RustConnection,
+    window: u32,
+    clipboard: u32,
+    property: u32,
+    incr: u32,
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+impl X11ClipboardProbe<'_> {
+    fn read(
+        &self,
+        target: u32,
+        target_name: &str,
+    ) -> Result<x11rb::protocol::xproto::GetPropertyReply, String> {
+        use std::time::{Duration, Instant};
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
+        use x11rb::protocol::Event;
+
+        const OWNER_TIMEOUT: Duration = Duration::from_secs(1);
+
+        self.connection
+            .convert_selection(
+                self.window,
+                self.clipboard,
+                target,
+                self.property,
+                x11rb::CURRENT_TIME,
+            )
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| format!("Failed to request X11 clipboard {target_name}: {e}"))?;
+
+        let deadline = Instant::now() + OWNER_TIMEOUT;
+        loop {
+            let event = self
+                .connection
+                .poll_for_event()
+                .map_err(|e| format!("Lost the X11 connection while reading the clipboard: {e}"))?;
+            match event {
+                Some(Event::SelectionNotify(event))
+                    if event.requestor == self.window && event.target == target =>
+                {
+                    if event.property == x11rb::NONE {
+                        return Err(format!(
+                            "The X11 clipboard owner refused to provide {target_name}"
+                        ));
+                    }
+                    let reply = self
+                        .connection
+                        .get_property(true, self.window, self.property, AtomEnum::ANY, 0, u32::MAX)
+                        .map_err(|e| e.to_string())?
+                        .reply()
+                        .map_err(|e| format!("Failed to read X11 clipboard {target_name}: {e}"))?;
+                    if reply.type_ == self.incr {
+                        return Err(format!(
+                            "The X11 clipboard owner sent {target_name} incrementally"
+                        ));
+                    }
+                    return Ok(reply);
+                }
+                Some(_) => {}
+                None if Instant::now() >= deadline => {
+                    return Err(format!(
+                        "Timed out waiting for the X11 clipboard owner to provide {target_name}"
+                    ));
+                }
+                None => std::thread::sleep(Duration::from_millis(2)),
+            }
+        }
+    }
 }
 
 static SAVED_APP_ICONS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
@@ -699,6 +953,22 @@ fn save_app_icon(app_handle: &AppHandle, name: &str, icon: Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    #[ignore = "needs an X11 display"]
+    fn x11_sequence_counts_each_copy_from_the_same_owner() {
+        let settle = || std::thread::sleep(std::time::Duration::from_millis(200));
+        let mut clipboard = Clipboard::new().unwrap();
+        let start = x11_clipboard_sequence().unwrap();
+        clipboard.set_text("first").unwrap();
+        settle();
+        let first = x11_clipboard_sequence().unwrap();
+        clipboard.set_text("second").unwrap();
+        settle();
+        let second = x11_clipboard_sequence().unwrap();
+        assert!(start < first && first < second, "{start} {first} {second}");
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

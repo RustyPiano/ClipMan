@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "zh-CN";
@@ -60,11 +60,13 @@ const LEGACY_SETTINGS_KEYS: [&str; 11] = [
     "locale",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(export)]
 pub struct Settings {
     pub global_shortcut: String,
     pub auto_paste: bool,
+    #[ts(type = "\"original\" | \"takePlain\" | \"globalPlain\"")]
     pub paste_format: String,
     pub ignore_concealed: bool,
     pub pinned_shortcut: Option<String>,
@@ -74,12 +76,15 @@ pub struct Settings {
     pub max_recent_in_tray: usize,
     pub custom_data_path: Option<String>,
     pub enable_autostart: bool,
+    #[ts(type = "\"zh-CN\" | \"en\"")]
     pub locale: String,
     pub max_text_bytes: usize,
     pub max_image_dimension: u32,
     pub skip_secrets: bool,
     pub ignored_apps: Vec<String>,
     pub capture_paused: bool,
+    pub onboarding_completed: bool,
+    pub auto_check_updates: bool,
 }
 
 impl Default for Settings {
@@ -102,6 +107,8 @@ impl Default for Settings {
             skip_secrets: true,
             ignored_apps: Vec::new(),
             capture_paused: false,
+            onboarding_completed: true,
+            auto_check_updates: true,
         }
     }
 }
@@ -261,6 +268,20 @@ fn settings_from_legacy_store(mut get: impl FnMut(&str) -> Option<serde_json::Va
     candidate
 }
 
+fn settings_from_store(
+    store: &HashMap<String, serde_json::Value>,
+    has_history_database: bool,
+) -> Result<Settings, String> {
+    match store.get(SETTINGS_KEY) {
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| format!("Failed to parse settings store: {e}")),
+        None => Ok(Settings {
+            onboarding_completed: !store.is_empty() || has_history_database,
+            ..settings_from_legacy_store(|key| store.get(key).cloned())
+        }),
+    }
+}
+
 fn read_settings_store(path: &Path) -> Result<HashMap<String, serde_json::Value>, String> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -280,14 +301,24 @@ impl SettingsManager {
         let result = (|| {
             let path = tauri_plugin_store::resolve_store_path(app, SETTINGS_FILE)
                 .map_err(|e| format!("Failed to resolve the settings file: {e}"))?;
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("Failed to resolve the application data directory: {e}"))?;
             let store = read_settings_store(&path)?;
-            match store.get(SETTINGS_KEY) {
-                Some(value) => serde_json::from_value(value.clone())
-                    .map_err(|e| format!("Failed to parse settings store: {e}")),
-                None => Ok(settings_from_legacy_store(|key| store.get(key).cloned())),
-            }
+            let settings =
+                settings_from_store(&store, crate::identity::has_history_database(&data_dir))?;
+            Ok((settings, store.is_empty()))
         })();
-        self.apply_load_result(result)
+        let first_launch =
+            matches!(&result, Ok((settings, true)) if !settings.onboarding_completed);
+        self.apply_load_result(result.map(|(settings, _)| settings))?;
+        if first_launch {
+            if let Err(e) = self.save(app, &self.get()) {
+                log::error!("Failed to record the first launch: {e}");
+            }
+        }
+        Ok(())
     }
 
     fn apply_load_result(&self, result: Result<Settings, String>) -> Result<(), String> {
@@ -554,6 +585,49 @@ mod tests {
         assert_eq!(settings.max_recent_in_tray, 100);
         assert_eq!(settings.max_text_bytes, 4096);
         assert_eq!(settings.max_image_dimension, 512);
+    }
+
+    #[test]
+    fn only_a_fresh_install_starts_onboarding() {
+        assert!(
+            !settings_from_store(&HashMap::new(), false)
+                .unwrap()
+                .onboarding_completed
+        );
+        assert!(
+            settings_from_store(&HashMap::new(), true)
+                .unwrap()
+                .onboarding_completed
+        );
+
+        let legacy = HashMap::from([("auto_paste".to_string(), serde_json::json!(false))]);
+        assert!(
+            settings_from_store(&legacy, false)
+                .unwrap()
+                .onboarding_completed
+        );
+
+        let saved_before_onboarding = HashMap::from([(
+            SETTINGS_KEY.to_string(),
+            serde_json::json!({ "globalShortcut": "CommandOrControl+Shift+V" }),
+        )]);
+        let loaded = settings_from_store(&saved_before_onboarding, true).unwrap();
+        assert!(loaded.onboarding_completed);
+        assert!(loaded.auto_check_updates);
+
+        let first_run_saved = HashMap::from([(
+            SETTINGS_KEY.to_string(),
+            serde_json::to_value(Settings {
+                onboarding_completed: false,
+                ..Settings::default()
+            })
+            .unwrap(),
+        )]);
+        assert!(
+            !settings_from_store(&first_run_saved, true)
+                .unwrap()
+                .onboarding_completed
+        );
     }
 
     #[test]

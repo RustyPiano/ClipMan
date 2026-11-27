@@ -1,142 +1,223 @@
 <script lang="ts">
   import Card from '$lib/components/ui/Card.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { Loader2, Info, RefreshCw, Download } from 'lucide-svelte';
+  import Switch from '$lib/components/ui/Switch.svelte';
+  import { Loader2, RefreshCw, Download, RotateCw, ClipboardCopy, FolderOpen } from 'lucide-svelte';
   import { getVersion } from '@tauri-apps/api/app';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
   import { i18n } from '$lib/i18n';
   import { toastStore } from '$lib/stores/toast.svelte';
-  import type { UpdateInfo } from '$lib/types';
+  import appIcon from '../../../../src-tauri/icons/128x128.png';
+  import type { Settings, UpdateInfo, UpdateProgress } from '$lib/types';
 
-  let {
-    updateInfo,
-    checkingUpdate,
-    installingUpdate,
-    updateMessage,
-    checkForUpdates,
-    installUpdate,
-  } = $props<{
-    updateInfo: UpdateInfo | null;
-    checkingUpdate: boolean;
-    installingUpdate: boolean;
-    updateMessage: string;
-    checkForUpdates: () => void;
-    installUpdate: () => void;
-  }>();
+  let { settings = $bindable() } = $props<{ settings: Settings }>();
 
   const t = $derived(i18n.t);
 
   let currentVersion = $state('');
+  let status = $state<UpdateInfo | null>(null);
+  let checking = $state(false);
+  let installing = $state(false);
+  let progress = $state<UpdateProgress | null>(null);
+  let message = $state('');
 
-  onMount(async () => {
+  const progressPercent = $derived(
+    progress?.total ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100)) : null
+  );
+
+  onMount(() => {
+    void loadStatus();
+    const unlisteners: (() => void)[] = [];
+    let disposed = false;
+    for (const subscription of [
+      listen<UpdateInfo>('update-status', (event) => (status = event.payload)),
+      listen<UpdateProgress>('update-progress', (event) => (progress = event.payload)),
+    ])
+      void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
+    return () => {
+      disposed = true;
+      unlisteners.forEach((stop) => stop());
+    };
+  });
+
+  async function loadStatus() {
     try {
-      currentVersion = await getVersion();
+      [currentVersion, status] = await Promise.all([
+        getVersion(),
+        invoke<UpdateInfo>('get_update_status'),
+      ]);
     } catch (err) {
       toastStore.add(String(err), 'error');
     }
-  });
+  }
+
+  async function checkForUpdates() {
+    checking = true;
+    message = '';
+    try {
+      status = await invoke<UpdateInfo>('check_for_updates');
+      if (!status.available) message = t.noUpdateAvailable;
+    } catch (err) {
+      message = `${t.checkUpdateFailed}: ${String(err)}`;
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function installUpdate() {
+    installing = true;
+    progress = null;
+    message = '';
+    try {
+      await invoke('install_update');
+      status = await invoke<UpdateInfo>('get_update_status');
+    } catch (err) {
+      message = `${t.installUpdateFailed}: ${String(err)}`;
+    } finally {
+      installing = false;
+    }
+  }
+
+  async function restart() {
+    try {
+      await invoke('restart_app');
+    } catch (err) {
+      toastStore.add(String(err), 'error');
+    }
+  }
+
+  async function copyDiagnostics() {
+    try {
+      const text = await invoke<string>('get_diagnostics');
+      await invoke('copy_plain_text', { text });
+      toastStore.add(t.diagnosticsCopied, 'success');
+    } catch (err) {
+      toastStore.add(`${t.operationFailed}: ${String(err)}`, 'error');
+    }
+  }
+
+  async function openLogs() {
+    try {
+      await invoke('open_log_folder');
+    } catch (err) {
+      toastStore.add(`${t.operationFailed}: ${String(err)}`, 'error');
+    }
+  }
 </script>
 
-<div class="space-y-6 duration-300">
-  <div>
-    <h2 class="text-lg font-semibold mb-1">{t.settingsAbout}</h2>
-    <p class="text-sm text-muted-foreground">{t.version}</p>
-  </div>
+<div class="space-y-6">
+  <h2 class="text-lg font-semibold">{t.settingsAbout}</h2>
 
-  <Card class="p-6 space-y-6">
+  <Card class="space-y-5 p-6">
     <div class="flex items-center gap-4">
-      <div class="h-12 w-12 bg-primary/10 rounded-xl flex items-center justify-center">
-        <Info class="h-6 w-6 text-primary" />
-      </div>
+      <img src={appIcon} alt="" class="h-12 w-12" />
       <div>
-        <h3 class="font-bold text-lg">{t.appName}</h3>
-        <p class="text-sm text-muted-foreground">
-          {t.appTagline}
-        </p>
-        <div class="flex items-center gap-2 mt-1">
-          {#if currentVersion}
-            <span class="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground"
-              >v{currentVersion}</span
-            >
-          {/if}
+        <h3 class="text-base font-semibold">{t.appName}</h3>
+        <p class="text-sm text-muted-foreground">{t.appTagline}</p>
+        <p class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+          {#if currentVersion}<span class="font-mono">v{currentVersion}</span>{/if}
           <a
             href="https://github.com/RustyPiano/ClipLeaf"
             target="_blank"
-            class="text-xs text-primary hover:underline">GitHub</a
+            class="text-primary hover:underline">GitHub</a
           >
-        </div>
+        </p>
       </div>
     </div>
 
-    <div class="space-y-4 pt-4 border-t border-border">
-      <div class="space-y-2">
-        <div class="flex justify-between text-sm">
-          <span class="text-muted-foreground">{t.version}</span>
-          <span class="font-mono">{currentVersion || t.loading}</span>
+    <div class="space-y-3 border-t border-border pt-5">
+      {#if status?.available && status.latestVersion}
+        <div class="flex items-center justify-between text-sm">
+          <span class="font-medium">{t.updateAvailable}</span>
+          <span class="font-mono">{status.latestVersion}</span>
         </div>
-
-        {#if updateInfo?.available && updateInfo.latest_version}
-          <div class="flex justify-between text-sm">
-            <span class="text-muted-foreground">{t.updateAvailable}</span>
-            <span class="font-mono font-bold text-green-600 dark:text-green-400"
-              >{updateInfo.latest_version}</span
-            >
-          </div>
-
-          {#if updateInfo.body}
-            <div class="mt-3 p-3 bg-muted/50 rounded border border-border">
-              <strong class="block mb-2 text-xs uppercase tracking-wider text-muted-foreground"
-                >{t.releaseNotes}</strong
-              >
-              <p class="whitespace-pre-wrap text-sm">{updateInfo.body}</p>
-            </div>
-          {/if}
-        {:else if !updateInfo}
-          <div class="text-center py-4 text-sm text-muted-foreground">
-            {t.checkUpdate}
+        {#if status.body}
+          <div class="max-h-48 overflow-y-auto rounded-md border border-border bg-muted/40 p-3">
+            <p class="mb-1 text-xs font-medium text-muted-foreground">{t.releaseNotes}</p>
+            <p class="whitespace-pre-wrap text-sm">{status.body}</p>
           </div>
         {/if}
-      </div>
+      {/if}
 
-      <div class="flex gap-2 pt-2">
-        <Button
-          variant="secondary"
-          class="flex-1"
-          onclick={checkForUpdates}
-          disabled={checkingUpdate || installingUpdate}
-        >
-          {#if checkingUpdate}
-            <Loader2 class="h-4 w-4 animate-spin mr-2" /> {t.checking}
-          {:else}
-            <RefreshCw class="h-4 w-4 mr-2" /> {t.checkUpdate}
-          {/if}
-        </Button>
-
-        {#if updateInfo?.available}
-          <Button
-            class="flex-1 !bg-green-600 hover:!bg-green-700 !text-white"
-            onclick={installUpdate}
-            disabled={installingUpdate}
-          >
-            {#if installingUpdate}
-              <Loader2 class="h-4 w-4 animate-spin mr-2" /> {t.installing}
-            {:else}
-              <Download class="h-4 w-4 mr-2" /> {t.installUpdate}
-            {/if}
-          </Button>
-        {/if}
-      </div>
-
-      {#if updateMessage}
-        <div
-          class="p-3 rounded text-sm text-center
-                    {updateMessage.includes(t.noUpdateAvailable)
-            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
-            : 'bg-muted text-muted-foreground'}"
-        >
-          {updateMessage}
+      {#if installing}
+        <div class="space-y-1.5" role="status">
+          <p class="text-xs text-muted-foreground">
+            {progressPercent === null
+              ? t.downloadingUpdate
+              : i18n.format(t.downloadProgress, { percent: progressPercent })}
+          </p>
+          <div class="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              class="h-full bg-primary transition-[width]"
+              style:width={progressPercent === null ? '30%' : `${progressPercent}%`}
+            ></div>
+          </div>
         </div>
       {/if}
+
+      {#if status?.readyToRestart}
+        <div class="flex items-center justify-between gap-3 text-sm" role="status">
+          <span>{t.updateInstalled}</span>
+          <Button size="sm" class="gap-1.5" onclick={restart}>
+            <RotateCw class="h-3.5 w-3.5" />{t.restartNow}
+          </Button>
+        </div>
+      {:else}
+        <div class="flex gap-2">
+          <Button
+            variant="secondary"
+            class="flex-1 gap-2"
+            onclick={checkForUpdates}
+            disabled={checking || installing}
+          >
+            {#if checking}
+              <Loader2 class="h-4 w-4 animate-spin" /> {t.checking}
+            {:else}
+              <RefreshCw class="h-4 w-4" /> {t.checkUpdate}
+            {/if}
+          </Button>
+          {#if status?.available}
+            <Button class="flex-1 gap-2" onclick={installUpdate} disabled={installing}>
+              {#if installing}
+                <Loader2 class="h-4 w-4 animate-spin" /> {t.installing}
+              {:else}
+                <Download class="h-4 w-4" /> {t.installUpdate}
+              {/if}
+            </Button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if message}
+        <p class="text-center text-sm text-muted-foreground" role="status">{message}</p>
+      {/if}
+    </div>
+
+    <div class="flex items-center justify-between gap-4 border-t border-border pt-5">
+      <div class="space-y-0.5">
+        <label for="auto-check-updates" class="cursor-pointer text-sm font-medium">
+          {t.autoCheckUpdates}
+        </label>
+        <p class="text-xs text-muted-foreground">{t.autoCheckUpdatesDesc}</p>
+      </div>
+      <Switch id="auto-check-updates" bind:checked={settings.autoCheckUpdates} />
+    </div>
+  </Card>
+
+  <Card class="space-y-3 p-6">
+    <div class="space-y-0.5">
+      <span class="text-sm font-medium">{t.diagnostics}</span>
+      <p class="text-xs text-muted-foreground">{t.diagnosticsDesc}</p>
+    </div>
+    <div class="flex gap-2">
+      <Button variant="outline" size="sm" class="gap-1.5" onclick={copyDiagnostics}>
+        <ClipboardCopy class="h-3.5 w-3.5" />{t.copyDiagnostics}
+      </Button>
+      <Button variant="outline" size="sm" class="gap-1.5" onclick={openLogs}>
+        <FolderOpen class="h-3.5 w-3.5" />{t.openLogs}
+      </Button>
     </div>
   </Card>
 </div>

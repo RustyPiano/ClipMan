@@ -97,6 +97,11 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: generated TypeScript bindings are committed
+        run: |
+          git status --porcelain src/lib/bindings
+          test -z "$(git status --porcelain src/lib/bindings)"
+
   rust-linux:
     runs-on: ubuntu-latest
     steps:

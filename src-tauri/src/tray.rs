@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::storage::{join_file_paths, split_file_paths, ClipPreviewItem, ContentType};
 use crate::AppState;
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_notification::NotificationExt;
 
 pub const TRAY_ICON_SIZE: u32 = 32;
 const ICON_CACHE_SIZE: usize = 50;
@@ -15,6 +17,8 @@ pub const TRAY_ID: &str = "main";
 
 pub struct TrayI18n {
     pub open_quickbar: &'static str,
+    pub install_update: &'static str,
+    pub restart_to_update: &'static str,
     pub pinned_header: &'static str,
     pub recent_header: &'static str,
     pub image: &'static str,
@@ -29,6 +33,8 @@ impl TrayI18n {
         if locale.starts_with("zh") {
             Self {
                 open_quickbar: "打开 ClipLeaf",
+                install_update: "安装新版本",
+                restart_to_update: "重启以完成更新",
                 pinned_header: "收藏",
                 recent_header: "最近复制",
                 image: "图片",
@@ -40,6 +46,8 @@ impl TrayI18n {
         } else {
             Self {
                 open_quickbar: "Open ClipLeaf",
+                install_update: "Install version",
+                restart_to_update: "Restart to Finish Update",
                 pinned_header: "Favorites",
                 recent_header: "Recent",
                 image: "Image",
@@ -175,8 +183,21 @@ pub fn build_tray_menu(
     };
 
     let mut menu_builder = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("open_quickbar", i18n.open_quickbar).build(app)?)
-        .separator();
+        .item(&MenuItemBuilder::with_id("open_quickbar", i18n.open_quickbar).build(app)?);
+    if crate::updates::is_ready_to_restart(app) {
+        menu_builder = menu_builder.item(
+            &MenuItemBuilder::with_id("restart_to_update", i18n.restart_to_update).build(app)?,
+        );
+    } else if let Some(version) = crate::updates::pending_version(app) {
+        menu_builder = menu_builder.item(
+            &MenuItemBuilder::with_id(
+                "install_update",
+                format!("{} {version}", i18n.install_update),
+            )
+            .build(app)?,
+        );
+    }
+    menu_builder = menu_builder.separator();
 
     for (header_id, header_text, items) in [
         ("pinned_header", i18n.pinned_header, &pinned_items),
@@ -235,17 +256,22 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
             log::info!("Clear non-pinned menu clicked");
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    crate::commands::clear_non_pinned_history(app_clone.clone(), app_clone.state())
-                        .await
+                match crate::commands::clear_non_pinned_history(
+                    app_clone.clone(),
+                    app_clone.state(),
+                )
+                .await
                 {
-                    log::error!("Failed to clear non-pinned history: {}", e);
+                    Ok(None) => {}
+                    Ok(Some(warning)) => log::warn!("{warning}"),
+                    Err(e) => log::error!("Failed to clear non-pinned history: {}", e),
                 }
             });
         }
-        "settings" => {
-            log::info!("Settings menu clicked");
-            if let Err(e) = crate::window::open_settings_window(app) {
+        "restart_to_update" => app.restart(),
+        "settings" | "install_update" => {
+            let tab = (event_id == "install_update").then_some("about");
+            if let Err(e) = crate::window::open_settings_window(app, tab) {
                 log::error!("Failed to open settings window: {}", e);
             }
         }
@@ -278,8 +304,8 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
 
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
-                match crate::commands::copy_clip_to_clipboard_internal(&app_clone, &clip_id).await {
-                    Ok(_) => crate::commands::notify_copied(&app_clone),
+                match crate::paste::copy_clip_to_clipboard_internal(&app_clone, &clip_id).await {
+                    Ok(_) => notify_copied(&app_clone),
                     Err(e) => log::error!("Failed to copy clip: {}", e),
                 }
             });
@@ -289,6 +315,25 @@ pub fn handle_tray_menu_event(app: &AppHandle, event: MenuEvent) {
         }
     }
 }
+
+#[cfg(not(target_os = "linux"))]
+fn notify_copied(app: &AppHandle) {
+    let chinese = app.state::<AppState>().settings.get().locale == "zh-CN";
+    let body = if chinese {
+        "内容已复制到剪贴板"
+    } else {
+        "Content copied to clipboard"
+    };
+    let _ = app
+        .notification()
+        .builder()
+        .title(if chinese { "已复制" } else { "Copied" })
+        .body(body)
+        .show();
+}
+
+#[cfg(target_os = "linux")]
+fn notify_copied(_app: &AppHandle) {}
 
 pub fn update_tray_menu(app: &AppHandle) {
     let result = build_tray_menu(app).and_then(|menu| {

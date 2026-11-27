@@ -1,39 +1,34 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { i18n } from '$lib/i18n';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { confirmStore } from '$lib/stores/confirm.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { ChevronLeft, Loader2, Save, RotateCcw } from 'lucide-svelte';
+  import { Loader2 } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Settings, UpdateInfo, SettingsTab } from '$lib/types';
+  import type { Settings, SettingsTab, SettingsUpdateResult } from '$lib/types';
 
   import Sidebar from '$lib/components/settings/Sidebar.svelte';
   import GeneralSettings from '$lib/components/settings/GeneralSettings.svelte';
   import ClipboardSettings from '$lib/components/settings/ClipboardSettings.svelte';
-  import TraySettings from '$lib/components/settings/TraySettings.svelte';
   import StorageSettings from '$lib/components/settings/StorageSettings.svelte';
   import AboutSection from '$lib/components/settings/AboutSection.svelte';
   import AppearanceSettings from '$lib/components/settings/AppearanceSettings.svelte';
 
+  const SETTINGS_TABS: SettingsTab[] = ['general', 'appearance', 'clipboard', 'storage', 'about'];
+  const SAVE_DELAY_MS = 300;
+
   const t = $derived(i18n.t);
 
   let settings = $state<Settings | null>(null);
-  let savedSnapshot = $state('');
-  const hasUnsavedChanges = $derived(
-    settings !== null && savedSnapshot !== '' && JSON.stringify(settings) !== savedSnapshot
-  );
-
+  let savedSnapshot = '';
   let loading = $state(true);
   let saving = $state(false);
-  let settingsForm: HTMLFormElement | undefined = $state();
-
-  let updateInfo = $state<UpdateInfo | null>(null);
-  let checkingUpdate = $state(false);
-  let installingUpdate = $state(false);
-  let updateMessage = $state('');
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveAgain = false;
+  let resetQueued = false;
 
   let currentDataPath = $state('');
   let loadingDataPath = $state(true);
@@ -49,16 +44,40 @@
 
   let activeTab = $state<SettingsTab>('general');
 
-  onMount(async () => {
-    await Promise.all([loadSettings(), loadDataPath()]);
+  onMount(() => {
+    void loadSettings();
+    void loadDataPath();
+    const unlisteners: (() => void)[] = [];
+    let disposed = false;
+    for (const subscription of [
+      listen<string>('settings-open-tab', (event) => {
+        const tab = SETTINGS_TABS.find((candidate) => candidate === event.payload);
+        if (tab) activeTab = tab;
+      }),
+      listen('settings-hidden', () => void flushSave()),
+    ])
+      void subscription.then((stop) => (disposed ? stop() : unlisteners.push(stop)));
+    return () => {
+      disposed = true;
+      unlisteners.forEach((stop) => stop());
+    };
+  });
+
+  $effect(() => {
+    if (!settings) return;
+    const snapshot = JSON.stringify(settings);
+    if (snapshot === savedSnapshot) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void flushSave(), SAVE_DELAY_MS);
   });
 
   async function loadSettings() {
     try {
       loading = true;
-      settings = await invoke<Settings>('get_settings');
-      savedSnapshot = JSON.stringify(settings);
-      i18n.setLocale(settings.locale);
+      const loaded = await invoke<Settings>('get_settings');
+      savedSnapshot = JSON.stringify(loaded);
+      settings = loaded;
+      i18n.setLocale(loaded.locale);
     } catch (err) {
       toastStore.add(`${t.loadSettingsFailed}: ${String(err)}`, 'error');
     } finally {
@@ -78,69 +97,49 @@
     }
   }
 
-  async function saveSettings(reset = false) {
-    if (saving || !settings) return;
+  async function flushSave(reset = false) {
+    clearTimeout(saveTimer);
+    if (!settings) return;
+    if (saving) {
+      saveAgain = true;
+      resetQueued ||= reset;
+      return;
+    }
+    const request = reset ? null : $state.snapshot(settings);
+    const requestSnapshot = JSON.stringify(request);
+    if (!reset && requestSnapshot === savedSnapshot) return;
+    saving = true;
     try {
-      saving = true;
-      const result = await invoke<{ settings: Settings; warning: string | null }>(
-        'update_settings',
-        { settings: reset ? null : settings }
-      );
-      settings = result.settings;
-      savedSnapshot = JSON.stringify(settings);
-      i18n.setLocale(settings.locale);
-      toastStore.add(result.warning ?? t.saved, result.warning ? 'info' : 'success');
+      const result = await invoke<SettingsUpdateResult>('update_settings', { settings: request });
+      savedSnapshot = JSON.stringify(result.settings);
+      if (reset || JSON.stringify(settings) === requestSnapshot) settings = result.settings;
+      i18n.setLocale(result.settings.locale);
+      if (result.warning) toastStore.add(result.warning, 'info');
+      if (reset) toastStore.add(t.saved, 'success');
     } catch (err) {
       toastStore.add(`${t.saveSettingsFailed}: ${String(err)}`, 'error');
+      settings = JSON.parse(savedSnapshot);
     } finally {
       saving = false;
+      if (saveAgain) {
+        const queuedReset = resetQueued;
+        saveAgain = false;
+        resetQueued = false;
+        void flushSave(queuedReset);
+      }
     }
   }
 
   async function resetSettings() {
     const confirmed = await confirmStore.ask({
-      title: t.reset,
+      title: t.resetSettings,
       message: t.confirmResetSettings,
       confirmLabel: t.reset,
       destructive: true,
     });
     if (!confirmed) return;
 
-    await saveSettings(true);
-  }
-
-  async function checkForUpdates() {
-    try {
-      checkingUpdate = true;
-      updateMessage = '';
-      updateInfo = await invoke<UpdateInfo>('check_for_updates');
-      if (updateInfo.available) {
-        updateMessage = `${t.updateAvailable}: ${updateInfo.latest_version}`;
-      } else {
-        updateMessage = t.noUpdateAvailable;
-      }
-    } catch (err) {
-      console.error('Check update failed:', err);
-      updateMessage = t.checkUpdateFailed;
-    } finally {
-      checkingUpdate = false;
-    }
-  }
-
-  async function installUpdate() {
-    if (!updateInfo?.available) return;
-
-    try {
-      installingUpdate = true;
-      updateMessage = t.downloadingUpdate;
-      await invoke('install_update');
-      updateMessage = t.updateInstalled;
-    } catch (err) {
-      console.error('Install update failed:', err);
-      updateMessage = `${t.installUpdateFailed}: ${String(err)}`;
-    } finally {
-      installingUpdate = false;
-    }
+    await flushSave(true);
   }
 
   async function changeDataLocation() {
@@ -184,133 +183,44 @@
       changingDataPath = false;
     }
   }
-
-  async function handleBack() {
-    try {
-      const win = getCurrentWindow();
-      await win.emit('settings-hidden');
-      await invoke('show_quickbar');
-      await win.hide();
-    } catch (err) {
-      toastStore.add(String(err), 'error');
-    }
-  }
-  function handleKeyDown(event: KeyboardEvent) {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-      event.preventDefault();
-      settingsForm?.requestSubmit();
-    }
-  }
 </script>
 
-<svelte:window onkeydown={handleKeyDown} />
+<div class="flex h-screen overflow-hidden bg-background text-foreground">
+  <Sidebar bind:activeTab {saving} />
 
-<div class="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-  <header
-    class="flex-none flex items-center justify-between px-6 py-4 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10"
-  >
-    <div class="flex items-center gap-4">
-      <Button
-        variant="ghost"
-        size="icon"
-        onclick={handleBack}
-        aria-label={t.close}
-        class="hover:bg-muted rounded-full"
-      >
-        <ChevronLeft class="h-5 w-5" />
-      </Button>
-      <h1 class="text-xl font-bold tracking-tight">{t.settings}</h1>
-    </div>
-
-    <div class="flex items-center gap-2.5">
-      {#if hasUnsavedChanges}
-        <span
-          class="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
-        >
-          <span class="qb-pin-text h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true"></span>
-          {t.unsavedChanges}
-        </span>
-      {/if}
-      <Button
-        variant="outline"
-        onclick={resetSettings}
-        disabled={!settings || loading || saving || changingDataPath}
-        class="gap-2"
-      >
-        <RotateCcw class="h-4 w-4" />
-        {t.reset}
-      </Button>
-      <Button
-        type="submit"
-        form="settings-form"
-        disabled={!settings || loading || saving || changingDataPath}
-        class="gap-2 min-w-[100px]"
-      >
-        {#if saving}
-          <Loader2 class="h-4 w-4 animate-spin" />
-          {t.saving}
-        {:else}
-          <Save class="h-4 w-4" />
-          {t.save}
+  <main inert={changingDataPath} class="flex-1 overflow-y-auto px-8 py-7">
+    {#if loading}
+      <div class="flex h-full items-center justify-center">
+        <Loader2 class="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    {:else if settings}
+      <div class="mx-auto max-w-2xl">
+        {#if activeTab === 'general'}
+          <GeneralSettings bind:settings {resetSettings} />
+        {:else if activeTab === 'clipboard'}
+          <ClipboardSettings bind:settings />
+        {:else if activeTab === 'appearance'}
+          <AppearanceSettings bind:settings />
+        {:else if activeTab === 'storage'}
+          <StorageSettings
+            {currentDataPath}
+            {loadingDataPath}
+            {dataPathError}
+            {loadDataPath}
+            {changingDataPath}
+            {changeDataLocation}
+          />
+        {:else if activeTab === 'about'}
+          <AboutSection bind:settings />
         {/if}
-      </Button>
-    </div>
-  </header>
-
-  <div class="flex-1 flex overflow-hidden">
-    <Sidebar bind:activeTab />
-
-    <main inert={saving || changingDataPath} class="flex-1 overflow-y-auto p-8 bg-muted/10">
-      {#if loading}
-        <div class="flex items-center justify-center h-full">
-          <Loader2 class="h-8 w-8 animate-spin text-primary" />
-        </div>
-      {:else if settings}
-        <form
-          bind:this={settingsForm}
-          id="settings-form"
-          class="max-w-2xl mx-auto space-y-6"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void saveSettings();
-          }}
-        >
-          {#if activeTab === 'general'}
-            <GeneralSettings bind:settings />
-          {:else if activeTab === 'clipboard'}
-            <ClipboardSettings bind:settings />
-          {:else if activeTab === 'appearance'}
-            <AppearanceSettings bind:settings />
-          {:else if activeTab === 'tray'}
-            <TraySettings bind:settings />
-          {:else if activeTab === 'storage'}
-            <StorageSettings
-              {currentDataPath}
-              {loadingDataPath}
-              {dataPathError}
-              {loadDataPath}
-              {changingDataPath}
-              {changeDataLocation}
-            />
-          {:else if activeTab === 'about'}
-            <AboutSection
-              {updateInfo}
-              {checkingUpdate}
-              {installingUpdate}
-              {updateMessage}
-              {checkForUpdates}
-              {installUpdate}
-            />
-          {/if}
-        </form>
-      {:else}
-        <div class="flex h-full flex-col items-center justify-center gap-3">
-          <p>{t.loadSettingsFailed}</p>
-          <Button onclick={loadSettings}>{t.recheck}</Button>
-        </div>
-      {/if}
-    </main>
-  </div>
+      </div>
+    {:else}
+      <div class="flex h-full flex-col items-center justify-center gap-3">
+        <p>{t.loadSettingsFailed}</p>
+        <Button onclick={loadSettings}>{t.recheck}</Button>
+      </div>
+    {/if}
+  </main>
 </div>
 
 <dialog

@@ -31,8 +31,8 @@
       {
         "label": "settings",
         "title": "ClipLeaf Settings",
-        "width": 960,
-        "height": 720,
+        "width": 860,
+        "height": 640,
         "center": true,
         "resizable": true,
         "fullscreen": false,

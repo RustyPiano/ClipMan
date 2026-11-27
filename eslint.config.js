@@ -65,6 +65,7 @@ export default [
       'node_modules/',
       'src-tauri/target/',
       'src-tauri/gen/',
+      'src/lib/bindings/',
       '.svelte-kit/',
       '.claude/',
       '.agents/',

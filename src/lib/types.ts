@@ -1,63 +1,21 @@
-import type { Locale } from './i18n';
+import type { Settings } from './bindings/Settings';
 
-type ContentType = 'text' | 'image' | 'files';
+export type { BackupFile } from './bindings/BackupFile';
+export type { ClipDetail } from './bindings/ClipDetail';
+export type { ClipItem } from './bindings/ClipItem';
+export type { ImportResult } from './bindings/ImportResult';
+export type { Settings } from './bindings/Settings';
+export type { SettingsUpdateResult } from './bindings/SettingsUpdateResult';
+export type { StorageUsage } from './bindings/StorageUsage';
+export type { UpdateInfo } from './bindings/UpdateInfo';
+export type { UpdateProgress } from './bindings/UpdateProgress';
+export type { UseOutcome } from './bindings/UseOutcome';
 
-export interface ClipItem {
-  id: string;
-  content: string;
-  contentType: ContentType;
-  timestamp: number;
-  isPinned: boolean;
-  pinOrder: number | null;
-  label: string | null;
-  sourceApp: string | null;
-  hasHtml: boolean;
-  contentBytes: number;
-  fileCount: number;
-  isLink: boolean;
-}
-
-export interface ClipDetail {
-  id: string;
-  contentType: ContentType;
-  text: string;
-  filePaths: string[];
-  imageUrl: string | null;
-  truncated: boolean;
-}
-
-export type PasteFormat = 'original' | 'takePlain' | 'globalPlain';
-
-export interface Settings {
-  globalShortcut: string;
-  autoPaste: boolean;
-  pasteFormat: PasteFormat;
-  ignoreConcealed: boolean;
-  pinnedShortcut: string | null;
-  maxHistoryItems: number;
-  trayTextLength: number;
-  maxPinnedInTray: number;
-  maxRecentInTray: number;
-  customDataPath: string | null;
-  enableAutostart: boolean;
-  locale: Locale;
-  ignoredApps: string[];
-  skipSecrets: boolean;
-  maxTextBytes: number;
-  maxImageDimension: number;
-  capturePaused: boolean;
-}
+export type PasteFormat = Settings['pasteFormat'];
 
 export type PasteMode = 'default' | 'opposite';
 
 export type ReorderDirection = 'up' | 'down';
-
-export interface UpdateInfo {
-  available: boolean;
-  current_version: string;
-  latest_version?: string;
-  body?: string;
-}
 
 export type ClipFilter = 'all' | 'text' | 'image' | 'files' | 'link';
 
@@ -71,4 +29,4 @@ export interface Toast {
   type: ToastType;
 }
 
-export type SettingsTab = 'general' | 'clipboard' | 'tray' | 'storage' | 'about' | 'appearance';
+export type SettingsTab = 'general' | 'clipboard' | 'storage' | 'about' | 'appearance';

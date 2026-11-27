@@ -87,6 +87,16 @@ useTauriMock('main', () => {
         capturePaused: false,
         pasteFormat,
         locale: 'en',
+        onboardingCompleted: true,
+        globalShortcut: 'CommandOrControl+Shift+V',
+      };
+    if (cmd === 'get_update_status')
+      return {
+        available: false,
+        currentVersion: '2.5.3',
+        latestVersion: null,
+        body: null,
+        date: null,
       };
     if (cmd === 'check_accessibility_permission') return true;
     if (cmd === 'get_app_icon') return args.name === 'Editor' ? appIcon : null;

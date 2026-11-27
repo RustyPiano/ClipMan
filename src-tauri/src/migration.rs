@@ -2,6 +2,12 @@ use std::fs;
 use std::io::{Cursor, ErrorKind};
 use std::path::Path;
 
+use tauri::AppHandle;
+
+use crate::storage::ClipStorage;
+use crate::tray::update_tray_menu;
+use crate::AppState;
+
 const DATA_FILES: [&str; 4] = [
     "clipleaf.db",
     "clipleaf.db-shm",
@@ -280,6 +286,57 @@ pub fn remove_data_files(dir: &Path) -> Result<(), String> {
     } else {
         Err(failures.join("; "))
     }
+}
+
+pub fn migrate_data_location(
+    app: &AppHandle,
+    state: &AppState,
+    new_path: String,
+    delete_old: bool,
+) -> Result<Option<String>, String> {
+    log::info!(
+        "Starting data migration to: {}, delete_old: {}",
+        new_path,
+        delete_old
+    );
+
+    let _settings_write_guard = state.settings_write_lock.lock().unwrap();
+    let old_path = state.storage.lock().unwrap().data_directory().to_path_buf();
+    let new_path_buf = std::path::PathBuf::from(&new_path);
+    let new_db_path = new_path_buf.join(crate::identity::DATABASE_FILE);
+
+    prepare_destination_directory(&old_path, &new_path_buf)?;
+
+    {
+        let mut storage = state.storage.lock().unwrap();
+        storage
+            .backup_to_path(&new_db_path)
+            .map_err(|e| format!("Failed to back up database: {}", e))?;
+        let new_storage = ClipStorage::new(&new_db_path).map_err(|e| e.to_string())?;
+
+        let mut new_settings = state.settings.get();
+        new_settings.custom_data_path = Some(new_path.clone());
+        state
+            .settings
+            .save(app, &new_settings)
+            .map_err(|e| format!("Failed to save settings: {}", e))?;
+
+        *storage = new_storage;
+        state.settings.set(new_settings);
+    }
+
+    let warning = delete_old
+        .then(|| remove_data_files(&old_path).err())
+        .flatten()
+        .map(|e| format!("Data migration completed, but failed to remove old data: {e}"));
+
+    if let Some(warning) = &warning {
+        log::warn!("{warning}");
+    } else {
+        log::info!("Data migration completed successfully");
+    }
+    update_tray_menu(app);
+    Ok(warning)
 }
 
 #[cfg(test)]

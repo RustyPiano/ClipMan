@@ -4,10 +4,12 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import { Trash2, X, Plus } from 'lucide-svelte';
+  import { X, Plus } from 'lucide-svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
-  import { clipboardStore } from '$lib/stores/clipboard.svelte';
-  import type { Settings } from '$lib/types';
+  import { confirmStore } from '$lib/stores/confirm.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import type { Settings, StorageUsage } from '$lib/types';
 
   let { settings = $bindable() } = $props<{
     settings: Settings;
@@ -26,6 +28,38 @@
   ] as const;
 
   let newIgnoredApp = $state('');
+  let maxItemsDraft = $state<number | null>(null);
+
+  async function confirmHistoryShrink(limit: number) {
+    const usage = await invoke<StorageUsage>('get_storage_usage');
+    const removed = usage.total - usage.pinned - limit;
+    if (removed <= 0) return true;
+    return confirmStore.ask({
+      title: t.maxHistoryItems,
+      message: i18n.format(t.confirmShrinkHistory, { count: removed }),
+      confirmLabel: t.delete,
+      destructive: true,
+    });
+  }
+
+  async function commitMaxItems(input: HTMLInputElement) {
+    const limit = input.valueAsNumber;
+    let confirmed = true;
+    if (limit < settings.maxHistoryItems) {
+      try {
+        confirmed = await confirmHistoryShrink(limit);
+      } catch (error) {
+        toastStore.add(String(error), 'error');
+        confirmed = false;
+      }
+    }
+    if (confirmed) {
+      settings.maxHistoryItems = limit;
+    } else {
+      input.value = String(settings.maxHistoryItems);
+    }
+    maxItemsDraft = null;
+  }
 
   function addIgnoredApp() {
     const trimmed = newIgnoredApp.trim();
@@ -60,13 +94,8 @@
   const maxTextMb = $derived(settings.maxTextBytes / BYTES_PER_MB);
 </script>
 
-<div class="space-y-6 duration-300">
-  <div>
-    <h2 class="text-lg font-semibold mb-1">{t.settingsClipboard}</h2>
-    <p class="text-sm text-muted-foreground">
-      {t.maxHistoryItemsDesc}
-    </p>
-  </div>
+<div class="space-y-6">
+  <h2 class="text-lg font-semibold">{t.settingsClipboard}</h2>
 
   <Card class="p-6 space-y-6">
     <div class="space-y-4">
@@ -77,7 +106,9 @@
             {t.maxHistoryItemsDesc}
           </p>
         </div>
-        <span class="text-sm font-bold text-primary">{settings.maxHistoryItems}</span>
+        <span class="text-sm font-bold text-primary"
+          >{maxItemsDraft ?? settings.maxHistoryItems}</span
+        >
       </div>
       <input
         id="max-items"
@@ -85,7 +116,9 @@
         min="1"
         max="10000"
         step="1"
-        bind:value={settings.maxHistoryItems}
+        value={settings.maxHistoryItems}
+        oninput={(event) => (maxItemsDraft = event.currentTarget.valueAsNumber)}
+        onchange={(event) => commitMaxItems(event.currentTarget)}
         class="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
       />
     </div>
@@ -169,8 +202,10 @@
           step="any"
           required
           value={maxTextMb}
-          oninput={(event) =>
-            (settings.maxTextBytes = Math.round(event.currentTarget.valueAsNumber * BYTES_PER_MB))}
+          onchange={(event) => {
+            if (!event.currentTarget.reportValidity()) return;
+            settings.maxTextBytes = Math.round(event.currentTarget.valueAsNumber * BYTES_PER_MB);
+          }}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
@@ -190,7 +225,10 @@
           step="1"
           required
           value={settings.maxImageDimension}
-          oninput={(event) => (settings.maxImageDimension = event.currentTarget.valueAsNumber)}
+          onchange={(event) => {
+            if (!event.currentTarget.reportValidity()) return;
+            settings.maxImageDimension = event.currentTarget.valueAsNumber;
+          }}
           class="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm text-right focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
@@ -239,21 +277,6 @@
       {:else}
         <p class="text-xs text-muted-foreground">{t.noIgnoredApps}</p>
       {/if}
-    </div>
-
-    <div class="pt-4 border-t border-border">
-      <div class="flex items-center justify-between">
-        <div class="space-y-0.5">
-          <span class="text-sm font-medium">{t.clear}</span>
-          <p class="text-xs text-muted-foreground">
-            {t.confirmClearHistory}
-          </p>
-        </div>
-        <Button variant="destructive" onclick={() => clipboardStore.clearNonPinned()} class="gap-2">
-          <Trash2 class="h-4 w-4" />
-          {t.clear}
-        </Button>
-      </div>
     </div>
   </Card>
 </div>

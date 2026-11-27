@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { clipboardStore } from '$lib/stores/clipboard.svelte';
@@ -9,15 +9,17 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { i18n } from '$lib/i18n';
   import { isMac } from '$lib/utils/platform';
-  import { SEARCH_INPUT_ID, ROW_HEIGHT_REM } from '$lib/constants';
+  import { SEARCH_INPUT_ID, ONBOARDING_START_ID, ROW_HEIGHT_REM } from '$lib/constants';
   import type { ClipFilter, PasteMode } from '$lib/types';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import ClipboardItem from '$lib/components/ClipboardItem.svelte';
   import ClipPreview from '$lib/components/ClipPreview.svelte';
   import NewFavoriteForm from '$lib/components/NewFavoriteForm.svelte';
   import PermissionCheck from '$lib/components/PermissionCheck.svelte';
+  import Onboarding from '$lib/components/Onboarding.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import {
+    ClipboardList,
     Loader2,
     MoreHorizontal,
     PanelRight,
@@ -29,6 +31,7 @@
   } from 'lucide-svelte';
 
   const t = $derived(i18n.t);
+  const onboardingOpen = $derived(!clipboardStore.onboardingCompleted);
   const modifier = isMac ? '⌘' : 'Ctrl';
   const displayItems = $derived(
     selectionStore.panel === 'pinned'
@@ -110,7 +113,14 @@
   });
 
   function focusSearch() {
-    document.getElementById(SEARCH_INPUT_ID)?.focus({ preventScroll: true });
+    const target = clipboardStore.onboardingCompleted ? SEARCH_INPUT_ID : ONBOARDING_START_ID;
+    document.getElementById(target)?.focus({ preventScroll: true });
+  }
+
+  function openSettings(tab?: 'about') {
+    invoke('open_settings_window', { tab }).catch((error) =>
+      toastStore.add(String(error), 'error')
+    );
   }
 
   function resetPanel(panel: QuickBarPanel) {
@@ -238,6 +248,13 @@
   function handleKey(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || confirmStore.open)
       return;
+    if (!clipboardStore.onboardingCompleted) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        void clipboardStore.hideQuickbar();
+      }
+      return;
+    }
     const target = event.target as HTMLElement;
     if (target.closest('[data-row-editor]')) return;
     if (actionsOpen && event.key === 'Escape') {
@@ -382,10 +399,14 @@
   onfocusin={handleWindowFocusIn}
 />
 
-<div class="quickbar-panel flex h-screen flex-col overflow-hidden rounded-xl">
-  <PermissionCheck />
+<div class="quickbar-panel relative flex h-screen flex-col overflow-hidden rounded-xl">
+  {#if clipboardStore.onboardingCompleted}
+    <PermissionCheck />
+  {:else}
+    <Onboarding onDone={() => void tick().then(focusSearch)} />
+  {/if}
 
-  <header class="qb-header flex flex-none items-center gap-2 px-3 py-1.5">
+  <header class="qb-header flex flex-none items-center gap-2 px-3 py-1.5" inert={onboardingOpen}>
     <div class="min-w-0 flex-1">
       <SearchBar
         activeId={selectedVisible ? selectedItem?.id : undefined}
@@ -420,7 +441,10 @@
     </div>
   </header>
 
-  <div class="qb-filter-bar flex flex-none items-center justify-between gap-2 px-3 py-1.5">
+  <div
+    class="qb-filter-bar flex flex-none items-center justify-between gap-2 px-3 py-1.5"
+    inert={onboardingOpen}
+  >
     {#if selectionStore.selectedIds.size > 0}
       <div class="flex min-w-0 flex-1 items-center gap-2 text-xs">
         <span class="font-medium text-foreground">
@@ -496,12 +520,16 @@
   </div>
 
   {#if clipboardStore.capturePaused || clipboardStore.useNotice}
-    <p class="border-b border-border px-4 py-1.5 text-xs text-muted-foreground" role="status">
+    <p
+      class="border-b border-border px-4 py-1.5 text-xs text-muted-foreground"
+      role="status"
+      inert={onboardingOpen}
+    >
       {clipboardStore.useNotice || t.capturePausedNotice}
     </p>
   {/if}
 
-  <div class="flex min-h-0 flex-1">
+  <div class="flex min-h-0 flex-1" inert={onboardingOpen}>
     <main class="flex min-w-0 flex-1 flex-col py-1.5">
       {#if clipboardStore.newFavoriteOpen}
         <NewFavoriteForm
@@ -521,7 +549,11 @@
         <div
           class="flex flex-1 flex-col items-center justify-center gap-2.5 p-5 text-center text-sm text-muted-foreground"
         >
-          <Search class="h-7 w-7 opacity-60" />
+          {#if !displayError && clipboardStore.filter === 'all' && !clipboardStore.activeSearchQuery && selectionStore.panel === 'recent'}
+            <ClipboardList class="h-7 w-7 opacity-60" />
+          {:else}
+            <Search class="h-7 w-7 opacity-60" />
+          {/if}
           {#if displayError}
             <p role="alert">{displayError}</p>
             <Button
@@ -537,13 +569,12 @@
             <Button variant="ghost" size="sm" onclick={() => clipboardStore.setFilter('all')}
               >{t.showAll}</Button
             >
+          {:else if !clipboardStore.activeSearchQuery && selectionStore.panel === 'recent'}
+            <p class="font-medium text-foreground">{t.noClipboardHistory}</p>
+            <p class="-mt-1 text-xs">{t.emptyHistoryHint}</p>
           {:else}
             <p>
-              {clipboardStore.activeSearchQuery
-                ? t.noSearchResults
-                : selectionStore.panel === 'pinned'
-                  ? t.noPinnedItems
-                  : t.noClipboardHistory}
+              {clipboardStore.activeSearchQuery ? t.noSearchResults : t.noPinnedItems}
             </p>
             {#if selectionStore.panel === 'pinned'}
               <div class="flex items-center gap-2">
@@ -620,6 +651,7 @@
 
   <footer
     class="qb-footer relative flex flex-none items-center justify-between gap-3 px-3.5 py-2 text-[11px] text-muted-foreground"
+    inert={onboardingOpen}
   >
     <div class="min-w-0 truncate" aria-live="polite">
       {#if clipboardStore.isUsing}
@@ -645,6 +677,16 @@
     </div>
 
     <div class="flex flex-none items-center gap-1">
+      {#if clipboardStore.updateVersion}
+        <button
+          type="button"
+          class="rounded-md px-1.5 py-0.5 font-medium text-primary hover:bg-accent"
+          onmousedown={(event) => event.preventDefault()}
+          onclick={() => openSettings('about')}
+        >
+          {i18n.format(t.newVersionBadge, { version: clipboardStore.updateVersion })}
+        </button>
+      {/if}
       <span class="px-1.5 tabular-nums"
         >{displayItems.length}{clipboardStore.searchHasMore ? '+' : ''}</span
       >
@@ -733,8 +775,7 @@
         class="qb-footer-icon flex h-7 w-7 items-center justify-center rounded-md"
         title={t.settings}
         aria-label={t.settings}
-        onclick={() =>
-          invoke('open_settings_window').catch((error) => toastStore.add(String(error), 'error'))}
+        onclick={() => openSettings()}
       >
         <Settings class="h-4 w-4" />
       </button>

@@ -12,6 +12,8 @@ import type {
   PasteMode,
   ReorderDirection,
   Settings,
+  UpdateInfo,
+  UseOutcome,
 } from '$lib/types';
 import {
   applyClipboardChanged,
@@ -42,6 +44,9 @@ class ClipboardStore {
   isUsing = $state(false);
   useNotice = $state('');
   capturePaused = $state(false);
+  onboardingCompleted = $state(true);
+  globalShortcut = $state('');
+  updateVersion = $state<string | null>(null);
   searchHasMore = $state(false);
   newFavoriteOpen = $state(false);
   newFavoriteLabel = $state('');
@@ -122,8 +127,31 @@ class ClipboardStore {
       this.resetRecentPagination();
     });
 
+    await listen<UpdateInfo>('update-status', (event) => {
+      this.updateVersion = event.payload.latestVersion;
+    });
+
     await this.refreshSettings();
+    void this.refreshUpdateStatus();
     await this.loadHistory();
+  }
+
+  async refreshUpdateStatus() {
+    try {
+      const status = await invoke<UpdateInfo>('get_update_status');
+      this.updateVersion = status.latestVersion;
+    } catch (error) {
+      toastStore.add(String(error), 'error');
+    }
+  }
+
+  async completeOnboarding() {
+    try {
+      await invoke('complete_onboarding');
+      this.onboardingCompleted = true;
+    } catch (error) {
+      toastStore.add(`${i18n.t.operationFailed}: ${String(error)}`, 'error');
+    }
   }
 
   async loadHistory(options: { showLoading?: boolean } = {}) {
@@ -254,6 +282,8 @@ class ClipboardStore {
       const settings = await invoke<Settings>('get_settings');
       this.autoPaste = settings.autoPaste;
       this.capturePaused = settings.capturePaused;
+      this.onboardingCompleted = settings.onboardingCompleted;
+      this.globalShortcut = settings.globalShortcut;
       this.maxHistoryItems = settings.maxHistoryItems;
       this.pasteFormat = settings.pasteFormat;
       i18n.setLocale(settings.locale);
@@ -397,7 +427,8 @@ class ClipboardStore {
     });
     if (!confirmed) return;
     try {
-      await invoke('clear_non_pinned_history');
+      const warning = await invoke<string | null>('clear_non_pinned_history');
+      if (warning) toastStore.add(warning, 'info');
     } catch (error) {
       toastStore.add(`${t.clearFailed}: ${String(error)}`, 'error');
     }
@@ -578,7 +609,7 @@ class ClipboardStore {
     this.isUsing = true;
     this.useNotice = '';
     try {
-      const result = await invoke<'copied' | 'pasteRequested' | 'copiedOnly'>(command, args);
+      const result = await invoke<UseOutcome>(command, args);
       if (result === 'copiedOnly') this.useNotice = i18n.t.copiedOnly;
       return true;
     } catch (error) {

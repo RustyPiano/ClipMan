@@ -1,30 +1,37 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accessibility;
+mod autostart;
 mod clipboard;
 mod commands;
+mod diagnostics;
 mod identity;
 mod migration;
 mod paste;
 mod secrets;
 mod settings;
+mod settings_update;
+mod shortcuts;
 mod storage;
 mod tray;
+mod updates;
 mod window;
 
 use commands::{
     batch_delete_clips, batch_toggle_pin, check_accessibility_permission,
-    check_clipboard_permission, check_for_updates, clear_non_pinned_history, copy_plain_text,
-    copy_to_system_clipboard, create_pinned_clip, delete_clip, disable_global_shortcut,
-    enable_global_shortcut, get_app_icon, get_clip, get_current_data_path, get_pinned_clips,
-    get_recent_clips, get_settings, hide_quickbar, install_update, migrate_data_location,
-    open_accessibility_settings, open_folder, open_settings_window, open_url, paste_clip,
-    paste_clips, register_quickbar_shortcut, reorder_pinned, reveal_in_folder, search_clips,
-    set_clip_label, set_quickbar_panel, show_quickbar, toggle_pin, update_clip_content,
-    update_settings,
+    check_clipboard_permission, check_for_updates, clear_non_pinned_history, complete_onboarding,
+    copy_plain_text, copy_to_system_clipboard, create_pinned_clip, delete_clip, delete_old_backups,
+    disable_global_shortcut, enable_global_shortcut, export_favorites, get_app_icon, get_clip,
+    get_current_data_path, get_diagnostics, get_pinned_clips, get_recent_clips, get_settings,
+    get_storage_usage, get_update_status, hide_quickbar, import_favorites, install_update,
+    list_old_backups, migrate_data_location, open_accessibility_settings, open_folder,
+    open_log_folder, open_settings_window, open_url, paste_clip, paste_clips, reorder_pinned,
+    restart_app, reveal_in_folder, search_clips, set_clip_label, set_quickbar_panel, show_quickbar,
+    toggle_pin, update_clip_content, update_settings,
 };
 use paste::CopyWrite;
 use settings::SettingsManager;
+use shortcuts::register_quickbar_shortcut;
 use storage::ClipStorage;
 use tray::{build_tray_menu, TrayIconCache, TRAY_ID};
 
@@ -151,15 +158,7 @@ fn spawn_fatal_alert(app: &tauri::AppHandle, message: String) {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "info"
-        },
-    ))
-    .init();
-    log::info!("ClipLeaf starting...");
+    diagnostics::install_panic_hook();
 
     #[cfg(target_os = "macos")]
     match identity::relaunch_from_renamed_bundle() {
@@ -189,6 +188,8 @@ fn main() {
                 log::error!("Failed to schedule QuickBar for second-instance launch: {e}");
             }
         }))
+        .plugin(diagnostics::log_plugin())
+        .manage(updates::UpdateState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -200,6 +201,7 @@ fn main() {
             Some(vec!["--minimized"]),
         ))
         .setup(move |app| {
+            log::info!("ClipLeaf {} starting", app.package_info().version);
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -275,7 +277,7 @@ fn main() {
             }
 
             if settings.enable_autostart {
-                if let Err(e) = commands::migrate_legacy_autostart(app.handle(), identity_migrated) {
+                if let Err(e) = autostart::migrate_legacy_autostart(app.handle(), identity_migrated) {
                     log::error!("Failed to migrate the legacy autostart entry: {e}");
                 }
             }
@@ -338,6 +340,8 @@ fn main() {
 
             log::info!("Global shortcuts registered: {}", current_shortcut);
 
+            updates::spawn_periodic_checks(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -369,7 +373,17 @@ fn main() {
             show_quickbar,
             set_quickbar_panel,
             check_for_updates,
+            get_update_status,
             install_update,
+            restart_app,
+            complete_onboarding,
+            get_storage_usage,
+            list_old_backups,
+            delete_old_backups,
+            export_favorites,
+            import_favorites,
+            get_diagnostics,
+            open_log_folder,
             disable_global_shortcut,
             enable_global_shortcut,
             open_folder,

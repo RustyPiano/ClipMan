@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -128,8 +129,12 @@ pub fn hide_quickbar_and_restore(
     Ok(())
 }
 
-pub fn open_settings_window(app: &AppHandle) -> Result<(), String> {
+pub fn open_settings_window(app: &AppHandle, tab: Option<&str>) -> Result<(), String> {
     let settings = get_window(app, SETTINGS_WINDOW_LABEL)?;
+
+    if let Some(tab) = tab {
+        settings.emit("settings-open-tab", tab).map_err(to_string)?;
+    }
 
     settings.unminimize().map_err(to_string)?;
     settings.show().map_err(to_string)?;
@@ -468,6 +473,26 @@ fn focus_quickbar(window: &WebviewWindow) -> Result<(), String> {
 
 fn focus_settings_window(window: &WebviewWindow) -> Result<(), String> {
     window.set_focus().map_err(to_string)
+}
+
+pub(crate) fn run_action_on_main_thread<F>(
+    app: &AppHandle,
+    command_name: &'static str,
+    action: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+
+    app.run_on_main_thread(move || {
+        let _ = sender.send(action());
+    })
+    .map_err(|e| format!("Failed to schedule {command_name} on main thread: {e}"))?;
+
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("Timed out waiting for {command_name} on main thread: {e}"))?
 }
 
 fn to_string(error: impl std::fmt::Display) -> String {

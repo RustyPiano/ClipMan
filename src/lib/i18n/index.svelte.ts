@@ -44,7 +44,7 @@ const zh = {
   characterCount: '{n} 字符',
 
   noPinnedItems: '暂无收藏项目',
-  noClipboardHistory: '暂无剪贴板历史',
+  noClipboardHistory: '还没有复制记录',
   noSearchResults: '没有匹配的结果',
 
   searchPlaceholder: '搜索剪贴板内容...',
@@ -52,7 +52,7 @@ const zh = {
   settingsGeneral: '常规',
   settingsClipboard: '剪贴板',
   settingsAppearance: '外观',
-  settingsTray: '托盘',
+  settingsTray: '托盘菜单',
   settingsStorage: '存储',
   settingsAbout: '关于',
 
@@ -70,6 +70,7 @@ const zh = {
 
   maxHistoryItems: '历史记录数量',
   maxHistoryItemsDesc: '保留的最大历史记录数量',
+  confirmShrinkHistory: '将立即删除最早的 {count} 条未收藏记录，删除后无法恢复。',
   autoPaste: '自动粘贴',
   autoPasteDesc: '从 QuickBar 取用时自动粘回当前应用；关闭后只复制。',
   pasteFormat: '粘贴格式',
@@ -97,7 +98,6 @@ const zh = {
   maxRecentInTray: '托盘最近数量',
   maxRecentInTrayDesc: '托盘菜单中显示的最近项数量',
 
-  dataLocationDesc: '选择 ClipLeaf 数据的存储位置',
   currentLocation: '当前位置',
   changeLocation: '更改位置',
   openFolder: '打开文件夹',
@@ -111,7 +111,6 @@ const zh = {
   migrationSuccess: '数据迁移成功！',
   migrationFailed: '迁移失败',
 
-  version: '版本',
   checkUpdate: '检查更新',
   checking: '检查中',
   updateAvailable: '发现新版本',
@@ -120,7 +119,7 @@ const zh = {
   installing: '安装中',
   checkUpdateFailed: '检查更新失败',
   downloadingUpdate: '正在下载并安装更新...',
-  updateInstalled: '更新安装成功，请重启应用',
+  updateInstalled: '新版本已安装，重启后生效。',
   installUpdateFailed: '安装更新失败',
   releaseNotes: '更新内容',
 
@@ -145,10 +144,9 @@ const zh = {
   errorLabel: '错误',
 
   accessibilityTitle: '需要无障碍权限',
-  accessibilityDesc:
-    'ClipLeaf 无法自动粘贴（模拟 Cmd+V）：“辅助功能”权限已失效，常见于应用更新后。',
+  accessibilityDesc: 'ClipLeaf 需要“辅助功能”权限才能自动粘贴（模拟 Cmd+V）。',
   accessibilityHint:
-    '在系统设置中重新勾选 ClipLeaf 即可恢复自动粘贴；期间内容仍会复制到剪贴板，可手动粘贴。',
+    '在系统设置中勾选 ClipLeaf 即可开启，未开启时内容仍会复制到剪贴板。如果更新后已勾选仍无效，先取消勾选再重新勾选。',
   openSettings: '打开系统设置',
 
   paste: '粘贴',
@@ -161,7 +159,6 @@ const zh = {
 
   files: '文件',
   fileCount: '{n} 个文件',
-  richTextBadge: '富文本',
 
   ignoredApps: '忽略的应用',
   ignoredAppsDesc: '来自以下应用的复制内容不会被记录（按应用名匹配，不区分大小写）。',
@@ -213,7 +210,6 @@ const zh = {
   openLink: '打开链接',
   revealInFolder: '在文件夹中显示',
   revealInFinder: '在访达中显示',
-  copyPaths: '复制路径',
   moveUp: '上移',
   moveDown: '下移',
   pinnedBadge: '已收藏',
@@ -227,7 +223,52 @@ const zh = {
   plainTextFormat: '纯文本',
   colorPreview: '颜色',
   shortcutsTitle: '快捷键',
-  unsavedChanges: '未保存',
+  welcomeTitle: '欢迎使用 ClipLeaf',
+  welcomeIntro: 'ClipLeaf 会记住你复制过的文字、图片和文件，需要时随时找回。',
+  welcomeShortcutTitle: '随时打开',
+  welcomeShortcutDescMac: '在任何应用中按下快捷键，或点击菜单栏中的 ClipLeaf 图标。',
+  welcomeShortcutDescOther: '在任何应用中按下快捷键，或点击系统托盘中的 ClipLeaf 图标。',
+  welcomeAccessibilityTitle: '允许自动粘贴',
+  welcomeAccessibilityDesc:
+    '选中条目后，ClipLeaf 会把内容粘贴回原来的应用。这需要在系统设置中允许 ClipLeaf 使用辅助功能。',
+  welcomeAccessibilityGranted: '已允许',
+  grantAccess: '去授权',
+  welcomeTryTitle: '试一试',
+  welcomeTryDesc: '复制任意内容，它会出现在列表里。按 ↵ 粘贴，按 {mod}P 收藏。',
+  getStarted: '开始使用',
+  emptyHistoryHint: '复制任意文字、图片或文件，它会出现在这里。',
+  newVersionBadge: '新版本 {version}',
+  autoCheckUpdates: '自动检查更新',
+  autoCheckUpdatesDesc: '每天检查一次，有新版本时在托盘菜单和 QuickBar 中提示。',
+  downloadProgress: '正在下载 {percent}%',
+  restartNow: '立即重启',
+  settingsAutoSaved: '更改会自动保存',
+  resetSettings: '恢复默认设置',
+  resetSettingsDesc: '快捷键、粘贴、隐私和托盘设置恢复为默认值，不影响历史记录、收藏和数据位置。',
+  storageUsage: '占用空间',
+  usageSummary: '{count} 条记录，其中 {pinned} 条收藏、{images} 张图片',
+  databaseSize: '数据库 {size}',
+  favoritesBackup: '收藏备份',
+  favoritesBackupDesc: '把收藏导出为 JSON 文件，或从文件导入。导入时跳过已有的相同内容。',
+  exportFavorites: '导出收藏',
+  importFavorites: '导入收藏',
+  exportedFavorites: '已导出 {n} 条收藏',
+  importedFavorites: '已导入 {n} 条收藏，跳过 {skipped} 条重复内容',
+  exportFavoritesFailed: '导出收藏失败',
+  importFavoritesFailed: '导入收藏失败',
+  oldBackups: '旧备份文件',
+  oldBackupsDesc: '升级数据库或修复损坏时留下的副本，可能包含已删除的内容。',
+  noOldBackups: '没有旧备份文件',
+  deleteOldBackups: '删除旧备份',
+  confirmDeleteOldBackups: '确定要删除这些旧备份文件吗？删除后无法恢复。',
+  oldBackupsDeleted: '已删除旧备份文件',
+  clearHistoryTitle: '清空历史',
+  diagnostics: '诊断信息',
+  diagnosticsDesc: '反馈问题时附上诊断信息和日志。两者都不包含剪贴板内容。',
+  copyDiagnostics: '复制诊断信息',
+  openLogs: '打开日志目录',
+  diagnosticsCopied: '诊断信息已复制',
+  operationFailed: '操作失败',
 };
 
 type Translations = typeof zh;
@@ -276,7 +317,7 @@ const en: Translations = {
   characterCount: '{n} chars',
 
   noPinnedItems: 'No favorites yet',
-  noClipboardHistory: 'No clipboard history',
+  noClipboardHistory: 'Nothing copied yet',
   noSearchResults: 'No matching results',
 
   searchPlaceholder: 'Search clipboard...',
@@ -284,7 +325,7 @@ const en: Translations = {
   settingsGeneral: 'General',
   settingsClipboard: 'Clipboard',
   settingsAppearance: 'Appearance',
-  settingsTray: 'Tray',
+  settingsTray: 'Tray menu',
   settingsStorage: 'Storage',
   settingsAbout: 'About',
 
@@ -303,6 +344,8 @@ const en: Translations = {
 
   maxHistoryItems: 'History limit',
   maxHistoryItemsDesc: 'Maximum number of history items to keep',
+  confirmShrinkHistory:
+    'The oldest {count} non-favorite items will be deleted now. This cannot be undone.',
   autoPaste: 'Auto-paste',
   autoPasteDesc: 'Paste selected QuickBar items back into the current app; off means copy only.',
   pasteFormat: 'Paste format',
@@ -332,7 +375,6 @@ const en: Translations = {
   maxRecentInTray: 'Recent in tray',
   maxRecentInTrayDesc: 'Number of recent items shown in tray menu',
 
-  dataLocationDesc: 'Choose where ClipLeaf stores its data',
   currentLocation: 'Current location',
   changeLocation: 'Change location',
   openFolder: 'Open folder',
@@ -346,7 +388,6 @@ const en: Translations = {
   migrationSuccess: 'Data migrated successfully!',
   migrationFailed: 'Migration failed',
 
-  version: 'Version',
   checkUpdate: 'Check for updates',
   checking: 'Checking',
   updateAvailable: 'Update available',
@@ -355,7 +396,7 @@ const en: Translations = {
   installing: 'Installing',
   checkUpdateFailed: 'Failed to check for updates',
   downloadingUpdate: 'Downloading and installing update...',
-  updateInstalled: 'Update installed, please restart the app',
+  updateInstalled: 'The update is installed. Restart to finish.',
   installUpdateFailed: 'Failed to install update',
   releaseNotes: 'Release Notes',
 
@@ -382,10 +423,9 @@ const en: Translations = {
   errorLabel: 'Error',
 
   accessibilityTitle: 'Accessibility permission needed',
-  accessibilityDesc:
-    "ClipLeaf can't auto-paste (simulate Cmd+V): its Accessibility permission is no longer valid, which often happens after an update.",
+  accessibilityDesc: 'ClipLeaf needs Accessibility permission to auto-paste (simulate Cmd+V).',
   accessibilityHint:
-    'Re-enable ClipLeaf under System Settings to restore auto-paste. Until then, content is still copied to the clipboard so you can paste manually.',
+    'Turn on ClipLeaf in System Settings. Until then, content is still copied to the clipboard. If it is already on after an update, turn it off and on again.',
   openSettings: 'Open System Settings',
 
   paste: 'Paste',
@@ -398,7 +438,6 @@ const en: Translations = {
 
   files: 'Files',
   fileCount: '{n} files',
-  richTextBadge: 'Rich text',
 
   ignoredApps: 'Ignored apps',
   ignoredAppsDesc:
@@ -453,7 +492,6 @@ const en: Translations = {
   openLink: 'Open link',
   revealInFolder: 'Show in folder',
   revealInFinder: 'Reveal in Finder',
-  copyPaths: 'Copy paths',
   moveUp: 'Move up',
   moveDown: 'Move down',
   pinnedBadge: 'Favorited',
@@ -467,7 +505,60 @@ const en: Translations = {
   plainTextFormat: 'Plain text',
   colorPreview: 'Color',
   shortcutsTitle: 'Shortcuts',
-  unsavedChanges: 'Unsaved',
+  welcomeTitle: 'Welcome to ClipLeaf',
+  welcomeIntro:
+    'ClipLeaf remembers the text, images, and files you copy so you can get them back any time.',
+  welcomeShortcutTitle: 'Open it anywhere',
+  welcomeShortcutDescMac:
+    'Press the shortcut in any app, or click the ClipLeaf icon in the menu bar.',
+  welcomeShortcutDescOther:
+    'Press the shortcut in any app, or click the ClipLeaf icon in the system tray.',
+  welcomeAccessibilityTitle: 'Allow auto-paste',
+  welcomeAccessibilityDesc:
+    'When you pick an item, ClipLeaf pastes it back into the app you were using. This needs Accessibility permission in System Settings.',
+  welcomeAccessibilityGranted: 'Allowed',
+  grantAccess: 'Grant access',
+  welcomeTryTitle: 'Try it',
+  welcomeTryDesc:
+    'Copy anything and it shows up in the list. Press ↵ to paste and {mod}P to favorite.',
+  getStarted: 'Get started',
+  emptyHistoryHint: 'Copy any text, image, or file and it shows up here.',
+  newVersionBadge: 'Version {version} available',
+  autoCheckUpdates: 'Check for updates automatically',
+  autoCheckUpdatesDesc: 'Checks once a day and shows new versions in the tray menu and QuickBar.',
+  downloadProgress: 'Downloading {percent}%',
+  restartNow: 'Restart now',
+  settingsAutoSaved: 'Changes are saved automatically',
+  resetSettings: 'Restore defaults',
+  resetSettingsDesc:
+    'Resets shortcuts, paste, privacy, and tray settings. History, favorites, and the data location are kept.',
+  storageUsage: 'Storage used',
+  usageSummary: '{count} items, including {pinned} favorites and {images} images',
+  databaseSize: 'Database {size}',
+  favoritesBackup: 'Favorites backup',
+  favoritesBackupDesc:
+    'Export favorites to a JSON file or import them from one. Items with the same content are skipped on import.',
+  exportFavorites: 'Export favorites',
+  importFavorites: 'Import favorites',
+  exportedFavorites: 'Exported {n} favorites',
+  importedFavorites: 'Imported {n} favorites, skipped {skipped} duplicates',
+  exportFavoritesFailed: 'Failed to export favorites',
+  importFavoritesFailed: 'Failed to import favorites',
+  oldBackups: 'Old backup files',
+  oldBackupsDesc:
+    'Copies left by database upgrades or corruption recovery. They may contain deleted content.',
+  noOldBackups: 'No old backup files',
+  deleteOldBackups: 'Delete old backups',
+  confirmDeleteOldBackups: 'Delete these old backup files? This cannot be undone.',
+  oldBackupsDeleted: 'Old backup files deleted',
+  clearHistoryTitle: 'Clear history',
+  diagnostics: 'Diagnostics',
+  diagnosticsDesc:
+    'Attach diagnostics and logs when reporting a problem. Neither includes clipboard content.',
+  copyDiagnostics: 'Copy diagnostics',
+  openLogs: 'Open log folder',
+  diagnosticsCopied: 'Diagnostics copied',
+  operationFailed: 'Operation failed',
 };
 
 const translations: Record<Locale, Translations> = { 'zh-CN': zh, en };

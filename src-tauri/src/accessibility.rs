@@ -10,6 +10,8 @@ mod imp {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+        static kAXTrustedCheckOptionPrompt: *const std::ffi::c_void;
     }
 
     pub fn is_trusted() -> bool {
@@ -25,6 +27,55 @@ mod imp {
                 None::<&str>,
             )
             .map_err(|e| format!("Failed to open Accessibility settings: {e}"))
+    }
+
+    pub fn request_access(app: &AppHandle) -> Result<(), String> {
+        use objc2::rc::Retained;
+        use objc2_foundation::{NSDictionary, NSNumber, NSString};
+
+        if is_trusted() {
+            return Ok(());
+        }
+        let key = unsafe { &*kAXTrustedCheckOptionPrompt.cast::<NSString>() };
+        let prompt = NSNumber::new_bool(true);
+        let options = NSDictionary::from_slices(&[key], &[&*prompt]);
+        unsafe { AXIsProcessTrustedWithOptions(Retained::as_ptr(&options).cast()) };
+        open_settings(app)
+    }
+
+    static WATCHING_FOR_ONBOARDING: AtomicBool = AtomicBool::new(false);
+    const ONBOARDING_WATCH_LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+    const ONBOARDING_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+    pub fn show_onboarding_when_trusted(app: &AppHandle) {
+        if is_trusted() || WATCHING_FOR_ONBOARDING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + ONBOARDING_WATCH_LIMIT;
+            while std::time::Instant::now() < deadline && !is_trusted() {
+                std::thread::sleep(ONBOARDING_WATCH_INTERVAL);
+            }
+            WATCHING_FOR_ONBOARDING.store(false, Ordering::SeqCst);
+            if !is_trusted() || app.state::<AppState>().settings.get().onboarding_completed {
+                return;
+            }
+            let app_for_main = app.clone();
+            let dispatch = app.run_on_main_thread(move || {
+                let state = app_for_main.state::<AppState>();
+                if let Err(e) = crate::window::show_quickbar(
+                    &app_for_main,
+                    &state.quickbar_foreground_window,
+                    &state.quickbar_panel,
+                ) {
+                    log::error!("Failed to reopen onboarding after Accessibility was granted: {e}");
+                }
+            });
+            if let Err(e) = dispatch {
+                log::error!("Failed to schedule onboarding after Accessibility was granted: {e}");
+            }
+        });
     }
 
     static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
@@ -44,18 +95,18 @@ mod imp {
         let (title, body, open_btn, later_btn) = if zh {
             (
                 "需要无障碍权限",
-                "ClipLeaf 无法自动粘贴，因为“辅助功能/无障碍”权限已失效（常见于应用更新后）。\
-                 \n\n内容已复制到剪贴板，你仍可手动粘贴。请在系统设置中重新授权 ClipLeaf 以恢复自动粘贴。",
+                "ClipLeaf 需要“辅助功能”权限才能自动粘贴。内容已复制到剪贴板，可以手动粘贴。\
+                 \n\n在系统设置中勾选 ClipLeaf 即可恢复自动粘贴。如果更新后已勾选仍无效，先取消勾选再重新勾选。",
                 "打开系统设置",
                 "稍后",
             )
         } else {
             (
                 "Accessibility permission needed",
-                "ClipLeaf couldn't auto-paste because its Accessibility permission is no longer \
-                 valid (this often happens after an update).\n\nThe content has been copied to \
-                 the clipboard, so you can paste manually. Re-grant ClipLeaf under System Settings \
-                 to restore auto-paste.",
+                "ClipLeaf needs Accessibility permission to auto-paste. The content has been \
+                 copied to the clipboard, so you can paste manually.\n\nTurn on ClipLeaf in \
+                 System Settings to restore auto-paste. If it is already on after an update, \
+                 turn it off and on again.",
                 "Open System Settings",
                 "Later",
             )
@@ -76,7 +127,7 @@ mod imp {
                 .show(move |open_pressed| {
                     DIALOG_OPEN.store(false, Ordering::SeqCst);
                     if open_pressed {
-                        if let Err(e) = open_settings(&app_for_settings) {
+                        if let Err(e) = request_access(&app_for_settings) {
                             log::error!("{e}");
                         }
                     }
@@ -91,7 +142,7 @@ mod imp {
 }
 
 #[cfg(target_os = "macos")]
-pub use imp::{guide_reauthorization, is_trusted, open_settings};
+pub use imp::{guide_reauthorization, is_trusted, request_access, show_onboarding_when_trusted};
 
 #[cfg(not(target_os = "macos"))]
 pub fn is_trusted() -> bool {
@@ -99,6 +150,9 @@ pub fn is_trusted() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn open_settings(_app: &tauri::AppHandle) -> Result<(), String> {
+pub fn request_access(_app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_onboarding_when_trusted(_app: &tauri::AppHandle) {}
